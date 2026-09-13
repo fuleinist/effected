@@ -4,6 +4,7 @@
 
 ## Maintenance
 
-### Updates 1 catalog:effected version
+### Updates 2 catalog:effected versions
 
-- `@effected/sbom` ^0.6.0 -> ^0.6.1 (peer ^0.6.0)
+- `@effected/github-actions` ^0.12.0 -> ^0.13.0 (peer ^0.13.0)
+- `@effected/workspaces` ^0.21.1 -> ^0.22.0 (peer ^0.22.0)
