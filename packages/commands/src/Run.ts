@@ -532,7 +532,9 @@ export class Run {
 	 * no options, exactly two failure modes exist —
 	 *
 	 * - {@link CommandFailedError} of kind `"spawn"`: the process never started
-	 *   (executable missing, platform refused).
+	 *   (executable missing, platform refused), **or** the platform failed while
+	 *   reading a stream or awaiting the exit — this arm absorbs every
+	 *   `PlatformError`, not only spawn-time ones.
 	 * - {@link CommandOutputError} of kind `"tooLarge"`: captured output
 	 *   exceeded {@link RunOptions.maxOutputBytes} (default
 	 *   {@link DEFAULT_MAX_OUTPUT_BYTES}).
@@ -552,8 +554,10 @@ export class Run {
 	 * {@link CommandOutput}.
 	 *
 	 * @remarks
-	 * Reachability of the error arms is exactly {@link Run.collect}'s — the tee
-	 * adds no failure mode of its own.
+	 * Reachability of the error arms is exactly {@link Run.collect}'s, but the
+	 * tee adds a second *source* for kind `"spawn"`: a failing `Stdio` sink
+	 * (EPIPE when the host's own stdout is a closed pipe) is classified there
+	 * too, even though the child started and ran.
 	 */
 	static readonly collectTee = collectTee;
 
