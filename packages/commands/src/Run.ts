@@ -526,6 +526,25 @@ export class Run {
 	 * A non-zero exit is a *result* here, not a failure — see {@link Run}'s
 	 * remarks for the split against {@link Run.text}, {@link Run.lines} and
 	 * {@link Run.json}.
+	 *
+	 * The error union is honest but wider than any one configuration can fire:
+	 * which arms are reachable depends on the options passed. For a call with
+	 * no options, exactly two failure modes exist —
+	 *
+	 * - {@link CommandFailedError} of kind `"spawn"`: the process never started
+	 *   (executable missing, platform refused), **or** the platform failed while
+	 *   reading a stream or awaiting the exit — this arm absorbs every
+	 *   `PlatformError`, not only spawn-time ones.
+	 * - {@link CommandOutputError} of kind `"tooLarge"`: captured output
+	 *   exceeded {@link RunOptions.maxOutputBytes} (default
+	 *   {@link DEFAULT_MAX_OUTPUT_BYTES}).
+	 *
+	 * Setting {@link RunOptions.timeout} adds a third arm: kind `"timeout"`.
+	 * No configuration makes this combinator fail with kind `"nonZero"` — a
+	 * non-zero exit is a result — and kinds `"notJson"` / `"schema"` are
+	 * exclusive to {@link Run.json} and {@link Run.jsonLine}. A catch written
+	 * against an unconfigured call therefore needs only the two arms above;
+	 * handling the full union there is defensive, not required.
 	 */
 	static readonly collect = collect;
 
@@ -533,6 +552,12 @@ export class Run {
 	 * Like {@link Run.collect}, but also tees each stream to the `Stdio` in `R`
 	 * as it arrives, for a caller that wants live output alongside the captured
 	 * {@link CommandOutput}.
+	 *
+	 * @remarks
+	 * Reachability of the error arms is exactly {@link Run.collect}'s, but the
+	 * tee adds a second *source* for kind `"spawn"`: a failing `Stdio` sink
+	 * (EPIPE when the host's own stdout is a closed pipe) is classified there
+	 * too, even though the child started and ran.
 	 */
 	static readonly collectTee = collectTee;
 
