@@ -22,7 +22,7 @@ Sparse checkout: only `packages/effect`, `packages/vitest`, `migration`, `ai-doc
 
 Re-pin when the catalog bumps, **in the same commit**: `savvy repos pin effect effect@<new-tag>` (or the `repos_manage` MCP tool, action `pin`). Both arguments are **positional** — there is no `--ref` flag, and passing one fails with `Unrecognized flag: --ref`. It stages the gitlink and manifest and returns a ready-made commit message; review any `staleNoteIds` it flags.
 
-Full recipe → `@./.claude/design/effected/architecture.md` — Load when: performing the re-pin.
+Full recipe → `okf/decisions/vendored-effect-pinned-to-catalog-tag.md`, `okf/interfaces/vendored-repos-manifest.md` — Load when: performing the re-pin.
 
 ## Sibling vendored repos
 
@@ -32,7 +32,7 @@ Full recipe → `@./.claude/design/effected/architecture.md` — Load when: perf
 
 ## Empty checkouts
 
-Fresh clones, CI runners and new worktrees start with an **empty** `.repos/` checkout — run `savvy repos sync` (or `repos_manage` action `sync`) once before relying on vendored content.
+Fresh clones, CI runners and new worktrees start with an **empty** `.repos/` checkout — run `savvy repos sync` (or `repos_manage` action `sync`) once before relying on vendored content. Detail → `okf/gotchas/vendored-repos-empty-on-fresh-clone.md`, `okf/runbooks/sync-vendored-repos.md`.
 
 ## Exclusions
 

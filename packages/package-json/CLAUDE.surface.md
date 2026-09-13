@@ -112,7 +112,7 @@ re-exports below it).
   `layer` (default rules) and the parameterized `layerRules` factory.
 - **`PackageJsonFile.ts`** — the IO surface.
 - **`PackageJsonFormat.ts`** — the decode-free text path (design depth:
-  `@../../.claude/design/effected/packages/package-json-text.md`). Four
+  `@./okf/interfaces/package-json-text.md`). Four
   statics: `sortValue` (value→value, total, returns its input type `T`),
   `formatToString` (text→text, `Result<string, PackageJsonSyntaxError>`), and
   the surgical mutators `modify` / `modifyToString`, which apply an ordered
@@ -122,7 +122,7 @@ re-exports below it).
   unnavigable path fails as `PackageJsonModifyError`. `PackageJsonFile.modify`
   is that path against a file, skipping the write when the result is
   byte-identical to what was read. Named for the kit formatter convention
-  (`@../../.claude/design/effected/formatter-convention.md`) — `JsoncFormatter`,
+  (`@./okf/conventions/format-package-convention.md`) — `JsoncFormatter`,
   `YamlFormat` and `TomlFormat` spell the same capability the same way.
   **`sortValue` only ever reorders keys**; it never adds or removes one, which
   is what lets the return type be `T`. Never add a key-removing option there

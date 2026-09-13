@@ -5,7 +5,7 @@ services. The rules live in the parent; this file is why they are shaped that
 way.
 
 **Parent:** [CLAUDE.md](./CLAUDE.md)
-**Design depth:** `@../../.claude/design/effected/packages/github-actions-storage.md`
+**Design depth:** `@./okf/interfaces/actions-storage.md`
 
 ---
 

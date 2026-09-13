@@ -6,7 +6,7 @@ Phase 4 of the GitHub/Actions split — the middle piece of the old `Attest` kno
 whose other two are `@effected/github`'s `Attestation` (the REST surface) and
 consumer composition (the pipeline).
 
-**Design doc:** `@../../.claude/design/effected/packages/sbom.md`
+**Design doc:** `@./okf/modules/sbom.md`
 
 ## Tier: integrated
 

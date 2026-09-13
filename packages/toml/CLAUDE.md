@@ -4,7 +4,7 @@ Zero-dependency TOML 1.1.0 parse/edit/format schemas: parse into plain values or
 
 **Tier: pure.** Peer-depends on `effect` only. Zero runtime deps, no IO. Eighth migration; merged. **The first format package in the repo with no vendored code** — jsonc, yaml and glob all port an upstream engine with attribution; toml's engine is original work, built from the TOML 1.0.0 spec directly rather than translated from a reference implementation, then upgraded in place to TOML 1.1.0 (released 2025-12-24).
 
-**For the full design:** → `@../../.claude/design/effected/packages/toml.md`
+**For the full design:** → `@./okf/modules/toml.md`
 
 Load when changing the public API, the CST shape, the hardening story, or the jsonc/yaml/toml/markdown edit-vocabulary parity convention.
 
@@ -61,7 +61,7 @@ Two independent checks, neither a substitute for the other:
 
 Exported from `src/index.ts`:
 
-- `Toml` — `parseResult`, `stringifyResult` (sync `Result`, the **primitives**) and `parse`, `stringify` (`Effect`, failing with `TomlParseError`/`TomlStringifyError`, each `Effect.fromResult` over its `Result` twin behind its existing span, so the two cannot drift — kit convention, `@../../.claude/design/effected/formatter-convention.md` decision 6; never re-derive the engine on the `Effect` side); `fromString`, `TomlFromString`, `schema(target)`, `bind(target)` → a `TomlBoundCodec` `{ schema, decode, encode }` pre-binding both directions, each failing with `Schema.SchemaError` — thin sugar over `schema(target)` plus `Schema.decodeEffect`/`encodeEffect`, adding no error taxonomy of its own. All three are schema-producing: bind results to a `const` on hot paths. Plus `TomlStringifyOptions` (the only knob: `newline`).
+- `Toml` — `parseResult`, `stringifyResult` (sync `Result`, the **primitives**) and `parse`, `stringify` (`Effect`, failing with `TomlParseError`/`TomlStringifyError`, each `Effect.fromResult` over its `Result` twin behind its existing span, so the two cannot drift — kit convention, `@./okf/conventions/sync-primitive-policy.md` and `@./okf/decisions/sync-form-named-result.md`; never re-derive the engine on the `Effect` side); `fromString`, `TomlFromString`, `schema(target)`, `bind(target)` → a `TomlBoundCodec` `{ schema, decode, encode }` pre-binding both directions, each failing with `Schema.SchemaError` — thin sugar over `schema(target)` plus `Schema.decodeEffect`/`encodeEffect`, adding no error taxonomy of its own. All three are schema-producing: bind results to a `const` on hot paths. Plus `TomlStringifyOptions` (the only knob: `newline`).
 - `TomlDocument` — `parse`, `schema()`, `toValue()`, `stringify()` — the lossless document (`source`, `expressions`, `diagnostics`).
 - `TomlEdit` (+ `applyAll`), `TomlRange`, `TomlPath`, `TomlSegment` — the edit vocabulary.
 - `TomlFormat` — `format`/`formatToString` (pure, total), `modify`/`modifyToString` (`Effect`, failing with `TomlParseError`/`TomlModificationError`); `TomlFormattingOptions`.

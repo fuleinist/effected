@@ -1,0 +1,59 @@
+---
+type: Glossary
+title: Companion package
+description: A published, installable package that is not a library — no API, nothing to import, no tier.
+status: stable
+tags:
+  - architecture
+  - release
+sources:
+  - id: claude-packages
+    resource: ../../CLAUDE.packages.md
+generated:
+  by: "okfit/claude-code"
+  at: 2026-09-13T05:33:04Z
+  body_sha256: e39d78ee39bee722729118a42dcc946fd167e731505699e9eaaac36fe608d7b7
+---
+
+# Companion package
+
+A **companion** package is published and installable but is not a
+library: it exposes no API, there is nothing to import and nothing to
+call. It ships in the kit's release waves alongside the libraries, and
+installing it is optional for the consumer.
+
+## Companion is a category, not a fourth tier
+
+The [three tiers](library-tier.md) — pure, boundary, integrated — sit on
+one axis, external dependency surface, and answer "what does depending
+on this cost you?" That question is meaningless for a package nothing
+can depend on, because it has no exported surface to depend on in the
+first place. A companion is therefore not ranked against pure, boundary
+and integrated; it sits off the axis entirely. The three tiers continue
+to classify **libraries only**, and a companion has no tier rather than a
+fourth one.
+
+## The one companion in the kit today
+
+`@effected/pnpm-plugin-effect` is the only companion: it ships the pnpm
+catalogs and a pnpmfile — configuration, not code — and installing it
+pins a consumer's `effect` versions and peer floors, and the kit's own
+package versions, to the values the kit was built and tested
+against.[^claude-packages] It is a real published package a consumer
+installs and depends on for its effect, even though there is no
+JavaScript to import from it.
+
+## Why "companion" and not "infrastructure"
+
+"Infrastructure" would name the package's relationship to this repo and
+would read as internal-only tooling, inviting the (wrong) inference that
+it is not a real shipped package. `companion` instead names the
+package's relationship to the *consumer* — it ships alongside the kit,
+installation of it is optional, and it has no API — which makes that
+wrong reading harder to fall into.
+
+[^claude-packages]: `CLAUDE.packages.md` — "`pnpm-plugin-effect` — pnpm
+    catalog/config plugin, publishing the Effect catalogs and the kit's
+    own `effected` / `effected:peers` catalogs. The kit's one
+    **companion**: published to npm like every library here, but not a
+    library, so it has **no tier**."

@@ -16,7 +16,7 @@ rather than against our own assumptions.
 
 ### Why this is here
 
-`@effected/sbom` [declines the CycloneDX library as a runtime dependency](../../../../.claude/design/effected/packages/sbom.md#tier-and-the-dependency-decision) — 6.6 MB with seven optional peers, for an object model and a JSON normalizer we can emit directly. Declining the *library* is not the same as declining the *specification*, so the published schema is vendored here as a **test-only conformance oracle**.
+`@effected/sbom` [declines the CycloneDX library as a runtime dependency](../../../../okf/decisions/sbom-owns-its-emitter.md) — 6.6 MB with seven optional peers, for an object model and a JSON normalizer we can emit directly. Declining the *library* is not the same as declining the *specification*, so the published schema is vendored here as a **test-only conformance oracle**.
 
 The filename says `SNAPSHOT` because that is what the library ships; the `$id` inside is the released `bom-1.6.schema.json`.
 

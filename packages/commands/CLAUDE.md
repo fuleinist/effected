@@ -5,8 +5,9 @@ Structured command running and CLI tool discovery over core's
 result** (`Run`), and **find out whether a tool is here and which copy to use**
 (`ToolDiscovery`).
 
-**Design doc:** `@../../.claude/design/effected/packages/commands.md` — load when
-changing a surface's shape or reconsidering the `LocalExec` inversion.
+**Design doc:** `@./okf/modules/commands.md` — load when
+changing a surface's shape or reconsidering the `LocalExec` inversion (see also
+`@./okf/decisions/commands-workspaces-edge-inverts.md`).
 
 ## Child context files
 

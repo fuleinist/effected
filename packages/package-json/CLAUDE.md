@@ -2,11 +2,11 @@
 
 package.json parsing, editing, validation and file IO as Effect schemas. **One module per concept in `src/`** — the consolidation is the point; do not re-fragment it. (Test counts move every commit and are not tracked here; run `pnpm test --filter @effected/package-json`.)
 
-**Design doc:** `@../../.claude/design/effected/packages/package-json.md` — load when
+**Design doc:** `@./okf/modules/package-json.md` — load when
 changing the public surface, the `rest` wire transform, the tolerance ladder or
 the error taxonomy. One child:
 
-- `@../../.claude/design/effected/packages/package-json-text.md` — Load when:
+- `@./okf/interfaces/package-json-text.md` — Load when:
   working on the decode-free text path — `PackageJsonFormat`'s canonical key
   order, `PackageIndent`/`"preserve"`, or the surgical `modify` mutator.
 

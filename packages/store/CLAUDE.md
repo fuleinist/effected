@@ -4,13 +4,13 @@ Durable local state for Effect: two services over one primitive. `Store` is a sc
 
 The two are genuinely different services, not one with a flag: an evicted cache entry is correct behaviour, a lost state row is a bug. The shared primitive is the migration-ledger engine in `src/internal/migrator.ts` — `Store` exposes it with user-supplied migrations, `Cache` uses it privately to version its own fixed schema. The engine is parameterized by ledger **table name** (`_store_migrations` vs `_cache_migrations`), so a Store and a Cache can share one database file without id collisions.
 
-**Design doc:** `@../../.claude/design/effected/packages/store.md` — load before changing the service shapes, the error model or the migration engine.
+**Design doc:** `@./okf/modules/store.md` — load before changing the service shapes, the error model or the migration engine.
 
 ## Tier: integrated
 
 **Integrated tier**, and the only package in the repo that is. `peerDependencies` is `effect` alone; `dependencies` is `@effect/sql-sqlite-node` (`catalog:effect`) — one regular runtime dependency, which is precisely what makes store tier 3. Its only peer is `effect`, which store already declares, so the peer closure is complete by construction.
 
-Consumers of store are tier 3 by [R2](../../.claude/design/effected/effect-standards.md#dependency-policy). That is *why* the SQLite services were split out of `@effected/xdg` — so xdg stays boundary tier. Do not let store's dependency leak upward: no store type signature exposes a `SqliteClient` type, the driver appears only inside `layerSqlite`/`layerTest`, and it must stay that way.
+Consumers of store are tier 3 by [R2](../../okf/conventions/dependency-policy.md#r2--tier-3-propagates). That is *why* the SQLite services were split out of `@effected/xdg` — so xdg stays boundary tier. Do not let store's dependency leak upward: no store type signature exposes a `SqliteClient` type, the driver appears only inside `layerSqlite`/`layerTest`, and it must stay that way.
 
 ## The v4 SQL facts (easy to get wrong)
 

@@ -4,7 +4,7 @@ The beta-probed facts, the hardening budget and the test pins. Evidence only —
 the rules that follow from it live in the parent.
 
 **Parent:** [@effected/schemastore context](./CLAUDE.md) ·
-**Design doc:** `@../../.claude/design/effected/packages/schemastore.md`
+**Design doc:** `@./okf/modules/schemastore.md`
 
 ## Verified against the beta (do not re-litigate from memory)
 

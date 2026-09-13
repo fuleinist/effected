@@ -4,7 +4,7 @@ Child context file for the environment, input, state and logging services. The
 rules live in the parent; this file is why they are shaped that way.
 
 **Parent:** [CLAUDE.md](./CLAUDE.md)
-**Design depth:** `@../../.claude/design/effected/packages/github-actions-runtime.md`
+**Design depth:** `@./okf/interfaces/actions-runtime.md`
 
 ---
 

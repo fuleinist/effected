@@ -5,14 +5,14 @@ service: a pure synchronous core usable from a hook script with no runtime,
 under one `Journal` service whose scoped layer watches the file for external
 appends and cross-observes another instance over the same path.
 
-**Design doc:** `@../../.claude/design/effected/packages/jsonl.md` — load
+**Design doc:** `@./okf/modules/jsonl.md` — load
 before changing behavior; it is the contract this package implements and the
 entry point to two children:
 
-- `@../../.claude/design/effected/packages/jsonl-journal.md` — Load when:
+- `@./okf/interfaces/jsonl-journal.md` — Load when:
   changing the append primitive, atomicity, the publish stage, shutdown
   refusal/drain, or the cooperative-writer process model.
-- `@../../.claude/design/effected/packages/jsonl-reads.md` — Load when: working
+- `@./okf/interfaces/jsonl-slice.md` — Load when: working
   on `Slice`, `query`/`changes`/`projection`, or the read economy.
 
 ## Tier: boundary

@@ -2,7 +2,7 @@
 
 The lexical half of the package: the public positioned token stream and the yamllint-class lint system built on it (#129). Both stay **pure tier** — strings in, tokens, diagnostics or a fixed string out. No file discovery, no config loading, no CLI, no autofix-to-disk; the runner is a consumer's tier.
 
-**Design doc:** `@../../.claude/design/effected/yaml-lint.md` — load when changing the token surface, the rule model, a built-in rule, the config schema or autofix.
+**Design doc:** `@./okf/interfaces/yaml-lint.md` — load when changing the token surface, the rule model, a built-in rule, the config schema or autofix.
 
 ## Public modules
 

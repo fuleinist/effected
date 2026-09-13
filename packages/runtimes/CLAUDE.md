@@ -4,7 +4,7 @@ Resolve semver-compatible Node.js, Bun and Deno versions from the live release f
 
 Three resolver services (`NodeResolver`, `BunResolver`, `DenoResolver`), each in three cache strategies, over one parameterized internal engine. The `runtime-resolver` binary lives in its own external repo, not this workspace, and is not this package's problem.
 
-**Design doc:** `@../../.claude/design/effected/packages/runtimes.md` — load before changing the strategies, the error ladder or the release index.
+**Design doc:** `@./okf/modules/runtimes.md` — load before changing the strategies, the error ladder or the release index.
 
 ## Tier: boundary
 

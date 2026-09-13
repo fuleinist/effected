@@ -2,14 +2,14 @@
 
 Monorepo workspace tooling as Effect services: workspace root discovery, package enumeration, the dependency graph, package-manager detection, pnpm catalog resolution, lockfile IO and git-based change detection.
 
-**Design doc:** `@../../.claude/design/effected/packages/workspaces.md` — Load when: changing the error model, a composite layer, or any service contract. Its six children carry the per-area depth:
+**Design doc:** `@./okf/modules/workspaces.md` — Load when: changing the error model, a composite layer, or any service contract. Its six children carry the per-area depth:
 
-- `@../../.claude/design/effected/packages/workspaces-discovery.md` — Load when: touching enumeration, traversal, `WorkspacePackage` or `PackageManagerDetector`.
-- `@../../.claude/design/effected/packages/workspaces-graph.md` — Load when: touching `DependencyGraph`, cycle detection, `levels` or the Mermaid rendering.
-- `@../../.claude/design/effected/packages/workspaces-catalogs.md` — Load when: touching catalog assembly, `ConfigDependencyHooks` or `peerDependencyRules` seeding.
-- `@../../.claude/design/effected/packages/workspaces-peer-check.md` — Load when: touching `PeerCheck`, the `unverified` reasons or the suppression axes.
-- `@../../.claude/design/effected/packages/workspaces-snapshots.md` — Load when: touching at-ref reads, `WorkspaceStateSnapshot` or `ChangeDetector`.
-- `@../../.claude/design/effected/packages/workspaces-release.md` — Load when: working on `PublishabilityDetector`, `VersioningStrategy` or `ReleaseTag`.
+- `@./okf/interfaces/workspaces-discovery.md` — Load when: touching enumeration, traversal, `WorkspacePackage` or `PackageManagerDetector`.
+- `@./okf/interfaces/workspaces-graph.md` — Load when: touching `DependencyGraph`, cycle detection, `levels` or the Mermaid rendering.
+- `@./okf/interfaces/workspaces-catalogs.md` — Load when: touching catalog assembly, `ConfigDependencyHooks` or `peerDependencyRules` seeding.
+- `@./okf/interfaces/workspaces-peer-check.md` — Load when: touching `PeerCheck`, the `unverified` reasons or the suppression axes.
+- `@./okf/interfaces/workspaces-snapshots.md` — Load when: touching at-ref reads, `WorkspaceStateSnapshot` or `ChangeDetector`.
+- `@./okf/interfaces/workspaces-release.md` — Load when: working on `PublishabilityDetector`, `VersioningStrategy` or `ReleaseTag`.
 
 ## Child context files
 

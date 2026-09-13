@@ -4,7 +4,7 @@ What each module exposes. Surfaces only — the rules that govern them live in t
 parent.
 
 **Parent:** [@effected/schemastore context](./CLAUDE.md) ·
-**Design doc:** `@../../.claude/design/effected/packages/schemastore.md`
+**Design doc:** `@./okf/modules/schemastore.md`
 
 ## Assembly
 

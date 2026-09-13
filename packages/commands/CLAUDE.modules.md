@@ -4,7 +4,7 @@ The seven source modules and the test layout. Surfaces only — the rules that
 govern them live in the parent.
 
 **Parent:** [@effected/commands context](./CLAUDE.md) ·
-**Design doc:** `@../../.claude/design/effected/packages/commands.md`
+**Design doc:** `@./okf/modules/commands.md`
 
 ## Source modules
 

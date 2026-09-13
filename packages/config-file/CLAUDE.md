@@ -14,7 +14,7 @@ for PBKDF2 derivation and AES-GCM, `globalThis.crypto.getRandomValues` for salts
 and nonces. **There is no `node:crypto` import, and adding one is a regression** —
 the platform global keeps the module runtime-agnostic as well as dependency-free.
 
-**Design doc:** `@../../.claude/design/effected/packages/config-file.md` — load
+**Design doc:** `@./okf/modules/config-file.md` — load
 when changing the pipeline seams, the error set, or the codec boundaries.
 
 ## Public surface

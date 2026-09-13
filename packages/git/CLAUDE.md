@@ -2,7 +2,7 @@
 
 Typed git introspection over core's `ChildProcessSpawner`: a **read tier** that reads a repository's state at any ref without checking it out (including the network read `lsRemote` and the index read `lsFiles`), plus a clearly-marked **mutating tier** that changes it. It also carries a **pure git-config core** — `GitConfig` (a lossless, surgical-edit document model) with `Gitmodules` on top, no subprocess anywhere near them. `@effected/workspaces` runs `ChangeDetector` and `WorkspaceSnapshots` on this package's `Git`.
 
-**Design doc:** `@../../.claude/design/effected/packages/git.md` — Load when: changing the service surface, the error taxonomy or the config core.
+**Design doc:** `@./okf/modules/git.md` — Load when: changing the service surface, the error taxonomy or the config core.
 
 ## Child context files
 

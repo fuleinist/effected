@@ -4,12 +4,11 @@ The boundary layer of an `effect/unstable/cli` program. Four exports, all
 presentation: `CliLogger`, `CliRuntime`, `SchemaIssueRenderer`,
 `ConfigIssueRenderer`.
 
-**Design doc:** `@../../.claude/design/effected/packages/cli.md` — Load when:
+**Design doc:** `@./okf/modules/cli.md` — Load when:
 changing the public surface, the logger's stream routing, the failure-reporting
-combinator or the renderers. It was written *before* the port and corrected
-against what shipping taught, so it carries the reasoning this file only
+combinator or the renderers. It carries the reasoning this file only
 states. The consumer record behind it is
-`@../../.claude/design/effected/consumers/reposets.md` — Load when: weighing a
+`@./okf/consumers/reposets.md` — Load when: weighing a
 new request against what the first consumer actually reported.
 
 ## The rule that defines scope

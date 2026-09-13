@@ -4,7 +4,7 @@ Child context file for the domain half: one service per GitHub noun, the configu
 
 **Parent:** [CLAUDE.md](./CLAUDE.md)
 **Design depth:**
-`@../../.claude/design/effected/packages/github-resources.md`
+`@./okf/interfaces/github-resources.md`
 
 ---
 
@@ -123,4 +123,4 @@ when it was said, or re-notifies everyone watching.
 
 ## The closing-reference grammar lives in @effected/github-references
 
-It moved out on 2026-08-17, along with the dialect rules that used to be documented here. This package keeps a compat re-export of the six moved names and nothing else — see the parent's convention list. Work on the grammar itself in `@../github-references/CLAUDE.md`, with depth in `@../../.claude/design/effected/packages/github-references.md`.
+It moved out on 2026-08-17, along with the dialect rules that used to be documented here. This package keeps a compat re-export of the six moved names and nothing else — see the parent's convention list. Work on the grammar itself in `@../github-references/CLAUDE.md`, with depth in `@./okf/modules/github-references.md`.

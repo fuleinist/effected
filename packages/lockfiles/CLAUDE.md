@@ -2,7 +2,7 @@
 
 Pure lockfile parsing for the four package-manager formats — bun (`bun.lock` JSONC), npm (`package-lock.json`), pnpm (`pnpm-lock.yaml`) and yarn Berry (`yarn.lock`) — normalized into one unified `Lockfile` model, plus pure integrity checking of that model against workspace manifests. The `LockfileReader` service (root find, PM detect, file IO, dispatch) lives in the consumer, `@effected/workspaces`, never here.
 
-**Design doc:** `@../../.claude/design/effected/packages/lockfiles.md` — load when changing the model, the parse pipeline or either seam repair.
+**Design doc:** `@./okf/modules/lockfiles.md` — load when changing the model, the parse pipeline or either seam repair.
 
 **Child context:** Instances and resolution → `@./CLAUDE.resolution.md` — Load when: touching `instanceId`, `resolved`, `unresolvedEdges`, peer declarations or any per-format resolution walk.
 

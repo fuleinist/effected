@@ -4,7 +4,7 @@ GitHub's issue-reference grammar as pure functions: the nine closing keywords an
 
 **Tier: pure.** Peer-depends on `effect` only; zero runtime dependencies, no IO, `"sideEffects": false`. Never add a dependency here — the package exists so a consumer with no octokit can speak the grammar instead of re-deriving it.
 
-**Design doc:** `@../../.claude/design/effected/packages/github-references.md` — load when changing a dialect, adding a keyword set, or ruling on a disagreement with a downstream hand-rolled copy.
+**Design doc:** `@./okf/modules/github-references.md` — load when changing a dialect, adding a keyword set, or ruling on a disagreement with a downstream hand-rolled copy.
 
 ## The three dialects
 

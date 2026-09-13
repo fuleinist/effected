@@ -94,5 +94,12 @@
 		"**/skills/*/references/[0-9]*.md",
 		"**/.repos"
 	],
-	"noBanner": true
+	"noBanner": true,
+	"overrides": [
+		{
+			"combine": "merge",
+			"config": { "MD025": false },
+			"filter": ["okf/**/index.md"]
+		}
+	]
 }

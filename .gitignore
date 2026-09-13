@@ -58,3 +58,6 @@ scratchpad/__test__/*.test.ts
 
 # Written by catalog:sync for the workflow to read as a commit message; never committed.
 .changeset/catalog-sync.commit.txt
+
+# okfit migration scratch
+.okfit-migration/

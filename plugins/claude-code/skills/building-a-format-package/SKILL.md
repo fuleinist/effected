@@ -8,9 +8,9 @@ description: Use when building, scaffolding, or extending an @effected format pa
 The `@effected` kit's format packages — jsonc, yaml, toml, markdown (in
 flight) — share one architecture, deliberately. This skill is that
 architecture, so the next format starts from the pattern instead of
-re-deriving it from three design docs. Authority order when this skill and a
-design doc disagree: the package's design doc in
-`.claude/design/effected/packages/<name>.md` wins; this skill routes.
+re-deriving it from three Module concepts. Authority order when this skill and
+a Module concept disagree: the package's Module concept at
+`okf/modules/<name>.md` wins; this skill routes.
 
 For the hostile-input guard inventory (depth caps, numeric bounds,
 proto-pollution, C0, the typed-error invariant), see
@@ -288,8 +288,8 @@ than as coverage.
 
 ## Scaffold gotchas (the ones that bite)
 
-Full manifest: `.claude/design/effected/package-setup.md`. The load-bearing
-subset:
+Full manifest: `okf/conventions/package-manifest-and-scaffold.md`,
+`okf/runbooks/add-a-workspace-package.md`. The load-bearing subset:
 
 - **Stub `src/index.ts` BEFORE the first install.** A manifest with no
   entrypoint breaks every `pnpm run` in the repo (the `prepare: turbo run
@@ -310,10 +310,10 @@ subset:
   stripped optional platform binaries before.
 - Tests in `__test__/`, `@effect/vitest`, `assert.*` never `expect`.
 
-## Design doc first
+## Concept first
 
-No scaffolding before the package's design doc exists at
-`.claude/design/effected/packages/<name>.md`. The
-doc states tier, engine origin, module layout, hardening surfaces, corpus
-plan and parity notes against these standards — the sibling docs (toml.md is
+No scaffolding before the package's Module concept exists at
+`okf/modules/<name>.md`. The
+concept states tier, engine origin, module layout, hardening surfaces, corpus
+plan and parity notes against these standards — the sibling concepts (toml is
 the tightest) are the template.

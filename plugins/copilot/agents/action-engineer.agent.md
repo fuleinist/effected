@@ -53,9 +53,9 @@ the vendored source tree (resolved by that skill's ladder) settles
 inside a package; the workspace root resolves `effect@3` and will describe
 the v3 surface with total confidence.
 
-Read the package's `CLAUDE.md` first, then its design doc under
-`.claude/design/effected/packages/`, then the source. When those disagree, the
-source wins and the doc is a finding to report.
+Read the package's `CLAUDE.md` first, then its Module concept at
+`okf/modules/<pkg>.md`, then the source. When those disagree, the
+source wins and the concept is a finding to report.
 
 ## How you work
 

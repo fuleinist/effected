@@ -2,7 +2,7 @@
 
 In-memory implementation of core Effect's `FileSystem` service: one module, `MemoryFileSystem`, providing an isolated virtual POSIX volume behind the standard `FileSystem.FileSystem` key. The engine (`src/internal/volume.ts`) is a vendored port with attribution of Effect-TS/effect PR #6573 (pinned `c0528bd5`), the conformance suite of PR #6555 (pinned `2492ba9d`).
 
-**Design doc:** `@../../.claude/design/effected/packages/memfs.md` — load when changing the engine, the seeding API, the adaptation ledger, or re-vendoring against a newer upstream head.
+**Design doc:** `@./okf/modules/memfs.md` — load when changing the engine, the seeding API, the adaptation ledger, or re-vendoring against a newer upstream head.
 
 ## Tier: pure — and the zero-edges law
 

@@ -5,7 +5,7 @@ relocated here as second consumers materialized. Surfaces only — the rules tha
 govern them live in the parent.
 
 **Parent:** [@effected/npm context](./CLAUDE.md) ·
-**Design doc:** `@../../.claude/design/effected/packages/npm.md`
+**Design doc:** `@./okf/modules/npm.md`
 
 ## Contracts
 

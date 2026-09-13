@@ -1,0 +1,20 @@
+#:schema https://raw.githubusercontent.com/spencerbeggs/okfit/main/schemas/config/okfit-1.0.0.json
+
+[bundle]
+path = "okf"
+profile = "software-project"
+
+[actors]
+agent = "okfit/claude-code"
+humans = ["human:spencer", "human:fuleinist"]
+
+[types.Consumer]
+description = "An external application that consumes this repository from outside it and thereby scopes it: what it is, which surfaces it exercises, and where the kit's edge sits with it."
+guidance = "Write it as a register entry, not a work plan: nothing in it is scheduled. Name the repository, the surfaces it exercises (link the Modules and Interfaces), the capabilities it deliberately keeps for itself, and the open questions it holds the kit to. The consumer's repository is read-only from here: survey it, never modify it."
+required = ["repository"]
+
+[types.Consumer.fields.repository]
+description = "The consumer's repository as owner/name, for example savvy-web/silk-release-action."
+
+[tags.bundle]
+description = "Concerns install weight and what a consumer's bundle can reach: tree-shaking, module reachability, subpath entrypoints, and dependency edges taken or declined for their cost."

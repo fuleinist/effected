@@ -9,17 +9,17 @@ store, OIDC, artifacts, tool install, the reporting suite and the
 suite 2026-07-26). Peers: `effect` and `@effect/platform-node`. Six `@effected/*`
 dependencies, every arrow inward.
 
-**Design doc:** `@../../.claude/design/effected/packages/github-actions.md` — the
+**Design doc:** `@./okf/modules/github-actions.md` — the
 entry point, and the authority on what exists and why; read it before adding a
 module. Depth lives in four children, loaded on demand:
 
-- `@../../.claude/design/effected/packages/github-actions-runtime.md` — the
+- `@./okf/interfaces/actions-runtime.md` — the
   runtime services.
-- `@../../.claude/design/effected/packages/github-actions-storage.md` — cache,
+- `@./okf/interfaces/actions-storage.md` — cache,
   blob store, tool install.
-- `@../../.claude/design/effected/packages/github-actions-reporting.md` — the
+- `@./okf/interfaces/actions-reporting.md` — the
   check and markdown surfaces.
-- `@../../.claude/design/effected/packages/github-actions-attestation.md` — OIDC
+- `@./okf/interfaces/actions-attestation.md` — OIDC
   and provenance.
 
 **Child context files** carry the reasoning; the rules below stand alone. Load
@@ -84,7 +84,7 @@ as a union alias, so no signature moved. Members carry their own message's field
 rest. **The judgement: split when the reasons carry different fields, or when a
 caller plausibly recovers from one alone** — a closed set over one shared field
 set stays one class. Depth →
-`@../../.claude/design/effected/packages/github-actions.md#errors`.
+`@./okf/decisions/github-actions-per-reason-tagged-errors.md`.
 
 **Secrets and processes** → `@./CLAUDE.processes.md`
 

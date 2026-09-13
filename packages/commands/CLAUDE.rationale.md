@@ -4,7 +4,7 @@ Why the parent's rules exist: the deleted predecessors, the probes, and the
 incidents. Evidence only — the rules themselves live in the parent.
 
 **Parent:** [@effected/commands context](./CLAUDE.md) ·
-**Design doc:** `@../../.claude/design/effected/packages/commands.md`
+**Design doc:** `@./okf/modules/commands.md`
 
 ## The two deleted predecessors
 

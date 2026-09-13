@@ -7,7 +7,7 @@
 // License: MIT (https://github.com/Effect-TS/effect/blob/main/LICENSE)
 //
 // Port notes, the deliberate changes from the pinned upstream (the authoritative
-// adaptation ledger lives in .claude/design/effected/packages/memfs.md — anything
+// adaptation ledger lives in okf/modules/memfs.md — anything
 // else diverging from c0528bd5 is drift, not design):
 // - Imports come from the installed `effect` package instead of sibling source
 //   files; `badArgument`/`systemError` and the PlatformError types are reached

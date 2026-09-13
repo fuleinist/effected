@@ -51,6 +51,7 @@ jobs:
           config-dependencies: |
             @savvy-web/pnpm-plugin-silk
           dependencies: |
+            @okfit/*
             @savvy-web/*
             @vitest-agent/*
             rolldown-pnpm-config

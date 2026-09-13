@@ -7,7 +7,7 @@ after the sixteen merged before it. The only greenfield one: it is the honest
 successor to the v3 glue the `xdg` and `store` ports deliberately parked
 (`XdgFullLive`, `SqliteStateXdgLive`, `SqliteCacheXdgLive`).
 
-**Design doc:** `@../../.claude/design/effected/packages/app.md`
+**Design doc:** `@./okf/modules/app.md`
 
 ## It owns no domain logic — that is the whole identity
 

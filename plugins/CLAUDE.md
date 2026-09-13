@@ -4,15 +4,18 @@ This directory holds the repo's **two agent plugins**. Neither is an `@effected`
 library and neither publishes to npm; both are repo infrastructure that ships to
 users through the `spencerbeggs/bot` marketplaces.
 
-**Design doc:** `@../.claude/design/effected/plugin.md` — Load when: changing a
-skill, an agent or the hooks; it owns the skill catalog, the agent roster, the
-skill shape contract and what the bats suite pins. Do not restate that material
-here.
+**Concepts:** `okf/modules/claude-code-plugin.md`, `okf/modules/copilot-plugin.md`,
+`okf/conventions/plugin-claude-code-first.md`, `okf/conventions/skill-shape.md` —
+Load when: changing a skill, an agent or the hooks; they cover the skill catalog,
+the agent roster, the skill shape contract and what the bats suite pins. Do not
+restate that material here.
 
-**Construct index:** `@../.claude/design/effected/plugin-construct-index.md` —
-Load when: adding or annotating an exported construct, or touching
-`generate-constructs.mts`, `construct-annotations.json` or `construct-index.bats`;
-it owns the generator, the annotations sidecar, the bats pin and the
+**Construct index:** `okf/models/construct-annotations.md`,
+`okf/conventions/construct-index-is-generated.md`,
+`okf/conventions/evidence-ladder.md` — Load when: adding or annotating an
+exported construct, or touching `generate-constructs.mts`,
+`construct-annotations.json` or `construct-index.bats`; they cover the
+generator, the annotations sidecar, the bats pin and the
 `.claude/skills/constructs` loop.
 
 ## Layout

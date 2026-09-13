@@ -159,6 +159,6 @@ Two invariants remain this skill's to keep:
 - Migration ledger and retractions: `.superpowers/sdd/progress.md`
 - Vendored v4 source, pinned to the `effect` catalog tag: `.repos/effect`, a git submodule managed by the silk repos tooling (see `.claude/design/effected/architecture.md`)
 - Migration notes (rung 1): `.repos/effect/migration/*.md`
-- Design record for this loop: `.claude/design/effected/plugin.md`
+- Design record for this loop: `okf/modules/claude-code-plugin.md` and `okf/conventions/evidence-ladder.md`
 
 When the `effect` catalog bumps, the vendored tree is re-pinned **in the same commit** so the two never drift: `savvy repos pin effect effect@<new-tag>` (or the `repos_manage` MCP tool, `action:"pin"`). The pin stages the gitlink and manifest and returns a ready-made commit message; fold it into the catalog-bump commit and review any `staleNoteIds` it flags. On a fresh clone or new worktree the checkout is empty until `savvy repos sync` runs.

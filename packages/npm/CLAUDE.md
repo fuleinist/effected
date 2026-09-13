@@ -4,7 +4,7 @@ Effect contracts for resolving pnpm `catalog:` and `workspace:` specifiers, the
 kit's shared dependency vocabulary, and the registry, tarball and publish
 services over them.
 
-**Design doc:** `@../../.claude/design/effected/packages/npm.md` — load when changing contract shapes, adding a resident concept, or reconciling against a real resolver.
+**Design doc:** `@./okf/modules/npm.md` — load when changing contract shapes, adding a resident concept, or reconciling against a real resolver.
 
 ## Child context files
 
@@ -19,7 +19,7 @@ An **internal package with no source repo**, holding the dependency-resolution c
 
 **Boundary tier since 2026-07-25 — it was pure, and the change is deliberate. Do
 not let "pure" creep back in.**
-`NpmRegistry`, `PackageTarball` and `PackagePublish` do their own IO through core contracts in `R` (`HttpClient`, `ChildProcessSpawner`, `FileSystem`, `Crypto`) — [R4](../../.claude/design/effected/effect-standards.md#dependency-policy)'s definition of boundary. Not R2: the `@effected/commands` edge is boundary with zero runtime deps and does not propagate.
+`NpmRegistry`, `PackageTarball` and `PackagePublish` do their own IO through core contracts in `R` (`HttpClient`, `ChildProcessSpawner`, `FileSystem`, `Crypto`) — [R4](../../okf/conventions/dependency-policy.md#r4--tier-follows-a-packages-own-surface-never-its-consumers)'s definition of boundary. Not R2: the `@effected/commands` edge is boundary with zero runtime deps and does not propagate.
 
 Peers on `effect` plus one pure-to-pure `@effected/semver` edge — `workspace:^`
 in `peerDependencies` (a published patch floats), mirrored by `workspace:*` in

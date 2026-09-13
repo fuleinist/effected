@@ -9,7 +9,7 @@ services. The `minimatch` devDependency is the **test oracle only** — pinned
 exactly to the ported version (10.2.5) and imported only under `__test__/`.
 Never add it to `dependencies`; never let it drift from the vendored version.
 
-**Design doc:** `@../../.claude/design/effected/packages/glob.md` — load when
+**Design doc:** `@./okf/modules/glob.md` — load when
 changing the public API, the dialect, the error set, or the hardening story.
 
 ## Engine/facade split
@@ -82,8 +82,8 @@ matches `packages/a/b` (glob-core's issue-#62 rewrite is not carried forward).
   compilation; each `compile` twin is `Effect.fromResult(...)` behind its
   existing span and adds nothing else — the span is the whole reason the
   `Effect` form exists. Never re-derive compilation on the `Effect` side. Kit
-  convention — `@../../.claude/design/effected/formatter-convention.md`,
-  decisions 6 and 6a. `compile`/`GlobSet.compile` carry the only `Effect.fn`
+  convention — `@./okf/conventions/sync-primitive-policy.md` and
+  `@./okf/decisions/sync-form-named-result.md`. `compile`/`GlobSet.compile` carry the only `Effect.fn`
   spans; `matches` and the getters are span-free.
 - `GlobPatternOptions` — full minimatch surface, schema-validated; invalid
   options throw at `make` (defect). `braceExpandMax` is bounded `[1, 100_000]`
@@ -129,6 +129,6 @@ it**. `package.json` stays `"private": true`.
   remains open is narrower: **no dedicated conformance run against a reference
   enumerator** has been performed, so nothing asserts case-by-case agreement
   with `@actions/glob` or another reference implementation. See
-  `@../../.claude/design/effected/packages/glob.md`.
+  `@./okf/modules/glob.md`.
 - Both getters are computed under default options; their `matchBase`/win32
   interaction stays undefined (documented for default-options patterns only).

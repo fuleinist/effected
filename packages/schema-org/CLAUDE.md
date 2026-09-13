@@ -6,8 +6,8 @@ schema.org vocabulary as Effect Schema classes, a `JsonLdDocument` that assemble
 
 **Design docs:**
 
-- `@../../.claude/design/effected/packages/schema-org.md` — load before changing the `.` entrypoint: the node vocabulary, `JsonLdDocument`, node identity or the serializer.
-- `@../../.claude/design/effected/packages/schema-org-conformance.md` — load before changing the `./validate` entrypoint: `Conformance`, `Vocabulary`, the interned table, the committed data file or the generator.
+- `@./okf/modules/schema-org.md` — load before changing the `.` entrypoint: the node vocabulary, `JsonLdDocument`, node identity or the serializer.
+- `@./okf/interfaces/schema-org-validate.md` — load before changing the `./validate` entrypoint: `Conformance`, `Vocabulary`, the interned table, the committed data file or the generator.
 
 ## The one invariant
 

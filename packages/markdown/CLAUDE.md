@@ -15,15 +15,15 @@ Zero runtime deps, no IO. ~13k src LOC across 15 public modules plus the
 here. Nothing here knows about any consumer; markdown's dependency arrow never
 points outward.
 
-**Design doc:** `@../../.claude/design/effected/packages/markdown.md` — load when
+**Design doc:** `@./okf/modules/markdown.md` — load when
 changing the public API, the dialect registries, the node shape, the hardening
 story, or the `$schema` resolver grammar. It is the contract this package
 implements and the entry point to two children:
 
-- `@../../.claude/design/effected/packages/markdown-frontmatter.md` — Load when:
+- `@./okf/interfaces/markdown-frontmatter.md` — Load when:
   working on a frontmatter codec, the split/join primitives, or the optional
   `yaml`/`toml`/`jsonc` peers they consume.
-- `@../../.claude/design/effected/packages/markdown-mdx.md` — Load when: touching
+- `@./okf/interfaces/markdown-mdx.md` — Load when: touching
   an MDX node class, the unions it widens, or how the stringifier serializes it.
 
 **Child context files** carry the reasoning; the rules below stand alone. Load

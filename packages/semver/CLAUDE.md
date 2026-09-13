@@ -8,7 +8,7 @@ shape elsewhere, copy what this package does.
 `"sideEffects": false`. Never add a filesystem, network or clock dependency
 here; a boundary-tier consumer owns that.
 
-**Design doc:** `@../../.claude/design/effected/packages/semver.md` — load when
+**Design doc:** `@./okf/modules/semver.md` — load when
 changing the public API, the error set, or the grammar pipeline.
 
 ## Public surface
@@ -57,7 +57,8 @@ primitives). Outside `index.ts`, modules import explicitly — no barrels.
   `Range.intersectResult` hold the engine; each `Effect` twin is
   `Effect.fromResult(...)` behind its existing span, so the two cannot drift.
   Never re-derive the grammar on the `Effect` side. Kit convention —
-  `@../../.claude/design/effected/formatter-convention.md`, decision 6. The
+  `@./okf/conventions/sync-primitive-policy.md` and
+  `@./okf/decisions/sync-form-named-result.md`. The
   comparison statics (`SemVer.compare`, `Range.satisfies`, ...) are out of
   scope: already plain, total and dual, so a `Result` twin would be dead
   surface.

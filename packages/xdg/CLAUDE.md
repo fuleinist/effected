@@ -3,7 +3,7 @@
 XDG Base Directory resolution. Eleventh migration, and the XDG half of the
 `xdg-effect` split — the SQLite half is `@effected/store`.
 
-**Design doc:** `@../../.claude/design/effected/packages/xdg.md`
+**Design doc:** `@./okf/modules/xdg.md`
 
 ## Tier: boundary
 

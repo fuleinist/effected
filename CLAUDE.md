@@ -8,26 +8,22 @@ The monorepo holds libraries only — applications stay in external repos.
 
 **Releases are changeset-driven: CI builds the changesets and releases the packages they name.** A release may be the whole kit or a single package — both are ordinary. Everything published is `0.x` and unstable; `1.0.0` waits for Effect v4 GA.
 
-## Design Documentation
+## Knowledge bundle
 
-The foundational design docs live in `.claude/design/effected/` (config: `.claude/design/design.config.json`). Load each one on demand:
+Durable project knowledge lives as OKF concepts under `okf/`, not in prose here. Start at `okf/index.md` — it lists every concept — then load the specific one a task needs:
 
-- Architecture → `@./.claude/design/effected/architecture.md` — Load when: changing repo structure, build pipeline, tooling, or workspace/catalog setup.
-- Effect standards → `@./.claude/design/effected/effect-standards.md` — Load when: designing or porting a library API, asking whether core already owns a primitive *and whether its shape fits the call site*, choosing a test double, or making dependency/peer-closure decisions.
-- Package inventory → `@./.claude/design/effected/package-inventory.md` — Load when: picking the next migration target or updating a package's migration status.
-- Releases → `@./.claude/design/effected/releases.md` — Load when: reasoning about how a release is cut or versioned, or scoping a package against its consumers.
-- Roadmap → `@./.claude/design/effected/roadmap.md` — Load when: planning post-migration work or picking the next workstream.
-- Migration playbook → `@./.claude/design/effected/migration-playbook.md` — Load when: starting or continuing a package migration.
-- Package setup → `@./.claude/design/effected/package-setup.md` — Load when: scaffolding or adding a new workspace package.
-- Catalog sync → `@./.claude/design/effected/catalog-sync.md` — Load when: touching the published `effected` catalog literal, the `catalog:sync` / `catalog:check` scripts, or `.github/workflows/catalog-sync.yml`.
-- Formatter convention → `@./.claude/design/effected/formatter-convention.md` — Load when: designing a formatting or parsing entry point, or reasoning about a formatter's fidelity guarantee.
-- Sync primitive policy → `@./.claude/design/effected/sync-primitive-policy.md` — Load when: designing a pure boundary's surface shape, or deciding whether to expose a sync `Result` primitive alongside an `Effect` form.
-- Plugin → `@./.claude/design/effected/plugin.md` — Load when: working in `plugins/` on the "effected" Claude Code plugin or its experimental Copilot port.
-- Plugin construct index → `@./.claude/design/effected/plugin-construct-index.md` — Load when: adding or annotating an exported construct, or touching `generate-constructs.mts` / `construct-annotations.json`.
-- GitHub Action canon → `@./.claude/design/effected/github-action-canon.md` — Load when: building or reviewing a GitHub Action repository on the kit, or editing the Actions skill suite that teaches it.
-- Scratchpad → `@./.claude/design/effected/scratchpad.md` — Load when: changing the scratchpad workspace's committed shell or its ghost-workspace exclusions.
-
-Per-package design docs live in `.claude/design/effected/packages/`; consumer dogfood records in `.claude/design/effected/consumers/`. Two docs sit beside the roster and are **deliberately off it** — do not "repair" the list by adding them: `yaml-lint.md` is a topic doc for `@effected/yaml`, reached from that package's context files, and `benchmarking.md` designs a system nothing has built yet.
+- Project purpose, scope, packages table, consumers → `okf/project.md`.
+- Workspace root (layout, build pipeline, dependency resolution, vendored source) → `okf/modules/workspace.md` — Load when: changing repo structure, build pipeline, tooling, or workspace/catalog setup.
+- Effect standards (schema, services/layers, error handling, observability, input hardening, testing, dependency policy, requiring core in `R`) → `okf/conventions/schema-standards.md`, `service-and-layer-standards.md`, `error-standards.md`, `observability-standards.md`, `input-hardening-standards.md`, `testing-standards.md`, `dependency-policy.md`, `require-in-r-default.md`, `peer-dependency-discipline.md` — Load when: designing or porting a library API, asking whether core already owns a primitive *and whether its shape fits the call site*, choosing a test double, or making dependency/peer-closure decisions.
+- Release model and catalog sync → `okf/decisions/release-model.md`, `okf/interfaces/catalog-sync-cli.md`, `okf/gotchas/catalog-sync-check-goes-red-when-it-repairs.md` — Load when: reasoning about how a release is cut or versioned, scoping a package against its consumers, or touching the published `effected` catalog literal, the `catalog:sync` / `catalog:check` scripts, or `.github/workflows/catalog-sync.yml`.
+- Adding a package → `okf/runbooks/add-a-kit-package.md`, `okf/runbooks/add-a-workspace-package.md` — Load when: starting a new `@effected` library or scaffolding a new workspace package.
+- Format packages (parse/format/edit surface, fidelity guarantee, sync-vs-effectful primitives) → `okf/conventions/format-package-convention.md`, `okf/conventions/sync-primitive-policy.md` — Load when: designing a formatting or parsing entry point, or reasoning about a formatter's fidelity guarantee.
+- Plugins → `okf/modules/claude-code-plugin.md`, `okf/modules/copilot-plugin.md` — Load when: working in `plugins/` on the "effected" Claude Code plugin or its experimental Copilot port.
+- Construct index → `okf/models/construct-annotations.md`, `okf/conventions/construct-index-is-generated.md` — Load when: adding or annotating an exported construct, or touching `generate-constructs.mts` / `construct-annotations.json`.
+- GitHub Action canon → `okf/conventions/github-action-canon.md` — Load when: building or reviewing a GitHub Action repository on the kit, or editing the Actions skill suite that teaches it.
+- Scratchpad → `okf/modules/scratchpad.md` — Load when: changing the scratchpad workspace's committed shell or its ghost-workspace exclusions.
+- Consumers (the external applications that scope the kit) → `okf/consumers/` — Load when: reasoning about who a capability serves, or surveying what a consumer already exercises.
+- A specific package → `okf/modules/<pkg>.md` (one per `packages/*`) — Load when: working inside that package.
 
 ### Child context files
 
@@ -40,11 +36,11 @@ Detail lifted out of this file. Load on demand:
 
 ### Kit composition
 
-The kit is **31 publishable packages**: 30 libraries plus the `pnpm-plugin-effect` companion, and all 31 have published (`schema-org`, the newest, on 2026-08-26). New packages follow the migration playbook: design doc first, then port.
+The kit is **31 publishable packages**: 30 libraries plus the `pnpm-plugin-effect` companion, and all 31 have published (`schema-org`, the newest, on 2026-08-26). New packages follow `okf/runbooks/add-a-kit-package.md`: an `okf/modules/<pkg>.md` Module concept first, then port.
 
-`@effected/config-file` holds every config **codec**; the `jsonc`, `yaml` and `toml` **format** packages stay independent. The four codecs are **free-standing named exports** — `JsonCodec`, `JsoncCodec`, `YamlCodec`, `TomlCodec`, one module each — with `ConfigCodec` the interface only. **Never collect them into a namespace object**: it would drag every parsing engine into a JSON-only consumer's bundle, killing tree-shaking silently. Read `@./.claude/design/effected/packages/config-file.md` before touching it.
+`@effected/config-file` holds every config **codec**; the `jsonc`, `yaml` and `toml` **format** packages stay independent. The four codecs are **free-standing named exports** — `JsonCodec`, `JsoncCodec`, `YamlCodec`, `TomlCodec`, one module each — with `ConfigCodec` the interface only. **Never collect them into a namespace object**: it would drag every parsing engine into a JSON-only consumer's bundle, killing tree-shaking silently. Read `okf/modules/config-file.md` and `okf/decisions/codecs-are-free-standing-named-exports.md` before touching it.
 
-`package-inventory.md` and `releases.md` are authoritative — read them before starting work.
+`okf/project.md` is authoritative on packages and consumers — read it before starting work.
 
 ## Repository Layout
 
@@ -58,7 +54,7 @@ The kit is **31 publishable packages**: 30 libraries plus the `pnpm-plugin-effec
 
 ### Package context files
 
-Each package has its own `CLAUDE.md` and documents itself. Read it before working there; do not duplicate its content here. The roster of all 31 — what each one is, and the parenthetical tier tag every **library** carries (pure / boundary / integrated) per `effect-standards.md` — lives in `@./CLAUDE.packages.md`. Load it when: choosing which package owns a capability, or checking a package's tier or scope before working in it.
+Each package has its own `CLAUDE.md` and documents itself. Read it before working there; do not duplicate its content here. The roster of all 31 — what each one is, and the parenthetical tier tag every **library** carries (pure / boundary / integrated, per `okf/glossary/library-tier.md`) — lives in `@./CLAUDE.packages.md`. Load it when: choosing which package owns a capability, or checking a package's tier or scope before working in it.
 
 ## Build Pipeline
 

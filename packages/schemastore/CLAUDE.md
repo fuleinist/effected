@@ -7,7 +7,7 @@ carrying for the language-server keyword families, the catalog vocabulary in
 both versioning modes, structural and hygiene lints, canonical JSON text,
 write-if-changed IO with change classification, and validation over ajv.
 
-**For the full design:** → `@../../.claude/design/effected/packages/schemastore.md`
+**For the full design:** → `@./okf/modules/schemastore.md`
 
 Load when changing an emitted shape, the versioning grammar or the gating model.
 

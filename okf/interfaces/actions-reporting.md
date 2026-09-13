@@ -1,0 +1,116 @@
+---
+type: Interface
+title: actions-reporting
+description: CheckState, ManagedDocument, GitHubMarkdown and CheckDocument — the living-document surfaces an action reports progress into.
+status: stable
+kind: api
+resource: ../../packages/github-actions/src
+tags:
+  - architecture
+  - dx
+generated:
+  by: "okfit/claude-code"
+  at: 2026-09-13T05:33:04Z
+  body_sha256: 51273235499cd8a6f654e3de3a0334e7083b22d963d64453e7865153f67f55a7
+---
+
+# actions-reporting
+
+## Contract
+
+Four modules answer one consumer shape: an action that reports progress
+into a **living document** — a pull-request comment or check summary
+rewritten as checks resolve. None of the four talks to GitHub; the
+reconciler writes through a narrow sink the caller supplies, so the same
+registry drives a pull-request comment, a check summary or a file, and the
+API calls that carry any of it belong to [`github`](../modules/github.md)
+and to the action composing them. `GitHubMarkdown.ts` is the only module
+in this package permitted to import [`markdown`](../modules/markdown.md) —
+see [bundle reachability](../modules/github-actions.md#bundle-reachability).
+
+### `CheckState` — pure vocabulary
+
+The states a run reports (running, pass, fail, warn,
+user-interaction-required, skipped, timeout) plus the projection onto
+GitHub's check-run status-and-conclusion wire. The conclusion literals are
+mirrored **structurally** rather than imported, so the module never
+reaches `github` — a check state is a reporting concept an action can hold
+without linking an API client. A test pins the mirror against the real
+union so the duplication cannot drift silently. Never "fix" this into an
+import.
+
+### `ManagedDocument`
+
+A marker-delimited document: a sentinel comment identifies this action's
+document among many, and named regions inside it are replaced from
+current state while every byte the human wrote around them survives.
+Create-or-update is one parse, not a find-then-branch. It is a thin
+domain fixing of `templates`' section document (HTML comment style, a
+fixed marker phrase, namespaced wire keys), not a second engine — the
+region grammar, the line-ending invariant and the idempotence proof stay
+in [`templates`](../modules/templates.md), under test there.
+
+A region may carry `name="value"` metadata on its marker: `withRegions`
+takes an optional triple alongside the existing two-tuple, and `meta` is
+always present on the `regions` getter — never optional, so a reader never
+branches on absence — but not addressable: `entry(key)` looks a region up
+by key exactly as `region` does. `ManagedDocumentError`'s `invalidAttribute`
+kind reports the consumer's region key, not the namespaced wire key.
+
+### `GitHubMarkdown` — the writer
+
+A fluent writer for GitHub's surfaces (tables, headings, links, code,
+lists, collapsible sections, raw passthrough). Every member takes
+pre-rendered markdown and returns a string, so compositions read as plain
+string assembly — the writer owns the structure. This deletes the defect
+where joining strings corrupts a table when a cell contains a pipe: a
+cell's pipes are escaped, a fence inside a code block widens the fence,
+and a URL with spaces is bracketed. The serializer's only failure is a
+nesting-depth guard that is unreachable from this writer, because every
+member wraps pre-rendered markdown in exactly one passthrough node, so a
+composition nests strings, not trees — pinned by tests that nest the
+writer's own output a thousand deep. `tableFor` requires a `format`
+option for any non-string-encoded field rather than defaulting to
+stringification; the serializer's impossible arm is a defect, not a
+fallback.
+
+### `CheckDocument` — the reconciler
+
+An in-process registry of check reports, last-write-wins per check and
+resolution non-terminal, projected onto a managed document by a scoped
+background fiber and written through a narrow sink (a function from
+rendered text to an effect, optionally paired with a read-back). Push, not
+pull — nothing here polls GitHub. Trailing debounce with a max-wait
+coalesces a burst into one write carrying its final state. A
+byte-identical render issues no write at all. The finalizer is registered
+before the daemon is forked, so it runs after the fork's own interruption
+finalizer and the two cannot race for the sink; a background pass that
+fails logs a structured warning and leaves the registry intact, and only
+an explicit `flush` surfaces the typed error.
+
+**The staleness guard** answers two workflow runs in flight against one
+document. Without it, each pass reconciles against the last text *this
+process* wrote, a process-local shadow, so a run never sees another run's
+writes and happily rewrites over them. Two independent, opt-in mechanisms
+close it: a sink `read` makes every pass reconcile against the live text
+instead of the shadow; a per-run `stamp` (`{ at, runId }`) drops any pass
+whose stamp is strictly older than the most recent stamp already on the
+document, via `CheckDocumentStamp.isAtLeastAsRecent` — total and
+reflexive, comparing `at` as epoch milliseconds when both sides parse as
+dates and `runId` numerically when both sides are non-blank and finite,
+falling back to lexical comparison otherwise. The blank guard on `runId`
+is load-bearing: `Number("")` is a finite `0`, so a blank runId (the
+ordinary case when `GITHUB_RUN_ID` is unset) would otherwise compare equal
+to `"0"` and outrank `"-1"`. The stamp is a per-run constant, minted once
+at startup, never per pass, which is what preserves the
+byte-identical-render suppression. `flush` answers
+`written | unchanged | stale`, and a drop announces itself once, at the
+transition, not on every repeat.
+
+## Stability
+
+`CheckState`, `ManagedDocument`, `GitHubMarkdown` and `CheckDocument` are
+the contract surface. The sink function shape (`write`, optional `read`)
+and the `stamp` option are part of the contract; the process-local shadow
+used when neither is supplied is an implementation detail a consumer must
+not rely on for multi-run correctness.

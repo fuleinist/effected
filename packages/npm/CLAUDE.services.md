@@ -5,7 +5,7 @@ executor that runs npm. Surfaces and evidence only — the rules that govern the
 live in the parent.
 
 **Parent:** [@effected/npm context](./CLAUDE.md) ·
-**Design doc:** `@../../.claude/design/effected/packages/npm.md`
+**Design doc:** `@./okf/modules/npm.md`
 
 ## `NpmRegistry` (`src/NpmRegistry.ts`)
 

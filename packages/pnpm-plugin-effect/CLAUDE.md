@@ -1,13 +1,13 @@
 # @effected/pnpm-plugin-effect
 
-The kit's **companion** package: published and installable, but **not a library** — it exposes no API, so nothing can import it and it has **no tier**. Companion is a *category, not a fourth tier*: the three tiers sit on the dependency-surface axis, meaningless here ([effect-standards.md](../../.claude/design/effected/effect-standards.md#companion-packages-published-but-not-a-library)).
+The kit's **companion** package: published and installable, but **not a library** — it exposes no API, so nothing can import it and it has **no tier**. Companion is a *category, not a fourth tier*: the three tiers sit on the dependency-surface axis, meaningless here ([the companion-package glossary entry](../../okf/glossary/companion-package.md)).
 
 **Do not call it "repo infrastructure"** — that reads as internal-only tooling and twice produced errors claiming it does not publish. It **is public and it is published to npm**, released alongside the rest of the kit. **Do not infer from `"private": true` that it will not publish**; every source manifest here is private and the bundler's `publishConfig` transform emits the publishable one at build time.
 
 For consumers it is **optional but real**: installing it holds their `effect` versions, peer floors and `@effected/*` versions at the values this kit was built and tested against.
 
 **For full design rationale:**
-→ `@../../.claude/design/effected/packages/pnpm-plugin-effect.md`
+→ `@./okf/modules/pnpm-plugin-effect.md`
 
 Load when changing catalog strategy, advancing the Effect pin, or debugging workspace peer resolution.
 
@@ -30,7 +30,7 @@ The kit pair, for consumers only — internal edges stay `workspace:*` and these
 
 - **`catalog:effected` / `catalog:effected:peers`** — every publishable kit package but one, object form, `strategy: "lock-minor"`, `source: "workspace"`, holding each package's **next release** version.
 
-Four properties are load-bearing ([reasoning](../../.claude/design/effected/packages/pnpm-plugin-effect.md#the-effected-catalog-the-kits-own-version-surface)):
+Four properties are load-bearing ([reasoning](../../okf/models/effected-catalog-literal.md); the plugin-never-in-its-own-catalog rule is also its own [Decision](../../okf/decisions/plugin-never-in-its-own-catalog.md)):
 
 - **`@effected/pnpm-plugin-effect` is deliberately absent from its own catalog, and must stay absent.** Catalogue it and every rewrite bumps the plugin, invalidating the catalog and writing another changeset — a release loop with no termination condition. The omission *is* the termination condition; `__test__/catalog.test.ts` pins it.
 - **Publishability is `publishConfig.access === "public"`, never `private === false`.** A membership check written against `private` classifies the whole kit as unpublishable and silently emits an empty catalog.
@@ -51,7 +51,7 @@ The Effect **v3** interop catalogs (`effect3` / `effect3:peers`) and the camelCa
 
 Advancing the pin is `pnpm pnpm:up` then `pnpm pnpm:export`.
 
-**Agents may run** the root `pnpm catalog:check` (read-only gate) and `pnpm catalog:sync` (rewrites only this package's `savvy.build.ts` plus one fixed-name changeset). CI syncs on every **PR** to `main` and to `changeset-release/main` (plus `workflow_dispatch`) — there is no push trigger — so opening the release PR is itself the trigger and no hand-run sync is needed before a release. Mechanics → `@../../.claude/design/effected/catalog-sync.md` — Load when: touching the sync scripts, the catalog literal, or the workflow.
+**Agents may run** the root `pnpm catalog:check` (read-only gate) and `pnpm catalog:sync` (rewrites only this package's `savvy.build.ts` plus one fixed-name changeset). CI syncs on every **PR** to `main` and to `changeset-release/main` (plus `workflow_dispatch`) — there is no push trigger — so opening the release PR is itself the trigger and no hand-run sync is needed before a release. Mechanics → `@./okf/interfaces/catalog-sync-cli.md` — Load when: touching the sync scripts, the catalog literal, or the workflow.
 
 **Builds must never write the catalog** — an earlier seam rewrote it from the build's freeze path, making every `build:dev` and CI build mutate the repo.
 

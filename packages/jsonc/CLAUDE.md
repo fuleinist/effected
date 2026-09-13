@@ -4,7 +4,7 @@ Zero-dependency JSONC parse/edit/format schemas: parse into values or an AST, st
 
 **Tier: pure.** Peer-depends on `effect` only. Zero runtime deps, no IO. Second migration; merged. Public facades in `src/`, the engine in `src/internal/`, tests in `__test__/`.
 
-**For the full design:** → `@../../.claude/design/effected/packages/jsonc.md`
+**For the full design:** → `@./okf/modules/jsonc.md`
 
 Load when changing the public API, the error set, the hardening story, or the jsonc/yaml parity convention.
 

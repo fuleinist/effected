@@ -5,7 +5,7 @@ Path traversal: upward (`Walker.ascend` / `firstMatch` / `findUpward` /
 migration; the first package extracted from an already-merged sibling rather
 than ported from a `*-effect` repo.
 
-**Design doc:** `@../../.claude/design/effected/packages/walker.md`
+**Design doc:** `@./okf/modules/walker.md`
 
 ## Tier: boundary
 

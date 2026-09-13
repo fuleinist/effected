@@ -2,7 +2,7 @@
 
 tsconfig.json schemas, `extends`-chain resolution and config discovery. The one **new** (non-migration) `0.1.0` gate package; designed 2026-07-13.
 
-**Design doc:** `@../../.claude/design/effected/packages/tsconfig-json.md` — load when changing the merge semantics, the extends-target engine, or the enum tables.
+**Design doc:** `@./okf/modules/tsconfig-json.md` — load when changing the merge semantics, the extends-target engine, or the enum tables.
 
 ## Tier: boundary
 

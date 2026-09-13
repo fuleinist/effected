@@ -1,5 +1,10 @@
 # CLAUDE.md — the scratchpad probe workspace
 
+**Concept:** `okf/modules/scratchpad.md` — Load when: changing this workspace's
+committed shell or its ghost-workspace exclusions; it also names the sibling
+`okf/glossary/ghost-workspace.md` term this workspace is an instance of. Do not
+restate that material here.
+
 This is the repo's **probe venue**: a private workspace whose only job is
 letting agents settle rung-3 questions ("only a probe settles semantics")
 with **typed** code. Every `@effected/*` package is a `workspace:*` dependency
@@ -89,8 +94,8 @@ that part into `__test__/utils/` as a reviewed commit.
 
 ## What this workspace is NOT
 
-- Not a place for keepable code — durable findings go to tickets, design
-  docs, or package tests; durable helpers go to `__test__/utils/`.
+- Not a place for keepable code — durable findings go to tickets, `okf/`
+  concepts, or package tests; durable helpers go to `__test__/utils/`.
 - Not a test suite — nothing here gates CI, coverage, or releases, and CI
   never sees the project.
 - Not importable — nothing in `probes/` may be imported by any package.

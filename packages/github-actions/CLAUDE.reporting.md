@@ -6,8 +6,8 @@ are shaped that way.
 
 **Parent:** [CLAUDE.md](./CLAUDE.md)
 **Design depth:**
-`@../../.claude/design/effected/packages/github-actions-reporting.md` and
-`@../../.claude/design/effected/packages/github-actions-attestation.md`
+`@./okf/interfaces/actions-reporting.md` and
+`@./okf/interfaces/actions-attestation.md`
 
 ---
 
