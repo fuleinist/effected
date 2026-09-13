@@ -80,6 +80,27 @@ describe("SbomMetadataSource.componentFor", () => {
 	it("honours an explicit component type", () => {
 		assert.strictEqual(SbomMetadataSource.componentFor({ name: "app", type: "application" }).type, "application");
 	});
+
+	it("accepts statically-undefined optional fields under exactOptionalPropertyTypes", () => {
+		// Regression for #664: a caller forwarding a statically optional value
+		// (the shape `@effected/workspaces` hands out for `version`) must compile
+		// without a conditional spread. This test file is compiled with
+		// exactOptionalPropertyTypes: true, so the widening lives or dies here.
+		const pkg: { name: string; version: string | undefined; license: string | undefined } = {
+			name: "left-pad",
+			version: undefined,
+			license: undefined,
+		};
+		const component = SbomMetadataSource.componentFor({
+			name: pkg.name,
+			version: pkg.version,
+			license: pkg.license,
+		});
+		// Explicit `undefined` behaves exactly like an omitted key: no version
+		// segment in the purl, no licenses.
+		assert.strictEqual(component.purl, "pkg:npm/left-pad");
+		assert.strictEqual(component.licenses, undefined);
+	});
 });
 
 describe("SbomMetadataSource.rootComponent", () => {

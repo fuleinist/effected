@@ -87,14 +87,19 @@ export interface SbomMetadataOptions {
 export interface ComponentInput {
 	/** The package name, scope included. */
 	readonly name: string;
-	/** Its resolved version. Absent produces a component with no version and no purl version segment. */
-	readonly version?: string;
+	/**
+	 * Its resolved version. Absent produces a component with no version and no
+	 * purl version segment. Typed `string | undefined` so a caller forwarding a
+	 * statically optional version (e.g. `WorkspacePackage.version` from
+	 * `@effected/workspaces`) compiles under `exactOptionalPropertyTypes`.
+	 */
+	readonly version?: string | undefined;
 	/** An SPDX identifier or expression. */
-	readonly license?: string;
+	readonly license?: string | undefined;
 	/** A short description. */
-	readonly description?: string;
+	readonly description?: string | undefined;
 	/** The component type. Defaults to `library`. */
-	readonly type?: ComponentType;
+	readonly type?: ComponentType | undefined;
 }
 
 /**
