@@ -64,19 +64,19 @@ const npmPurl = (name: string, version?: string): string => {
  */
 export interface SbomMetadataOptions {
 	/** The supplying organization — NTIA minimum element 1. */
-	readonly supplier?: Supplier;
+	readonly supplier?: Supplier | undefined;
 	/** Who assembled the BOM — NTIA minimum element 6. */
-	readonly authors?: ReadonlyArray<Contact>;
+	readonly authors?: ReadonlyArray<Contact> | undefined;
 	/** When it was assembled — NTIA minimum element 7, as an ISO 8601 string. */
-	readonly timestamp?: string;
+	readonly timestamp?: string | undefined;
 	/** The publishing entity. Falls back to the supplier, then the manifest's author. */
-	readonly publisher?: string;
+	readonly publisher?: string | undefined;
 	/** A copyright statement; {@link SbomMetadataSource.formatCopyright} builds one. */
-	readonly copyright?: string;
+	readonly copyright?: string | undefined;
 	/** The documentation URL, winning over the manifest's `homepage`. */
-	readonly documentationUrl?: string;
+	readonly documentationUrl?: string | undefined;
 	/** The root component's type. Defaults to `library`. */
-	readonly type?: ComponentType;
+	readonly type?: ComponentType | undefined;
 }
 
 /**
@@ -87,14 +87,19 @@ export interface SbomMetadataOptions {
 export interface ComponentInput {
 	/** The package name, scope included. */
 	readonly name: string;
-	/** Its resolved version. Absent produces a component with no version and no purl version segment. */
-	readonly version?: string;
+	/**
+	 * Its resolved version. Absent produces a component with no version and no
+	 * purl version segment. Typed `string | undefined` so a caller forwarding a
+	 * statically optional version (e.g. `WorkspacePackage.version` from
+	 * `@effected/workspaces`) compiles under `exactOptionalPropertyTypes`.
+	 */
+	readonly version?: string | undefined;
 	/** An SPDX identifier or expression. */
-	readonly license?: string;
+	readonly license?: string | undefined;
 	/** A short description. */
-	readonly description?: string;
+	readonly description?: string | undefined;
 	/** The component type. Defaults to `library`. */
-	readonly type?: ComponentType;
+	readonly type?: ComponentType | undefined;
 }
 
 /**
@@ -104,7 +109,7 @@ export interface ComponentInput {
  */
 export interface CopyrightYears {
 	/** The first year of the range. Omit for a single-year statement. */
-	readonly startYear?: number;
+	readonly startYear?: number | undefined;
 	/** The year the statement is current through — the caller's clock read, never ours. */
 	readonly year: number;
 }

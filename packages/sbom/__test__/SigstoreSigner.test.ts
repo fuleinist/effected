@@ -133,6 +133,20 @@ describe("SigstoreSigner.sign — the real DSSE builder", () => {
 		}),
 	);
 
+	it.effect("accepts statically-undefined options under exactOptionalPropertyTypes", () =>
+		Effect.gen(function* () {
+			// The #664 widening, applied here: a Fulcio/Rekor URL read out of config
+			// arrives as `string | undefined` and must forward without a spread. The
+			// stub signer and witnesses keep the builder off the network.
+			const config: { fulcioBaseUrl: string | undefined; rekorBaseUrl: string | undefined } = {
+				fulcioBaseUrl: undefined,
+				rekorBaseUrl: undefined,
+			};
+			const bundle = yield* signWith({ ...config, signer: stubSigner(), witnesses: [stubWitness()] });
+			assert.instanceOf(bundle, SigstoreBundle);
+		}),
+	);
+
 	it.effect("carries the witness's transparency-log entries into the verification material", () =>
 		Effect.gen(function* () {
 			const bundle = yield* signWith({ signer: stubSigner(), witnesses: [stubWitness()] });
