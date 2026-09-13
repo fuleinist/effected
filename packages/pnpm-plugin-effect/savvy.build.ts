@@ -187,7 +187,7 @@ await build({
 							source: "workspace",
 						},
 						"@effected/commands": {
-							range: "^0.7.0",
+							range: "^0.7.1",
 							peer: "^0.7.0",
 							strategy: "lock-minor",
 							source: "workspace",
