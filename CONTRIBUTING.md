@@ -27,12 +27,78 @@ pnpm install     # install every workspace package and its peers
 
 `pnpm install` wires up the whole workspace, runs husky to register the git hooks, and resolves the pinned Effect v4 prerelease through the pnpm catalogs in `pnpm-workspace.yaml`. If the install changes `pnpm-lock.yaml` unexpectedly, review the diff before committing it — a stray install has been known to prune platform binaries from the lockfile.
 
+## Working with AI agents
+
+Contributions written with or by an AI coding agent are welcome, and the repo is set up for them. The conventions below — commit format, sign-off and signing, changesets, pull-request descriptions, Effect v4 idioms, the test layout — are all encoded in a set of agent plugins, so an agent that has them installed gets these things right on its own instead of learning them from a red CI run. Install them before you start; the rest of this guide is what they know.
+
+`CLAUDE.md` at the root and in each package is the agent-facing context for this repo, and the `okf/` directory holds the durable project knowledge those files point into. Agents should read them; humans will find them useful too.
+
+### Claude Code
+
+The plugins live in three marketplaces. Register them once, at user scope:
+
+```bash
+claude plugin marketplace add spencerbeggs/bot        # effected, okfit, api-docs, plugin-bot, vitest-agent
+claude plugin marketplace add savvy-web/systems       # silk
+```
+
+Then install the set this repo enables in `.claude/settings.json`:
+
+```bash
+claude plugin install effected@spencerbeggs       # Effect v4 skills, GitHub Actions suite, developer/reviewer agents
+claude plugin install silk@savvy-web-systems      # commit, changeset, PR-body and lint conventions, savvy-mcp tools
+claude plugin install vitest-agent@spencerbeggs   # test runner MCP and the TDD agent
+claude plugin install okfit@spencerbeggs          # the okf/ knowledge bundle tooling
+claude plugin install api-docs@spencerbeggs       # RSPress docs-site skills
+claude plugin install plugin-bot@spencerbeggs     # only if you are working in plugins/
+claude plugin install superpowers@claude-plugins-official
+```
+
+Once the marketplaces are registered, the project's `.claude/settings.json` turns these on for every session in this checkout. Three skills are worth knowing by name: `/silk:commit-create` (load it *before* composing a commit message, not after the hook rejects one), `/silk:changeset` (writes a valid changeset from the branch diff), and `/silk:pr-body` (the pull-request description contract). The `effected` plugin's `effect-developer` and `effect-reviewer` agents write and review Effect v4 code against the vendored source rather than from memory, which matters: Effect v4 is a redesign and training-data knowledge of Effect is v3-shaped.
+
+### GitHub Copilot
+
+The `spencerbeggs/bot` repo is also a Copilot plugin marketplace. It carries the `effected` plugin (an experimental port of the Claude Code one) and `plugin-bot`:
+
+```bash
+copilot plugin marketplace add spencerbeggs/bot
+copilot plugin install effected@spencerbeggs
+```
+
+The Copilot port is new and covers less than the Claude Code plugin — in particular none of the silk commit and changeset tooling exists there yet — so read the commit and changeset sections below with extra care if that is your agent.
+
+### Hacking on the plugin itself
+
+To run Claude Code against the plugin source in this checkout rather than the published copy:
+
+```bash
+pnpm claude      # claude --plugin-dir plugins/claude-code
+```
+
+Switch the marketplace copy off first, or both copies load. Override it in `.claude/settings.local.json`, which is git-ignored:
+
+```json
+{
+  "enabledPlugins": {
+    "api-docs@spencerbeggs": true,
+    "okfit@spencerbeggs": true,
+    "effected@spencerbeggs": false,
+    "plugin-bot@spencerbeggs": true,
+    "silk@savvy-web-systems": true,
+    "superpowers@claude-plugins-official": true,
+    "vitest-agent@spencerbeggs": true
+  }
+}
+```
+
+`plugins/CLAUDE.md` covers the plugin's own conventions and release flow.
+
 ## Repository layout
 
 - `packages/` — the publishable `@effected/*` libraries. Each has its own `package.json`, `README.md` and `__test__/` directory.
 - `website/` — the RSPress documentation site.
 - `lib/configs/` — shared tool configuration (commitlint, lint-staged, markdownlint).
-- `plugin/` — an in-development Claude Code plugin dogfooded during the migration.
+- `plugins/` — the `effected` agent plugin: `claude-code/` for Claude Code and an experimental `copilot/` port. Both ship through the `spencerbeggs/bot` marketplaces; see [Working with AI agents](#working-with-ai-agents).
 
 Dependency versions are shared through pnpm catalogs in `pnpm-workspace.yaml`, so every package builds and tests against the same Effect v4 prerelease.
 
@@ -117,13 +183,37 @@ pnpm preview     # preview a production build of the site
 
 ## Commit conventions
 
-Commits follow the [Conventional Commits](https://www.conventionalcommits.org/) format (`feat`, `fix`, `chore` and so on) and require a [Developer Certificate of Origin](https://developercertificate.org/) sign-off. Add the sign-off with `-s`:
+Commits follow the [Conventional Commits](https://www.conventionalcommits.org/) format (`feat`, `fix`, `chore` and so on), and every commit on a pull request needs **both** a DCO sign-off and a cryptographic signature. These are the two things contributions most often arrive without, and CI rejects the pull request for either.
+
+### Sign-off and signed commits
+
+The [Developer Certificate of Origin](https://developercertificate.org/) sign-off is a `Signed-off-by:` trailer carrying your configured git name and email; it certifies you have the right to submit the change under the project license. `-s` adds it:
 
 ```bash
 git commit -s -m "fix(semver): reject leading zeros in prerelease identifiers"
 ```
 
-The sign-off appends a `Signed-off-by:` trailer using your configured git name and email, which certifies you have the right to submit the change under the project license.
+The **DCO Check** on every pull request fails if any commit lacks the trailer, and the name and email must match the commit's author.
+
+A **signed commit** is separate: a GPG or SSH signature GitHub can verify against a key on your account, so the commit shows as **Verified**. Register a signing key on GitHub ([SSH signing keys](https://docs.github.com/en/authentication/managing-commit-signature-verification/about-commit-signature-verification#ssh-commit-signature-verification) are the quickest to set up), then make git sign every commit in this checkout:
+
+```bash
+git config gpg.format ssh                          # skip this line if you use a GPG key
+git config user.signingkey ~/.ssh/id_ed25519.pub   # or your GPG key id
+git config commit.gpgsign true
+```
+
+With `commit.gpgsign` set you do not need `-S`; with it unset, pass `-S` explicitly. **If you are driving an AI agent, tell it to commit with `git commit -s -S`** (or set `commit.gpgsign` as above so `-s` alone is enough) — agents routinely produce well-formed conventional commits and forget both trailers.
+
+A branch that already has commits missing one or both is repaired in place, then force-pushed to your fork:
+
+```bash
+git rebase --signoff origin/main                                          # add the DCO trailer to every commit
+git rebase --exec 'git commit --amend --no-edit -S' origin/main           # sign every commit
+git push --force-with-lease
+```
+
+The checks run against the commits as pushed to the branch, so fix them there rather than expecting the squash-merge to paper over them.
 
 ### What the preset enforces
 
