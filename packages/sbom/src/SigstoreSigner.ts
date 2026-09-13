@@ -106,13 +106,13 @@ const kindOf = (cause: unknown): SigningErrorKind => {
  */
 export interface SigstoreSignerOptions {
 	/** Fulcio's base URL. Defaults to the public-good instance. */
-	readonly fulcioBaseUrl?: string;
+	readonly fulcioBaseUrl?: string | undefined;
 	/** Rekor's base URL. Defaults to the public-good instance. */
-	readonly rekorBaseUrl?: string;
+	readonly rekorBaseUrl?: string | undefined;
 	/** Replace the certificate signer. */
-	readonly signer?: Signer;
+	readonly signer?: Signer | undefined;
 	/** Replace the witnesses. An empty array signs without a transparency log. */
-	readonly witnesses?: ReadonlyArray<Witness>;
+	readonly witnesses?: ReadonlyArray<Witness> | undefined;
 }
 
 /**

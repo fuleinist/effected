@@ -244,7 +244,7 @@ export class InTotoStatement extends Schema.Class<InTotoStatement>("InTotoStatem
 	 * serializes to the same bytes on every run. Pass `space` for a form meant to
 	 * be read by a person.
 	 */
-	toJson(options?: { readonly space?: number }): string {
+	toJson(options?: { readonly space?: number | undefined }): string {
 		return JSON.stringify(
 			{
 				_type: this._type,

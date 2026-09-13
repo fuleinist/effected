@@ -22,7 +22,7 @@ export interface SbomInput {
 	/** Its dependencies, in any order — the document sorts them. */
 	readonly components: ReadonlyArray<Component>;
 	/** Document metadata. `root` is threaded onto it automatically. */
-	readonly metadata?: SbomMetadata;
+	readonly metadata?: SbomMetadata | undefined;
 }
 
 /**
@@ -32,7 +32,7 @@ export interface SbomInput {
  */
 export interface SbomJsonOptions {
 	/** `JSON.stringify` indentation. Defaults to `2`; `0` emits one line. */
-	readonly space?: number;
+	readonly space?: number | undefined;
 }
 
 /**
