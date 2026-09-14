@@ -47,6 +47,77 @@ describe("DocumentLint", () => {
 			assert.deepStrictEqual(findings, []);
 		});
 
+		// Core emits $ref tokens as encodeURI(escapeToken(name)), so a class
+		// identifier with a space reaches the document percent-encoded while
+		// the $defs key stays literal (#731). The lint must decode the token
+		// the same way assembly and the engine do.
+		it("resolves a percent-encoded $ref naming a defs key with a space", () => {
+			const findings = DocumentLint.lint(
+				document(
+					{ properties: { a: { $ref: "#/$defs/My%20Foo" }, b: { $ref: "#/$defs/My%20Foo/type" } } },
+					{ "My Foo": { type: "string" } },
+				),
+			);
+			assert.deepStrictEqual(findings, []);
+		});
+
+		it("resolves pointer-escaped (~1/~0) $ref names", () => {
+			const findings = DocumentLint.lint(
+				document(
+					{ properties: { a: { $ref: "#/$defs/a~1b" }, b: { $ref: "#/$defs/c~0d" } } },
+					{ "a/b": { type: "string" }, "c~d": { type: "string" } },
+				),
+			);
+			assert.deepStrictEqual(findings, []);
+		});
+
+		it("still fires when the decoded name is absent from the pool", () => {
+			const findings = DocumentLint.lint(
+				document({ properties: { a: { $ref: "#/$defs/My%20Missing" } } }, { "My Foo": { type: "string" } }),
+			);
+			assert.deepStrictEqual(checks(findings), ["UnresolvedRef"]);
+		});
+
+		// A hand-assembled or read-back document may carry a $ref that is not a
+		// well-formed URI fragment (a raw space, non-ASCII, `#`, `|`, `{}`).
+		// ajv resolves those — it percent-decodes the token leniently and
+		// unescapes it — so the lint must too, or it is stricter than the gate
+		// it tracks.
+		it("resolves an unencoded $ref the engine resolves", () => {
+			const findings = DocumentLint.lint(
+				document(
+					{
+						properties: {
+							a: { $ref: "#/$defs/Café" },
+							b: { $ref: "#/$defs/My Foo" },
+							c: { $ref: "#/$defs/a#b" },
+							d: { $ref: "#/$defs/A|B" },
+							e: { $ref: "#/$defs/A{B}/type" },
+							// ajv splits before it percent-decodes, so `%2F` stays inside the token.
+							f: { $ref: "#/$defs/a%2Fb" },
+						},
+					},
+					{
+						Café: { type: "string" },
+						"My Foo": { type: "string" },
+						"a#b": { type: "string" },
+						"A|B": { type: "string" },
+						"A{B}": { type: "string" },
+						"a/b": { type: "string" },
+					},
+				),
+			);
+			assert.deepStrictEqual(findings, []);
+		});
+
+		// The one unencoded shape ajv refuses: malformed percent-encoding.
+		it("fires on malformed percent-encoding, even if a literal key matches", () => {
+			const findings = DocumentLint.lint(
+				document({ properties: { a: { $ref: "#/$defs/100%" } } }, { "100%": { type: "string" } }),
+			);
+			assert.deepStrictEqual(checks(findings), ["UnresolvedRef"]);
+		});
+
 		it("checks refs inside the $defs pool too", () => {
 			const findings = DocumentLint.lint(document({ type: "object" }, { A: { $ref: "#/$defs/Nope" } }));
 			assert.deepStrictEqual(checks(findings), ["UnresolvedRef"]);
@@ -190,6 +261,20 @@ describe("DocumentLint", () => {
 				const built = yield* StoreDocument.fromSchema(Manifest, {
 					$id: "https://example.com/manifest.schema.json",
 				});
+				assert.deepStrictEqual(DocumentLint.lint(built), []);
+			}),
+		);
+
+		// The pin #731 asks for: a class identifier with a space (and a
+		// slash) goes through assembly as a percent-encoded root $ref over a
+		// literal $defs key; the engine resolves it, so the lint must too.
+		it.effect("a fromSchema document whose class identifier contains a space lints clean", () =>
+			Effect.gen(function* () {
+				class Foo extends Schema.Class<Foo>("My Foo/Bar")({ a: Schema.String }) {}
+				const built = yield* StoreDocument.fromSchema(Foo, {
+					$id: "https://example.com/foo.schema.json",
+				});
+				assert.deepStrictEqual(built.root, { $ref: "#/$defs/My%20Foo~1BarEncoded" }, "core encodes the token");
 				assert.deepStrictEqual(DocumentLint.lint(built), []);
 			}),
 		);
