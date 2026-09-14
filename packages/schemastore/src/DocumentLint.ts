@@ -83,12 +83,37 @@ interface LintContext {
 const isSchemaObject = (node: unknown): node is Record<string, unknown> =>
 	typeof node === "object" && node !== null && !Array.isArray(node);
 
-// Decoded through `JsonPointer.parseUriFragment` — the same decoding
-// assembly and the engine apply — so a percent-encoded token (core emits
-// `encodeURI(escapeToken(name))`, e.g. `My%20Foo~1BarEncoded` for the class
-// identifier `My Foo/BarEncoded`) resolves against the literal `$defs` key.
+// The pointer a local `$ref` names, decoded the way the engine resolves it.
+// `JsonPointer.parseUriFragment` is the strict decoder assembly uses and
+// covers every token core emits (`encodeURI(escapeToken(name))`, e.g.
+// `My%20Foo~1BarEncoded` for the class identifier `My Foo/BarEncoded`), so
+// a percent-encoded token resolves against the literal `$defs` key. It
+// refuses a fragment that does not round-trip through `encodeURI` — a raw
+// space, non-ASCII, `#`, `|`, `{}` — which a hand-assembled or read-back
+// document may well carry. ajv resolves those (it percent-decodes each
+// token leniently, then unescapes it, refusing only malformed
+// percent-encoding), so the lint falls back to the same decode rather than
+// be stricter than the gate it tracks.
+const localPointer = (ref: string): ReadonlyArray<string> | undefined => {
+	const strict = JsonPointer.parseUriFragment(ref);
+	if (strict !== undefined) {
+		return strict;
+	}
+	if (!ref.startsWith("#/")) {
+		return undefined;
+	}
+	try {
+		return ref
+			.slice(2)
+			.split("/")
+			.map((token) => JsonPointer.unescapeToken(decodeURIComponent(token)));
+	} catch {
+		return undefined;
+	}
+};
+
 // Subpath refs (`#/$defs/Thing/properties/inner`) resolve on their first
-// pool segment, as before.
+// pool segment.
 const checkRef = (value: unknown, path: string, context: LintContext): void => {
 	if (typeof value !== "string") {
 		return;
@@ -96,7 +121,7 @@ const checkRef = (value: unknown, path: string, context: LintContext): void => {
 	if (value === "#") {
 		return;
 	}
-	const pointer = JsonPointer.parseUriFragment(value);
+	const pointer = localPointer(value);
 	if (
 		pointer !== undefined &&
 		pointer.length >= 2 &&
@@ -119,8 +144,8 @@ const checkRef = (value: unknown, path: string, context: LintContext): void => {
 // root is exactly a bare local `$ref` into the pool (the `Schema.Class`
 // shape) — the `$defs` entry it names, because that is where assembly
 // places a root annotation (`StoreDocumentOptions.rootAnnotations`). The
-// `$ref` token is decoded the same way assembly decodes it, so a
-// pointer-escaped or percent-encoded name resolves.
+// `$ref` token is decoded the same way `checkRef` resolves it, so a
+// pointer-escaped, percent-encoded or unencoded name resolves.
 const describedNode = (
 	document: StoreDocument,
 ): { readonly node: Readonly<Record<string, unknown>>; readonly path: string } | undefined => {
@@ -128,7 +153,7 @@ const describedNode = (
 	if (keys.length !== 1 || keys[0] !== "$ref" || typeof document.root.$ref !== "string") {
 		return { node: document.root, path: "" };
 	}
-	const pointer = JsonPointer.parseUriFragment(document.root.$ref);
+	const pointer = localPointer(document.root.$ref);
 	if (pointer === undefined || pointer.length !== 2 || pointer[0] !== "$defs") {
 		return { node: document.root, path: "" };
 	}
@@ -250,8 +275,12 @@ const lintSchema = (node: unknown, path: string, depth: number, context: LintCon
  *   the root, or from the `$defs` entry a bare local `$ref` root names —
  *   where assembly places a root annotation.
  *
- * Tractable because the input is bounded `toJsonSchemaDocument` output;
- * this is not a general JSON Schema validator.
+ * Tractable because the input is the bounded {@link StoreDocument} shape,
+ * not because assembly built it: the warning checks earn their keep on a
+ * document the pipeline did not build — hand-assembled through
+ * `StoreDocument.draft07`, or read back off disk — and track what the
+ * engine gate would refuse, so a `$ref` ajv resolves is never reported
+ * `UnresolvedRef`. This is not a general JSON Schema validator.
  *
  * @public
  */

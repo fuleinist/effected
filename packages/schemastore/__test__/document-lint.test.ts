@@ -78,9 +78,39 @@ describe("DocumentLint", () => {
 			assert.deepStrictEqual(checks(findings), ["UnresolvedRef"]);
 		});
 
-		it("fires on a ref that is not a valid URI fragment, even if a literal key matches", () => {
+		// A hand-assembled or read-back document may carry a $ref that is not a
+		// well-formed URI fragment (a raw space, non-ASCII, `#`, `|`, `{}`).
+		// ajv resolves those — it percent-decodes the token leniently and
+		// unescapes it — so the lint must too, or it is stricter than the gate
+		// it tracks.
+		it("resolves an unencoded $ref the engine resolves", () => {
 			const findings = DocumentLint.lint(
-				document({ properties: { a: { $ref: "#/$defs/a#b" } } }, { "a#b": { type: "string" } }),
+				document(
+					{
+						properties: {
+							a: { $ref: "#/$defs/Café" },
+							b: { $ref: "#/$defs/My Foo" },
+							c: { $ref: "#/$defs/a#b" },
+							d: { $ref: "#/$defs/A|B" },
+							e: { $ref: "#/$defs/A{B}/type" },
+						},
+					},
+					{
+						Café: { type: "string" },
+						"My Foo": { type: "string" },
+						"a#b": { type: "string" },
+						"A|B": { type: "string" },
+						"A{B}": { type: "string" },
+					},
+				),
+			);
+			assert.deepStrictEqual(findings, []);
+		});
+
+		// The one unencoded shape ajv refuses: malformed percent-encoding.
+		it("fires on malformed percent-encoding, even if a literal key matches", () => {
+			const findings = DocumentLint.lint(
+				document({ properties: { a: { $ref: "#/$defs/100%" } } }, { "100%": { type: "string" } }),
 			);
 			assert.deepStrictEqual(checks(findings), ["UnresolvedRef"]);
 		});
