@@ -52,11 +52,9 @@ const trimLoadError = Effect.fn("schemastore.trimLoadError")(function* (error: C
 export const program = (args: ReadonlyArray<string>, deps: ProgramDeps) =>
 	Command.runWith(makeCommands(deps).root, { version: deps.version })(args).pipe(
 		Effect.catchTags({
-			ShowHelp: (help) => Effect.fail(CliRuntime.reported(help, help.errors.length > 0 ? 64 : 0) as typeof help),
-			ConfigNotFoundError: (error) => Effect.fail(CliRuntime.reported(error, 2) as typeof error),
+			ShowHelp: (help) => Effect.fail(CliRuntime.reported(help, help.errors.length > 0 ? 64 : 0)),
+			ConfigNotFoundError: (error) => Effect.fail(CliRuntime.reported(error, 2)),
 			ConfigLoadError: (error) =>
-				trimLoadError(error).pipe(
-					Effect.flatMap((trimmed) => Effect.fail(CliRuntime.reported(trimmed, 2) as typeof trimmed)),
-				),
+				trimLoadError(error).pipe(Effect.flatMap((trimmed) => Effect.fail(CliRuntime.reported(trimmed, 2)))),
 		}),
 	);

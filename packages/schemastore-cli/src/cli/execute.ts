@@ -80,10 +80,6 @@ export interface ExecuteDeps {
 	readonly validator?: Layer.Layer<SchemaValidator>;
 }
 
-// `CliRuntime.reported` widens to `Error`; the marks are added in place, so
-// the value is still the typed error and the channel can say so.
-const reported = <E extends Error>(error: E, exitCode: number): E => CliRuntime.reported(error, exitCode) as E;
-
 const effectiveDrift = (configured: DriftOptions, input: ExecuteInput): RunReport["drift"] => {
 	const policy = input.force ? "allow" : Option.getOrElse(input.drift, () => configured.policy);
 	const onDrift = Option.getOrElse(input.onDrift, () => configured.onDrift);
@@ -147,18 +143,18 @@ export const execute = Effect.fn("schemastore.execute")(function* (
 	yield* StepSummary.append(Report.markdown(report));
 	if (report.gateFailed) {
 		const count = report.schemas.filter((schema) => schema.outcome === "gate-failed").length;
-		return yield* Effect.fail(reported(new GateError({ count }), 1));
+		return yield* Effect.fail(CliRuntime.reported(new GateError({ count }), 1));
 	}
 	if (report.drifted && drift.onDrift === "error") {
 		const count = report.schemas.filter((schema) => schema.verdict === "drift").length;
-		return yield* Effect.fail(reported(new DriftError({ count }), 1));
+		return yield* Effect.fail(CliRuntime.reported(new DriftError({ count }), 1));
 	}
 	if (mode === "check") {
 		const count =
 			report.schemas.filter((schema) => schema.outcome === "would-write").length +
 			report.catalog.filter((entry) => entry.outcome === "would-write").length;
 		if (count > 0) {
-			return yield* Effect.fail(reported(new StaleError({ count }), 1));
+			return yield* Effect.fail(CliRuntime.reported(new StaleError({ count }), 1));
 		}
 	}
 });
