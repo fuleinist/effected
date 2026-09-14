@@ -75,10 +75,6 @@ const DRAFT_07_KEYWORDS = new Set([
 
 const URL_LINE = /^https?:\/\/\S+$/;
 
-const escapePointerSegment = (segment: string): string => segment.replace(/~/g, "~0").replace(/\//g, "~1");
-
-const unescapePointerSegment = (segment: string): string => segment.replace(/~1/g, "/").replace(/~0/g, "~");
-
 interface LintContext {
 	readonly defs: Readonly<Record<string, unknown>>;
 	readonly findings: Array<DocumentLintFinding>;
@@ -87,6 +83,12 @@ interface LintContext {
 const isSchemaObject = (node: unknown): node is Record<string, unknown> =>
 	typeof node === "object" && node !== null && !Array.isArray(node);
 
+// Decoded through `JsonPointer.parseUriFragment` — the same decoding
+// assembly and the engine apply — so a percent-encoded token (core emits
+// `encodeURI(escapeToken(name))`, e.g. `My%20Foo~1BarEncoded` for the class
+// identifier `My Foo/BarEncoded`) resolves against the literal `$defs` key.
+// Subpath refs (`#/$defs/Thing/properties/inner`) resolve on their first
+// pool segment, as before.
 const checkRef = (value: unknown, path: string, context: LintContext): void => {
 	if (typeof value !== "string") {
 		return;
@@ -94,8 +96,13 @@ const checkRef = (value: unknown, path: string, context: LintContext): void => {
 	if (value === "#") {
 		return;
 	}
-	const match = /^#\/\$defs\/([^/]+)/.exec(value);
-	if (match !== null && Object.hasOwn(context.defs, unescapePointerSegment(match[1] as string))) {
+	const pointer = JsonPointer.parseUriFragment(value);
+	if (
+		pointer !== undefined &&
+		pointer.length >= 2 &&
+		pointer[0] === "$defs" &&
+		Object.hasOwn(context.defs, pointer[1])
+	) {
 		return;
 	}
 	context.findings.push(
@@ -127,7 +134,7 @@ const describedNode = (
 	}
 	const name = pointer[1] as string;
 	const entry = Object.hasOwn(document.defs, name) ? document.defs[name] : undefined;
-	return isSchemaObject(entry) ? { node: entry, path: `/$defs/${escapePointerSegment(name)}` } : undefined;
+	return isSchemaObject(entry) ? { node: entry, path: `/$defs/${JsonPointer.escapeToken(name)}` } : undefined;
 };
 
 // Walks one schema node, keyword-position aware: descends only into
@@ -151,7 +158,7 @@ const lintSchema = (node: unknown, path: string, depth: number, context: LintCon
 		return;
 	}
 	for (const [key, value] of Object.entries(node)) {
-		const keyPath = `${path}/${escapePointerSegment(key)}`;
+		const keyPath = `${path}/${JsonPointer.escapeToken(key)}`;
 		if (!DRAFT_07_KEYWORDS.has(key) && !KeywordFamilies.isDeclared(key)) {
 			context.findings.push(
 				DocumentLintFinding.make({
@@ -173,7 +180,7 @@ const lintSchema = (node: unknown, path: string, depth: number, context: LintCon
 			case "definitions": {
 				if (isSchemaObject(value)) {
 					for (const [name, subschema] of Object.entries(value)) {
-						lintSchema(subschema, `${keyPath}/${escapePointerSegment(name)}`, depth + 1, context);
+						lintSchema(subschema, `${keyPath}/${JsonPointer.escapeToken(name)}`, depth + 1, context);
 					}
 				}
 				break;
@@ -183,7 +190,7 @@ const lintSchema = (node: unknown, path: string, depth: number, context: LintCon
 				if (isSchemaObject(value)) {
 					for (const [name, dependency] of Object.entries(value)) {
 						if (!Array.isArray(dependency)) {
-							lintSchema(dependency, `${keyPath}/${escapePointerSegment(name)}`, depth + 1, context);
+							lintSchema(dependency, `${keyPath}/${JsonPointer.escapeToken(name)}`, depth + 1, context);
 						}
 					}
 				}
@@ -259,7 +266,7 @@ export class DocumentLint {
 		const context: LintContext = { defs: document.defs, findings: [] };
 		lintSchema(document.root, "", 0, context);
 		for (const [name, definition] of Object.entries(document.defs)) {
-			lintSchema(definition, `/$defs/${escapePointerSegment(name)}`, 1, context);
+			lintSchema(definition, `/$defs/${JsonPointer.escapeToken(name)}`, 1, context);
 		}
 		const described = describedNode(document);
 		const description = described?.node.description;
