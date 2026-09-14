@@ -1,4 +1,4 @@
-import { Effect, Result, Schema } from "effect";
+import { Effect, JsonPointer, Result, Schema } from "effect";
 import { MAX_NESTING_DEPTH } from "./internal/limits.js";
 
 /**
@@ -74,8 +74,6 @@ export interface CanonicalJsonOptions {
 class SerializeFailure {
 	constructor(readonly error: CanonicalJsonError) {}
 }
-
-const escapePointerSegment = (segment: string): string => segment.replace(/~/g, "~0").replace(/\//g, "~1");
 
 // A stack guard for content equality, deliberately looser than the
 // structural cap: `MAX_NESTING_DEPTH` bounds how deep a walk keeps
@@ -247,7 +245,7 @@ const emit = (value: unknown, path: string, depth: number, unit: string): string
 	}
 	const members = entries.map(
 		([key, member]) =>
-			`${indent}${JSON.stringify(key)}: ${emit(member, `${path}/${escapePointerSegment(key)}`, depth + 1, unit)}`,
+			`${indent}${JSON.stringify(key)}: ${emit(member, `${path}/${JsonPointer.escapeToken(key)}`, depth + 1, unit)}`,
 	);
 	return `{\n${members.join(",\n")}\n${closing}}`;
 };
