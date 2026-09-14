@@ -2,7 +2,10 @@ name: Catalog Sync
 
 on:
   pull_request:
-    branches: [main, changeset-release/main]
+    # Base-branch filter only. The head-branch filter (this job is for the
+    # changesets release PR, not every PR into main) lives on the job's `if:`
+    # because `pull_request` has no head-branch filter.
+    branches: [main]
     types: [opened, synchronize, reopened]
 
   workflow_dispatch:
@@ -13,8 +16,8 @@ on:
         default: false
 
 concurrency:
-  group: catalog-sync
-  cancel-in-progress: false
+  group: catalog-sync-${{ github.ref }}
+  cancel-in-progress: true
 
 permissions:
   contents: read
@@ -33,7 +36,13 @@ jobs:
     #
     # This is the only workflow here that runs on `pull_request` AND depends on
     # `secrets`, which is why the guard lives here and not in a shared place.
-    if: github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository
+    #
+    # The head-branch check narrows the `pull_request` trigger to the release PR
+    # changesets opens from `changeset-release/main`: that is the only PR whose
+    # manifests carry the next release versions the catalog is synced against.
+    if: >-
+      github.event_name != 'pull_request' || (github.event.pull_request.head.repo.full_name == github.repository &&
+       github.head_ref == 'changeset-release/main')
     runs-on: ubuntu-latest
     steps:
       - name: Generate App Token
