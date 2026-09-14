@@ -176,12 +176,17 @@ const contentEqual = (a: unknown, b: unknown, depth: number): boolean => {
 		return false;
 	}
 	if (Array.isArray(a) || Array.isArray(b)) {
-		return (
-			Array.isArray(a) &&
-			Array.isArray(b) &&
-			a.length === b.length &&
-			a.every((element, index) => contentEqual(element, b[index], depth + 1))
-		);
+		if (!Array.isArray(a) || !Array.isArray(b) || a.length !== b.length) {
+			return false;
+		}
+		// An index loop, not `every`: `every` skips a sparse array's holes,
+		// which would pass a position the serializer still emits.
+		for (let index = 0; index < a.length; index++) {
+			if (!contentEqual(a[index], b[index], depth + 1)) {
+				return false;
+			}
+		}
+		return true;
 	}
 	if (typeof a !== "object" || typeof b !== "object" || a === null || b === null) {
 		// Primitives that failed `===` (including NaN), null against anything,
