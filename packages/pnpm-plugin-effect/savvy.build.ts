@@ -175,13 +175,13 @@ await build({
 				effected: {
 					packages: {
 						"@effected/app": {
-							range: "^0.16.1",
+							range: "^0.16.2",
 							peer: "^0.16.0",
 							strategy: "lock-minor",
 							source: "workspace",
 						},
 						"@effected/cli": {
-							range: "^0.5.0",
+							range: "^0.5.1",
 							peer: "^0.5.0",
 							strategy: "lock-minor",
 							source: "workspace",
@@ -193,8 +193,8 @@ await build({
 							source: "workspace",
 						},
 						"@effected/config-file": {
-							range: "^0.9.0",
-							peer: "^0.9.0",
+							range: "^0.10.0",
+							peer: "^0.10.0",
 							strategy: "lock-minor",
 							source: "workspace",
 						},
@@ -349,7 +349,7 @@ await build({
 							source: "workspace",
 						},
 						"@effected/xdg": {
-							range: "^0.5.1",
+							range: "^0.5.2",
 							peer: "^0.5.0",
 							strategy: "lock-minor",
 							source: "workspace",
