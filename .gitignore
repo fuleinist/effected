@@ -51,6 +51,7 @@ website/lib/models/*
 website/docs/en/*/api/
 **/.api-docs/**
 #*.api-docs/snapshot/api-docs.db-*
+.superpowers/
 
 # Scratchpad working areas — agent probes are disposable, the shell is committed
 scratchpad/probes/
