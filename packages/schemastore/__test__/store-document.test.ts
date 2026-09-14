@@ -1,5 +1,6 @@
 import { assert, describe, it } from "@effect/vitest";
 import { Effect, Result, Schema } from "effect";
+import type { UndeclaredAnnotationKeyError } from "../src/index.js";
 import { DRAFT_07_META_SCHEMA, SchemaConversionError, StoreDocument } from "../src/index.js";
 
 class Person extends Schema.Class<Person>("Person")({
@@ -105,6 +106,125 @@ describe("StoreDocument", () => {
 				assert.strictEqual(error.$id, $id);
 			}),
 		);
+
+		// #624 — rootAnnotations is the escape hatch for a generator-side
+		// annotation loss the source schema cannot express.
+		it("rootAnnotations land on the root of an inline-root document, overriding generated keys", () => {
+			const source = Schema.Struct({ a: Schema.String }).annotate({ title: "generated" });
+			const document = Result.getOrThrow(
+				StoreDocument.fromSchemaResult(source, {
+					$id: "https://example.com/a.json",
+					rootAnnotations: { title: "T", description: "D", "x-ai-hint": { audience: "agent" } },
+				}),
+			);
+			assert.strictEqual(document.root.title, "T");
+			assert.strictEqual(document.root.description, "D");
+			assert.deepStrictEqual(document.root["x-ai-hint"], { audience: "agent" });
+			assert.strictEqual(document.root.type, "object", "generated keywords survive");
+		});
+
+		it("rootAnnotations follow a bare local $ref root onto its $defs entry (the Schema.Class shape)", () => {
+			class Foo extends Schema.Class<Foo>("Foo")({ a: Schema.String }) {}
+			const document = Result.getOrThrow(
+				StoreDocument.fromSchemaResult(Foo, {
+					$id: "https://example.com/foo.json",
+					rootAnnotations: { title: "T", "x-taplo": { hidden: true } },
+				}),
+			);
+			assert.deepStrictEqual(document.root, { $ref: "#/$defs/FooEncoded" }, "the root stays a bare $ref");
+			const entry = document.defs.FooEncoded as Record<string, unknown>;
+			assert.strictEqual(entry.title, "T");
+			assert.deepStrictEqual(entry["x-taplo"], { hidden: true });
+			assert.strictEqual(entry.type, "object");
+		});
+
+		// The $ref token core emits is JSON-Pointer + URI escaped, so the pool
+		// lookup must decode it rather than slice a prefix.
+		it("rootAnnotations follow a pointer-escaped $ref root onto its $defs entry", () => {
+			class Foo extends Schema.Class<Foo>("My Foo/Bar")({ a: Schema.String }) {}
+			const document = Result.getOrThrow(
+				StoreDocument.fromSchemaResult(Foo, {
+					$id: "https://example.com/foo.json",
+					rootAnnotations: { title: "T" },
+				}),
+			);
+			assert.deepStrictEqual(document.root, { $ref: "#/$defs/My%20Foo~1BarEncoded" }, "the root stays a bare $ref");
+			const entry = document.defs["My Foo/BarEncoded"] as Record<string, unknown>;
+			assert.isDefined(entry);
+			assert.strictEqual(entry.title, "T");
+			assert.strictEqual(entry.type, "object");
+		});
+
+		// A recursive class shares its $defs entry with every self-reference:
+		// merging the document title onto it would title every occurrence, so
+		// the root is wrapped instead (annotations + `allOf: [{ $ref }]`).
+		it("rootAnnotations wrap a bare $ref root in allOf when its $defs entry has other referents", () => {
+			class Node extends Schema.Class<Node>("Node")({
+				value: Schema.String,
+				children: Schema.Array(Schema.suspend((): Schema.Codec<Node> => Node)),
+			}) {}
+			const document = Result.getOrThrow(
+				StoreDocument.fromSchemaResult(Node, {
+					$id: "https://example.com/node.json",
+					rootAnnotations: { title: "T", description: "D" },
+				}),
+			);
+			assert.deepStrictEqual(document.root, { title: "T", description: "D", allOf: [{ $ref: "#/$defs/NodeEncoded" }] });
+			assert.deepStrictEqual(
+				Object.keys(document.root),
+				["title", "description", "allOf"],
+				"annotations serialize first",
+			);
+			const entry = document.defs.NodeEncoded as Record<string, unknown>;
+			assert.isFalse(Object.hasOwn(entry, "title"), "the shared entry carries no title");
+			assert.isFalse(Object.hasOwn(entry, "description"), "the shared entry carries no description");
+			assert.strictEqual(entry.type, "object");
+		});
+
+		// Draft-07 §8 content vocabulary: annotations, not assertions.
+		it("rootAnnotations admit the contentMediaType and contentEncoding annotation keywords", () => {
+			const document = Result.getOrThrow(
+				StoreDocument.fromSchemaResult(Schema.String, {
+					$id: "https://example.com/a.json",
+					rootAnnotations: { contentMediaType: "application/json", contentEncoding: "base64" },
+				}),
+			);
+			assert.strictEqual(document.root.contentMediaType, "application/json");
+			assert.strictEqual(document.root.contentEncoding, "base64");
+			assert.strictEqual(document.root.type, "string");
+		});
+
+		it("rootAnnotations skips undefined-valued entries instead of writing an undefined key", () => {
+			const document = Result.getOrThrow(
+				StoreDocument.fromSchemaResult(Schema.Struct({ a: Schema.String }), {
+					$id: "https://example.com/a.json",
+					rootAnnotations: { title: undefined, description: "D" },
+				}),
+			);
+			assert.isFalse(Object.hasOwn(document.root, "title"));
+			assert.strictEqual(document.root.description, "D");
+		});
+
+		it("rootAnnotations outside the standard keywords and declared families fail UndeclaredAnnotationKeyError", () => {
+			const result = StoreDocument.fromSchemaResult(Schema.Struct({ a: Schema.String }), {
+				$id: "https://example.com/a.json",
+				rootAnnotations: { title: "ok", "x-mine": 1, additionalProperties: false },
+			});
+			assert.isTrue(Result.isFailure(result));
+			const error = Result.getOrThrow(Result.flip(result));
+			assert.strictEqual(error._tag, "UndeclaredAnnotationKeyError");
+			assert.deepStrictEqual((error as UndeclaredAnnotationKeyError).keys, ["additionalProperties", "x-mine"]);
+		});
+
+		it("rootAnnotations $ref-shaped strings inside a declared-family value are not rewritten", () => {
+			const document = Result.getOrThrow(
+				StoreDocument.fromSchemaResult(Schema.Struct({ a: Schema.String }), {
+					$id: "https://example.com/a.json",
+					rootAnnotations: { "x-ai-hint": { see: "#/definitions/Other" } },
+				}),
+			);
+			assert.deepStrictEqual(document.root["x-ai-hint"], { see: "#/definitions/Other" });
+		});
 	});
 
 	describe("toJson", () => {

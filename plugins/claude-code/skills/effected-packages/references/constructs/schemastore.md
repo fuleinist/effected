@@ -5,7 +5,7 @@
 
 | Construct | Kind | Purpose | Reach for it when |
 | --- | --- | --- | --- |
-| `CanonicalJson` | Class | Deterministic, canonical JSON text: the package's owned serializer, so a consumer never shells out to an external formatter to produce a stable committed schema file. | deterministic canonical json text, stable diff-friendly serialization for committed schema files |
+| `CanonicalJson` | Class | Deterministic, canonical JSON text: the package's owned serializer, so a consumer never shells out to an external formatter to produce a stable committed schema file. | deterministic canonical json text, stable diff-friendly serialization for committed schema files, content equality for two parsed json documents |
 | `CanonicalJsonError` | TypeAlias | Union of the failures `CanonicalJson.serialize` can raise. | |
 | `CanonicalJsonOptions` | Interface | Options for `CanonicalJson.serialize`. | |
 | `CatalogConfig` | Interface | One catalog entry a `schemastore.config.ts` declares: the SchemaStore `catalog.json` fields plus where to write the assembled entry. The entry's `versions` and `url` are derived by `defineConfig` from every versioned schema of the same `name`. | |
@@ -56,7 +56,7 @@
 | `SchemastoreConfigInput` | Interface | What a `schemastore.config.ts` hands to `defineConfig`: the schema targets, an optional catalog block and an optional partial drift block. | |
 | `StoreDocument` | Class | A SchemaStore-shaped Draft-07 JSON Schema document assembled from an Effect Schema source: `$schema` (the Draft-07 meta-schema) + `$id` + the root schema + the `$defs` pool. | assemble a schemastore-shaped draft-07 document from an effect schema, publish a json schema |
 | `StoreDocumentOptions` | Interface | Options for `StoreDocument.fromSchema`. | |
-| `UndeclaredAnnotationKeyError` | Class | Indicates that a caller-supplied `includeAnnotationKey` admitted an annotation key outside the declared keyword families (`KeywordFamilies`). | refuse an annotation key outside the declared language-server families, fail a schemastore document build naming every offending key, gate includeAnnotationKey |
+| `UndeclaredAnnotationKeyError` | Class | Indicates that a caller-supplied `includeAnnotationKey` admitted an annotation key outside the declared keyword families (`KeywordFamilies`), or that a `StoreDocumentOptions.rootAnnotations` override names a key outside the admitted set (the standard annotation keywords plus the declared families). | refuse an annotation key outside the declared language-server families, fail a schemastore document build naming every offending key, gate includeAnnotationKey |
 | `ValidationFinding` | Class | One problem a validation engine found with a document: a value in a report, never an error channel — the consumer decides what a finding gates. | one ajv validation problem in a document, a value never an error |
 | `WriteChange` | TypeAlias | How the document being written relates to what was already on disk: `SchemaChange` plus `"created"` for a file that did not exist, so there was nothing to compare against. | |
 | `WriteOutcome` | TypeAlias | What `SchemaFileShape.write` did to the filesystem: `"written"` when it wrote, `"unchanged"` when it left the file alone — reported as a value so the caller decides what to surface, never a log. | |

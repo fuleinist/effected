@@ -1,4 +1,4 @@
-import { Effect, JsonSchema, Result, Schema } from "effect";
+import { Effect, JsonPointer, JsonSchema, Result, Schema } from "effect";
 import type { CanonicalJsonError, CanonicalJsonOptions } from "./CanonicalJson.js";
 import { CanonicalJson } from "./CanonicalJson.js";
 import { MAX_NESTING_DEPTH } from "./internal/limits.js";
@@ -39,7 +39,10 @@ export class SchemaConversionError extends Schema.TaggedError<SchemaConversionEr
 /**
  * Indicates that a caller-supplied `includeAnnotationKey` admitted an
  * annotation key outside the declared keyword families
- * ({@link KeywordFamilies}).
+ * ({@link KeywordFamilies}), or that a
+ * {@link StoreDocumentOptions.rootAnnotations} override names a key outside
+ * the admitted set (the standard annotation keywords plus the declared
+ * families).
  *
  * Raised by {@link StoreDocument.fromSchema}. This package emits
  * SchemaStore-compatible documents only, so the declared families are the
@@ -50,7 +53,8 @@ export class SchemaConversionError extends Schema.TaggedError<SchemaConversionEr
  *
  * The predicate itself cannot be introspected, so the offending keys are
  * the ones it actually admitted while the document was being generated: a
- * key the source schema never annotates cannot appear here.
+ * key the source schema never annotates cannot appear here. Override keys,
+ * by contrast, are checked up front, before anything is generated.
  *
  * @public
  */
@@ -96,6 +100,39 @@ export interface StoreDocumentOptions {
 	 * `ToJsonSchemaOptions` passes through, and is best left unset.
 	 */
 	readonly jsonSchema?: Schema.ToJsonSchemaOptions;
+	/**
+	 * Annotations merged onto the emitted document's root after assembly —
+	 * the escape hatch for a generator-side annotation loss the source
+	 * schema cannot express (a filtered field, or a root whose annotations
+	 * core does not carry).
+	 *
+	 * Admitted keys are the standard JSON Schema annotation keywords
+	 * (`title`, `description`, `$comment`, `default`, `examples`,
+	 * `readOnly`, `writeOnly`, `contentMediaType`, `contentEncoding`) and
+	 * the declared keyword families
+	 * ({@link KeywordFamilies}); any other key fails the build with
+	 * {@link UndeclaredAnnotationKeyError}, so the override cannot become a
+	 * back door for assertion keywords. Override keys win over generated
+	 * ones. The override is checked before generation, so when both this
+	 * gate and the `includeAnnotationKey` gate would fire, the override's
+	 * keys are the ones reported and the predicate's are not.
+	 *
+	 * Placement follows the assembled root's shape, in three cases:
+	 *
+	 * - An inline root (a `Struct`, a primitive) takes the annotations
+	 *   directly.
+	 * - A bare local `$ref` root (the shape a `Schema.Class` root produces —
+	 *   `{ "$ref": "#/$defs/FooEncoded" }`) whose `$defs` entry has no
+	 *   other referent takes them on that entry instead: Draft-07
+	 *   validators ignore `$ref` siblings, so the root would carry them
+	 *   nowhere.
+	 * - A bare local `$ref` root whose entry is shared — a recursive class,
+	 *   or one another definition also references — is replaced by
+	 *   `{ ...annotations, allOf: [{ "$ref": ... }] }`, so the document is
+	 *   annotated without every other occurrence of the type inheriting
+	 *   the root's title.
+	 */
+	readonly rootAnnotations?: Readonly<Record<string, unknown>>;
 }
 
 // Matches a Draft-07 `#/definitions/...` `$ref` pointer prefix. Core's
@@ -104,6 +141,93 @@ export interface StoreDocumentOptions {
 // `$defs` (a Draft-07-valid alias), so refs are rewritten back to stay
 // resolvable against that pool.
 const DEFINITIONS_REF_PREFIX = /^#\/definitions(?=\/|$)/;
+
+// Standard JSON Schema annotation keywords a root override may set. The
+// assertion vocabulary is deliberately absent: an override is for annotation
+// loss, not for changing what a validator asserts.
+const STANDARD_ANNOTATION_KEYWORDS = new Set([
+	"title",
+	"description",
+	"$comment",
+	"default",
+	"examples",
+	"readOnly",
+	"writeOnly",
+	"contentMediaType",
+	"contentEncoding",
+]);
+
+// Counts the `$ref` string values equal to `ref` reachable from `node`
+// through schema positions. Declared-family values are opaque payloads
+// addressed to a language server, so the walk does not descend into them —
+// a `$ref`-shaped string inside one is not a referent. Runs after
+// `restoreDefsRefs`, so every local pointer is already in `#/$defs/...`
+// form and a raw string comparison is exact.
+const countRefs = (node: unknown, ref: string): number => {
+	if (Array.isArray(node)) {
+		let count = 0;
+		for (const item of node) {
+			count += countRefs(item, ref);
+		}
+		return count;
+	}
+	if (typeof node === "object" && node !== null) {
+		let count = 0;
+		for (const [key, value] of Object.entries(node)) {
+			if (KeywordFamilies.isDeclared(key)) {
+				continue;
+			}
+			count += key === "$ref" && value === ref ? 1 : countRefs(value, ref);
+		}
+		return count;
+	}
+	return 0;
+};
+
+// Applies `rootAnnotations` per the placement rule. Mutates the freshly
+// assembled `root`/`defs` (both are this call's own null-prototype
+// accumulators, never the caller's schema AST). Declared-family values are
+// shared by reference, matching the annotate() path.
+//
+// The `$ref` token core emits is JSON-Pointer escaped AND percent-encoded
+// (`My Foo/Bar` → `#/$defs/My%20Foo~1Bar`), so the pool name is recovered by
+// decoding the fragment, never by slicing a prefix. An `undefined` value is
+// skipped rather than written: an `undefined` key is not JSON and would
+// otherwise fail serialization later, far from the override that caused it.
+//
+// A bare-`$ref` root merges onto its `$defs` entry ONLY when the root is
+// that entry's sole referent. A recursive class (`children: Array(Node)`)
+// shares the entry with every self-reference, and a document title merged
+// onto it would title each occurrence; that root is instead replaced by
+// `{ ...annotations, allOf: [{ $ref }] }` — the Draft-07 shape that
+// annotates a root without aliasing the type. Annotations are written
+// before `allOf` so the serialized document reads title-first.
+const applyRootAnnotations = (
+	root: Record<string, unknown>,
+	defs: Record<string, unknown>,
+	annotations: Readonly<Record<string, unknown>>,
+): void => {
+	const keys = Object.keys(root);
+	const ref = keys.length === 1 && keys[0] === "$ref" ? root.$ref : undefined;
+	const path = typeof ref === "string" ? JsonPointer.parseUriFragment(ref) : undefined;
+	const pool = path !== undefined && path.length === 2 && path[0] === "$defs" ? defs[path[1]] : undefined;
+	const entry =
+		typeof pool === "object" && pool !== null && !Array.isArray(pool) ? (pool as Record<string, unknown>) : undefined;
+	const shared = entry !== undefined && typeof ref === "string" && countRefs(defs, ref) > 0;
+	if (shared) {
+		delete root.$ref;
+	}
+	const target = entry !== undefined && !shared ? entry : root;
+	for (const [key, value] of Object.entries(annotations)) {
+		if (value === undefined) {
+			continue;
+		}
+		target[key] = value;
+	}
+	if (shared) {
+		root.allOf = [{ $ref: ref }];
+	}
+};
 
 class RewriteDepthExceeded {
 	readonly _tag = "RewriteDepthExceeded";
@@ -233,6 +357,15 @@ export class StoreDocument extends Schema.Class<StoreDocument>("StoreDocument")(
 		options: StoreDocumentOptions,
 	): Result.Result<StoreDocument, SchemaConversionError | UndeclaredAnnotationKeyError> {
 		try {
+			// The override is gated up front: a bad override fails the build
+			// before anything is generated.
+			const overrideKeys = Object.keys(options.rootAnnotations ?? {});
+			const refusedOverrides = overrideKeys.filter(
+				(key) => !STANDARD_ANNOTATION_KEYWORDS.has(key) && !KeywordFamilies.isDeclared(key),
+			);
+			if (refusedOverrides.length > 0) {
+				return Result.fail(UndeclaredAnnotationKeyError.make({ $id: options.$id, keys: [...refusedOverrides].sort() }));
+			}
 			const userIncludes = options.jsonSchema?.includeAnnotationKey;
 			// A predicate cannot be introspected, so the gate is enforced by
 			// wrapping it: every key it admits outside the declared families is
@@ -262,6 +395,9 @@ export class StoreDocument extends Schema.Class<StoreDocument>("StoreDocument")(
 			const defs: Record<string, unknown> = Object.create(null);
 			for (const [name, definition] of Object.entries(lowered.definitions)) {
 				defs[name] = restoreDefsRefs(definition, 1);
+			}
+			if (options.rootAnnotations !== undefined) {
+				applyRootAnnotations(root, defs, options.rootAnnotations);
 			}
 			return Result.succeed(StoreDocument.make({ $schema: DRAFT_07_META_SCHEMA, $id: options.$id, root, defs }));
 		} catch (cause) {
