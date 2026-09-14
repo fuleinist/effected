@@ -93,6 +93,8 @@ describe("DocumentLint", () => {
 							c: { $ref: "#/$defs/a#b" },
 							d: { $ref: "#/$defs/A|B" },
 							e: { $ref: "#/$defs/A{B}/type" },
+							// ajv splits before it percent-decodes, so `%2F` stays inside the token.
+							f: { $ref: "#/$defs/a%2Fb" },
 						},
 					},
 					{
@@ -101,6 +103,7 @@ describe("DocumentLint", () => {
 						"a#b": { type: "string" },
 						"A|B": { type: "string" },
 						"A{B}": { type: "string" },
+						"a/b": { type: "string" },
 					},
 				),
 			);

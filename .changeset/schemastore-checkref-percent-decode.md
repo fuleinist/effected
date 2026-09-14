@@ -4,7 +4,7 @@
 
 ## Bug Fixes
 
-- `DocumentLint.checkRef` decodes `$ref` tokens through `JsonPointer.parseUriFragment` — the same decoding assembly and the engine apply — so a percent-encoded pointer (core emits `encodeURI(escapeToken(name))`, e.g. `#/$defs/My%20Foo~1BarEncoded` for the class identifier `My Foo/BarEncoded`) resolves against the literal `$defs` key instead of linting as `UnresolvedRef`. Pointer-escaped (`~1`/`~0`) names and subpath refs resolve exactly as before. A `$ref` that is not a well-formed URI fragment (a raw space, non-ASCII, `#`) still resolves the way ajv resolves it — lenient percent-decode, then unescape — so the lint never reports `UnresolvedRef` on a hand-assembled document the engine gate accepts; only malformed percent-encoding, which ajv also refuses, warns.
+- `DocumentLint.checkRef` decodes local `$ref` pointers the way ajv does — split on `/`, then percent-decode and pointer-unescape each token — so a percent-encoded pointer (core emits `encodeURI(escapeToken(name))`, e.g. `#/$defs/My%20Foo~1BarEncoded` for the class identifier `My Foo/BarEncoded`) resolves against the literal `$defs` key instead of linting as `UnresolvedRef`. Pointer-escaped (`~1`/`~0`) names and subpath refs resolve exactly as before, and a `$ref` that is not a well-formed URI fragment (a raw space, non-ASCII, `#`) resolves as the engine resolves it; only malformed percent-encoding, which ajv also refuses, warns. A `#/definitions/...` pointer stays a warning.
 
 ## Other
 

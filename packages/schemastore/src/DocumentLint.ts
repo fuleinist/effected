@@ -83,22 +83,17 @@ interface LintContext {
 const isSchemaObject = (node: unknown): node is Record<string, unknown> =>
 	typeof node === "object" && node !== null && !Array.isArray(node);
 
-// The pointer a local `$ref` names, decoded the way the engine resolves it.
-// `JsonPointer.parseUriFragment` is the strict decoder assembly uses and
-// covers every token core emits (`encodeURI(escapeToken(name))`, e.g.
-// `My%20Foo~1BarEncoded` for the class identifier `My Foo/BarEncoded`), so
-// a percent-encoded token resolves against the literal `$defs` key. It
-// refuses a fragment that does not round-trip through `encodeURI` — a raw
-// space, non-ASCII, `#`, `|`, `{}` — which a hand-assembled or read-back
-// document may well carry. ajv resolves those (it percent-decodes each
-// token leniently, then unescapes it, refusing only malformed
-// percent-encoding), so the lint falls back to the same decode rather than
-// be stricter than the gate it tracks.
+// The pointer a local `$ref` names, decoded exactly the way ajv resolves
+// it: split on `/`, then percent-decode and pointer-unescape each token.
+// That covers every token core emits (`encodeURI(escapeToken(name))`, e.g.
+// `My%20Foo~1BarEncoded` for the class identifier `My Foo/BarEncoded`) and
+// the unencoded shapes a hand-assembled or read-back document may carry
+// (a raw space, non-ASCII, `#`, `|`, `{}`), refusing only malformed
+// percent-encoding — which ajv refuses too. `JsonPointer.parseUriFragment`
+// is deliberately not used here: it rejects those unencoded shapes, and it
+// percent-decodes before splitting, so `a%2Fb` tokenizes as two segments
+// where the engine sees one.
 const localPointer = (ref: string): ReadonlyArray<string> | undefined => {
-	const strict = JsonPointer.parseUriFragment(ref);
-	if (strict !== undefined) {
-		return strict;
-	}
 	if (!ref.startsWith("#/")) {
 		return undefined;
 	}
@@ -278,9 +273,11 @@ const lintSchema = (node: unknown, path: string, depth: number, context: LintCon
  * Tractable because the input is the bounded {@link StoreDocument} shape,
  * not because assembly built it: the warning checks earn their keep on a
  * document the pipeline did not build — hand-assembled through
- * `StoreDocument.draft07`, or read back off disk — and track what the
- * engine gate would refuse, so a `$ref` ajv resolves is never reported
- * `UnresolvedRef`. This is not a general JSON Schema validator.
+ * `StoreDocument.draft07`, or read back off disk. A local `$defs` pointer
+ * is decoded the way ajv decodes it, so no `$ref` into the pool that the
+ * engine gate resolves is reported `UnresolvedRef`; a `#/definitions/...`
+ * pointer stays a warning on purpose, since the pool lives under `$defs`.
+ * This is not a general JSON Schema validator.
  *
  * @public
  */
