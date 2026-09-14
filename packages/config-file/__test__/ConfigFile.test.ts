@@ -42,7 +42,58 @@ describe("ConfigFile.load", () => {
 			assert.strictEqual(error._tag, "ConfigFileNotFoundError");
 			// It reports which tiers were probed — v3's mega-error could not.
 			assert.include((error as ConfigFileNotFoundError).searched, "explicit");
+			// ...and which paths those tiers checked — one name can hide N candidates.
+			assert.deepStrictEqual((error as ConfigFileNotFoundError).candidates, ["/app/.apprc"]);
 		}).pipe(Effect.provide(layerFor({}))),
+	);
+
+	it.effect("ConfigFileNotFoundError.candidates carries the full walk, in probe order", () =>
+		Effect.gen(function* () {
+			const cfg = yield* AppConfig;
+			const error = (yield* Effect.flip(cfg.load)) as ConfigFileNotFoundError;
+			assert.deepStrictEqual(error.searched, ["explicit", "walk:project"]);
+			assert.deepStrictEqual(error.candidates, [
+				"/app/.apprc",
+				"/repo/pkg/.app.json",
+				"/repo/pkg/app.json",
+				"/repo/.app.json",
+				"/repo/app.json",
+			]);
+			// The message names the search without dumping every path; the field carries them.
+			assert.include(error.message, "walk:project");
+			assert.include(error.message, "5 candidate paths checked");
+		}).pipe(
+			Effect.provide(
+				layerFor({}, [
+					ConfigResolver.explicitPath("/app/.apprc"),
+					ConfigResolver.upwardWalk({
+						filenames: [".app.json", "app.json"],
+						cwd: "/repo/pkg",
+						stopAt: "/repo",
+						name: "walk:project",
+					}),
+				]),
+			),
+		),
+	);
+
+	it.effect("a resolver without resolveProbe contributes no candidates but still names itself", () =>
+		Effect.gen(function* () {
+			const cfg = yield* AppConfig;
+			const error = (yield* Effect.flip(cfg.load)) as ConfigFileNotFoundError;
+			assert.deepStrictEqual(error.searched, ["hand-rolled", "explicit"]);
+			// The hand-rolled tier is opaque; the built-in still reports its probe.
+			assert.deepStrictEqual(error.candidates, ["/app/.apprc"]);
+			// No probe count in the message beyond what the field holds.
+			assert.include(error.message, "1 candidate path checked");
+		}).pipe(
+			Effect.provide(
+				layerFor({}, [
+					{ name: "hand-rolled", resolve: Effect.succeed(Option.none()) },
+					ConfigResolver.explicitPath("/app/.apprc"),
+				]),
+			),
+		),
 	);
 
 	it.effect("fails with ConfigCodecError — distinguishable from NotFound", () =>

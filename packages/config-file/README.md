@@ -149,7 +149,7 @@ Every failure is a tagged error you route on with `Effect.catchTag`. The tags ex
 
 | Tag | Means | Recovery |
 | --- | --- | --- |
-| `ConfigFileNotFoundError` | The resolver chain matched nothing. Carries `searched`, the resolver names probed. | Fall back to defaults — the one failure that is often not an error. `loadOrDefault` handles it for you. |
+| `ConfigFileNotFoundError` | The resolver chain matched nothing. Carries `searched`, the resolver names probed, and `candidates`, the paths they actually checked on disk. | Fall back to defaults — the one failure that is often not an error. `loadOrDefault` handles it for you. |
 | `ConfigFileReadError` | A file was found but could not be read. Carries `path` and the structural `cause`. | Usually fatal: the file exists and the process cannot read it. Check permissions. |
 | `ConfigFileWriteError` | A file could not be written. Carries `path` and the structural `cause`. | Retry elsewhere, or surface to the user. |
 | `ConfigDefaultPathMissingError` | `save` or `update` was called on a service configured without a `defaultPath`. | A wiring bug, not a data condition. Fix the layer, or call `write` with an explicit path. |

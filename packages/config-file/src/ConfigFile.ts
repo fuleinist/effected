@@ -4,7 +4,7 @@ import type { ConfigCodec } from "./ConfigCodec.js";
 import { ConfigCodecError } from "./ConfigCodec.js";
 import type { ConfigEventPayload, ConfigEvents, ConfigEventsShape } from "./ConfigEvent.js";
 import { ConfigEvent } from "./ConfigEvent.js";
-import type { ConfigMatch } from "./ConfigResolver.js";
+import type { ConfigMatch, ConfigProbe } from "./ConfigResolver.js";
 import { ConfigResolver } from "./ConfigResolver.js";
 import type { ConfigSource, MergeStrategy, NonEmptySources } from "./MergeStrategy.js";
 
@@ -21,9 +21,23 @@ import type { ConfigSource, MergeStrategy, NonEmptySources } from "./MergeStrate
 export class ConfigFileNotFoundError extends Schema.TaggedError<ConfigFileNotFoundError>()("ConfigFileNotFoundError", {
 	/** The names of the resolvers that were probed, in order. */
 	searched: Schema.Array(Schema.String),
+	/**
+	 * The candidate paths the chain actually checked on disk, in probe order
+	 * across every resolver — the failure-path mirror of {@link ConfigMatch}.
+	 *
+	 * @remarks
+	 * One `searched` name can hide many paths: an `upwardWalk` with a
+	 * `filenames` list probes every name at every ancestor. Resolvers that omit
+	 * the optional `resolveProbe` member contribute nothing here, so the list
+	 * can be shorter than the true search (or empty for a fully hand-rolled
+	 * chain) — `searched` remains the complete resolver list either way.
+	 */
+	candidates: Schema.Array(Schema.String),
 }) {
 	override get message(): string {
-		return `No config file found (searched: ${this.searched.join(", ")})`;
+		const count = this.candidates.length;
+		const probed = count === 0 ? "" : ` — ${count} candidate path${count === 1 ? "" : "s"} checked`;
+		return `No config file found (searched: ${this.searched.join(", ")}${probed})`;
 	}
 }
 
@@ -456,14 +470,27 @@ const makeImpl = <A, I, RR>(
 
 	const discover = Effect.fn("ConfigFile.discover")(function* () {
 		const sources: Array<ConfigSource<A>> = [];
+		const candidates: Array<string> = [];
 		for (const resolver of options.resolvers) {
 			// `resolve` cannot fail — the absorption contract — so no error handling here.
-			// `resolveMatch` is the same lookup carrying its own detail; a resolver
-			// that omits it is complete, and its match degrades to a bare path.
-			const found: Option.Option<ConfigMatch> =
-				resolver.resolveMatch === undefined
-					? Option.map(yield* Effect.provide(resolver.resolve, resolverEnv), (path) => ({ path }))
-					: yield* Effect.provide(resolver.resolveMatch, resolverEnv);
+			// `resolveProbe` is the same lookup carrying its own detail plus the
+			// paths it checked; a resolver that omits it degrades to `resolveMatch`,
+			// then to a bare-path match, contributing no candidates — the mirror of
+			// `ConfigSource.match` degrading when `resolveMatch` is absent.
+			let found: Option.Option<ConfigMatch>;
+			if (resolver.resolveProbe !== undefined) {
+				const probe: ConfigProbe = yield* Effect.provide(resolver.resolveProbe, resolverEnv);
+				found = probe.match;
+				// Only a miss consumes the probe list: on a hit the prefix says which
+				// candidate won, which `ConfigMatch` already reports in full.
+				if (Option.isNone(found)) {
+					candidates.push(...probe.probed);
+				}
+			} else if (resolver.resolveMatch !== undefined) {
+				found = yield* Effect.provide(resolver.resolveMatch, resolverEnv);
+			} else {
+				found = Option.map(yield* Effect.provide(resolver.resolve, resolverEnv), (path) => ({ path }));
+			}
 			if (Option.isSome(found)) {
 				const match = found.value;
 				const target = match.path;
@@ -472,7 +499,7 @@ const makeImpl = <A, I, RR>(
 				sources.push({ path: target, resolver: resolver.name, match, value: yield* loadFrom(target) });
 			}
 		}
-		return sources;
+		return { sources, candidates };
 	});
 
 	const searched = options.resolvers.map((r) => r.name);
@@ -494,17 +521,17 @@ const makeImpl = <A, I, RR>(
 		});
 
 	const load = Effect.fn("ConfigFile.load")(function* () {
-		const sources = yield* discover();
+		const { sources, candidates } = yield* discover();
 		if (sources.length === 0) {
 			yield* emit({ _tag: "NotFound" });
-			return yield* Effect.fail(new ConfigFileNotFoundError({ searched }));
+			return yield* Effect.fail(new ConfigFileNotFoundError({ searched, candidates }));
 		}
 		// Guarded by the check above; TypeScript cannot narrow Array<T> to [T, ...T[]].
 		return yield* mergeAndEmit(sources as unknown as NonEmptySources<A>);
 	});
 
 	const loadOrDefault = Effect.fn("ConfigFile.loadOrDefault")(function* (defaultValue: A) {
-		const sources = yield* discover();
+		const { sources } = yield* discover();
 		if (sources.length === 0) {
 			yield* emit({ _tag: "NotFound" });
 			return defaultValue;
@@ -648,7 +675,7 @@ const makeImpl = <A, I, RR>(
 	return {
 		load: load(),
 		loadFrom,
-		discover: discover(),
+		discover: Effect.map(discover(), (found) => found.sources),
 		loadOrDefault,
 		validate,
 		encode,
