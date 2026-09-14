@@ -143,6 +143,13 @@ export class CliRuntime {
 	 * program failing with it keeps `catchTags` narrowing downstream without a
 	 * cast. Any other value takes the `unknown` fallback and is wrapped in a
 	 * plain `Error`.
+	 *
+	 * The `E extends Error` constraint is structural, not nominal — TypeScript
+	 * cannot express "is really an `Error`", so the guarantee holds only when
+	 * the argument passes `instanceof Error` at runtime. A value that merely
+	 * satisfies `Error`'s shape (an object `implements Error`, or an error
+	 * revived from JSON) still takes the wrapping branch and comes back as a
+	 * fresh, stripped `Error` typed as `E`.
 	 */
 	static reported<E extends Error>(error: E, exitCode?: number): E;
 	static reported(error: unknown, exitCode?: number): Error;

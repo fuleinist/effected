@@ -101,7 +101,7 @@ ConfigValidationError: Config validation failed at "/home/me/.config/app/config.
 - `CliLogger.layer(options?)` — replaces the default logger with plain lines, routing `Error` and above to stderr. The threshold is the `stderrFrom` option, compared ordinally, so a level added upstream lands on the right stream without a change here.
 - `CliLogger.make(options?)` — the `Logger` itself, for composing into a logger set you already have.
 - `CliRuntime.reportFailures(options?)` — reports through your logger, then re-fails with an exit code and the mark that stops the runtime reporting it a second time.
-- `CliRuntime.reported(error, exitCode?)` — marks an error you reported yourself, so the runtime stays quiet about it. A typed `Error` comes back as its own type (the marks are added in place); any other value is wrapped in a plain `Error`.
+- `CliRuntime.reported(error, exitCode?)` — marks an error you reported yourself, so the runtime stays quiet about it. A typed `Error` comes back as its own type (the marks are added in place) when it passes `instanceof Error` at runtime; any other value — including one that only satisfies `Error`'s shape structurally — is wrapped in a plain `Error`.
 - `SchemaIssueRenderer.render(issue)` — a `SchemaIssue` tree becomes one line per rejected value.
 - `ConfigIssueRenderer.render(error)` — the same rendering, reading `issue` off a `ConfigValidationError`.
 
