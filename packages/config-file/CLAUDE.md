@@ -70,13 +70,18 @@ Three orthogonal seams, composed by `ConfigFile.layer`:
   contract**: `absorb` catches every filesystem failure into `Option.none()`, so
   one unreadable tier never aborts the chain. `resolveMatch` is the same lookup
   reporting a `ConfigMatch` — the anchor `dir` and the `subpath`/`filename`
-  candidate that matched — and every built-in **derives `resolve` from it**
-  through `fromMatch`, so the two cannot drift. It is optional on the interface
-  forever: a consumer's hand-rolled resolver omits it and `discover` degrades to
-  a bare `{ path }` on `ConfigSource.match`. It exists because a resolver `name`
-  cannot say which candidate won once one resolver probes several —
+  candidate that matched — and `resolveProbe` extends that with the candidate
+  paths actually checked (`ConfigProbe.probed`), which `ConfigFileNotFoundError`
+  surfaces as `candidates` so the failure path is as informative as the success
+  path. Every built-in **derives `resolve` and `resolveMatch` from it** through
+  `fromProbe`, so the three cannot drift. Both are optional on the interface
+  forever: a consumer's hand-rolled resolver omits them and `discover` degrades —
+  to a bare `{ path }` on `ConfigSource.match`, and to no `candidates`
+  contribution on the failure path. `resolveMatch` exists because a resolver
+  `name` cannot say which candidate won once one resolver probes several —
   `upwardWalk`'s `filenames` list is exactly that — which is what forced okfit to
-  string-match the discovered path's tail to find its project root.
+  string-match the discovered path's tail to find its project root; `resolveProbe`
+  exists because the same `name` under-reports what LOSING looked like (#651).
 - **`upwardWalk` probes directory-major**: every `subpaths × filenames` candidate
   at one ancestor before ascending. Separate `upwardWalk` entries cannot express
   it — `discover` exhausts one resolver to the filesystem root before starting

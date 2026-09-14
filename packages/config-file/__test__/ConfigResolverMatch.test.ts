@@ -191,3 +191,91 @@ describe("ConfigResolver match reporting", () => {
 		),
 	);
 });
+
+describe("ConfigResolver probe reporting", () => {
+	it.effect("upwardWalk reports every candidate when nothing matches, directory-major", () =>
+		Effect.gen(function* () {
+			const resolver = ConfigResolver.upwardWalk({
+				filenames: [".app.toml", "app.toml"],
+				cwd: "/repo/pkg",
+				stopAt: "/repo",
+			});
+			const probe = yield* resolver.resolveProbe ?? Effect.succeed({ match: Option.none(), probed: [] });
+			assert.isTrue(Option.isNone(probe.match));
+			assert.deepStrictEqual(probe.probed, [
+				"/repo/pkg/.app.toml",
+				"/repo/pkg/app.toml",
+				"/repo/.app.toml",
+				"/repo/app.toml",
+			]);
+		}).pipe(Effect.provide(platform({ "/app.toml": "" }))),
+	);
+
+	it.effect("upwardWalk reports only the checked prefix when a candidate matches", () =>
+		Effect.gen(function* () {
+			const resolver = ConfigResolver.upwardWalk({
+				filenames: [".app.toml", "app.toml"],
+				cwd: "/repo/pkg",
+			});
+			const probe = yield* resolver.resolveProbe ?? Effect.succeed({ match: Option.none(), probed: [] });
+			assert.deepStrictEqual(probe.match, Option.some({ path: "/repo/app.toml", dir: "/repo", filename: "app.toml" }));
+			// firstMatch short-circuits: the prefix ends at the match, so nothing
+			// above /repo — and no later candidate there — was ever checked.
+			assert.deepStrictEqual(probe.probed, [
+				"/repo/pkg/.app.toml",
+				"/repo/pkg/app.toml",
+				"/repo/.app.toml",
+				"/repo/app.toml",
+			]);
+		}).pipe(Effect.provide(platform({ "/repo/app.toml": "" }))),
+	);
+
+	it.effect("explicitPath and staticDir report their single candidate, hit or miss", () =>
+		Effect.gen(function* () {
+			const explicitMiss = yield* ConfigResolver.explicitPath("/nope.json").resolveProbe ??
+				Effect.succeed({ match: Option.none(), probed: [] });
+			assert.isTrue(Option.isNone(explicitMiss.match));
+			assert.deepStrictEqual(explicitMiss.probed, ["/nope.json"]);
+
+			const staticMiss = yield* ConfigResolver.staticDir({ dir: "/etc/app", filename: "config.json" }).resolveProbe ??
+				Effect.succeed({ match: Option.none(), probed: [] });
+			assert.isTrue(Option.isNone(staticMiss.match));
+			assert.deepStrictEqual(staticMiss.probed, ["/etc/app/config.json"]);
+		}).pipe(Effect.provide(platform({}))),
+	);
+
+	it.effect("gitRoot reports no candidates when there is no root", () =>
+		Effect.gen(function* () {
+			const noRoot = yield* ConfigResolver.gitRoot({ filename: "config.json", cwd: "/repo/pkg" }).resolveProbe ??
+				Effect.succeed({ match: Option.none(), probed: [] });
+			assert.isTrue(Option.isNone(noRoot.match));
+			assert.deepStrictEqual(noRoot.probed, []);
+		}).pipe(Effect.provide(platform({}))),
+	);
+
+	it.effect("gitRoot reports its subpath candidates under a root", () =>
+		Effect.gen(function* () {
+			const rootedMiss = yield* ConfigResolver.gitRoot({
+				filename: "config.json",
+				subpaths: [".", ".config"],
+				cwd: "/repo/pkg",
+			}).resolveProbe ?? Effect.succeed({ match: Option.none(), probed: [] });
+			assert.isTrue(Option.isNone(rootedMiss.match));
+			assert.deepStrictEqual(rootedMiss.probed, ["/repo/config.json", "/repo/.config/config.json"]);
+		}).pipe(Effect.provide(platform({ "/repo/.git": "" }))),
+	);
+
+	it.effect("derive resolve and resolveMatch from the same probe — the three never disagree", () =>
+		Effect.gen(function* () {
+			const resolver = ConfigResolver.upwardWalk({ filename: "app.toml", cwd: "/repo", stopAt: "/repo" });
+			const probe = yield* resolver.resolveProbe ?? Effect.succeed({ match: Option.none(), probed: [] });
+			const match = yield* resolver.resolveMatch ?? Effect.succeed(Option.none());
+			const resolved = yield* resolver.resolve;
+			assert.deepStrictEqual(match, probe.match);
+			assert.deepStrictEqual(
+				resolved,
+				Option.map(probe.match, (m) => m.path),
+			);
+		}).pipe(Effect.provide(platform({ "/repo/app.toml": "" }))),
+	);
+});
