@@ -137,12 +137,27 @@ export class CliRuntime {
 	 * Exported because a program that reports a failure itself — a validation
 	 * command that prints its own diagnostics, say — needs the same two marks
 	 * and should not have to rediscover the inverted polarity.
+	 *
+	 * The marks are added in place, so a typed error comes back as its own
+	 * type: the `E` overload returns the very instance it was given, and a
+	 * program failing with it keeps `catchTags` narrowing downstream without a
+	 * cast. Any other value takes the `unknown` fallback and is wrapped in a
+	 * plain `Error`.
+	 *
+	 * The `E extends Error` constraint is structural, not nominal — TypeScript
+	 * cannot express "is really an `Error`", so the guarantee holds only when
+	 * the argument passes `instanceof Error` at runtime. A value that merely
+	 * satisfies `Error`'s shape (an object `implements Error`, or an error
+	 * revived from JSON) still takes the wrapping branch and comes back as a
+	 * fresh, stripped `Error` typed as `E`.
 	 */
-	static readonly reported = (error: unknown, exitCode = 1): Error => {
+	static reported<E extends Error>(error: E, exitCode?: number): E;
+	static reported(error: unknown, exitCode?: number): Error;
+	static reported(error: unknown, exitCode = 1): Error {
 		const marked = error instanceof Error ? error : new Error(String(error));
 		return Object.assign(marked, {
 			[Runtime.errorReported]: false,
 			[Runtime.errorExitCode]: exitCode,
 		});
-	};
+	}
 }

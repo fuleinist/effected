@@ -126,3 +126,50 @@ describe("CliRuntime.reportFailures", () => {
 		}),
 	);
 });
+
+describe("CliRuntime.reported", () => {
+	/** A stand-in for the typed errors a CLI fails with (issue #717). */
+	class GateError extends Error {
+		readonly _tag = "GateError";
+		readonly count: number;
+		constructor(count: number) {
+			super(`gate: ${count} over budget`);
+			this.count = count;
+		}
+	}
+
+	it.effect("returns the same typed instance, so catchTags narrows without a cast", () =>
+		Effect.gen(function* () {
+			const error = new GateError(2);
+			const marked = CliRuntime.reported(error, 1);
+
+			// The overload's contract at the type level: no cast, no widening.
+			const typed: GateError = marked;
+			assert.strictEqual(typed, error);
+			assert.strictEqual(typed.count, 2);
+			assert.strictEqual(Runtime.getErrorExitCode(typed), 1);
+			assert.strictEqual(Runtime.getErrorReported(typed), false);
+
+			// The narrowing the issue exists for: the failure channel keeps the
+			// tag, so catchTags compiles against it directly. If `reported` ever
+			// widens to plain Error again, this line stops compiling.
+			const recovered = yield* Effect.fail(CliRuntime.reported(new GateError(3), 1)).pipe(
+				Effect.catchTags({ GateError: (caught) => Effect.succeed(caught.count) }),
+			);
+			assert.strictEqual(recovered, 3);
+		}),
+	);
+
+	it("wraps a non-Error value in a plain marked Error", () => {
+		const marked = CliRuntime.reported("boom", 3);
+		const asError: Error = marked;
+		assert.strictEqual(asError instanceof Error, true);
+		assert.strictEqual(asError.message, "boom");
+		assert.strictEqual(Runtime.getErrorExitCode(asError), 3);
+		assert.strictEqual(Runtime.getErrorReported(asError), false);
+	});
+
+	it("defaults the exit code to 1", () => {
+		assert.strictEqual(Runtime.getErrorExitCode(CliRuntime.reported(new Error("x"))), 1);
+	});
+});
