@@ -320,6 +320,8 @@ The classification is key-order insensitive and keyword-position aware, like the
 
 `CanonicalJson` is the deterministic serializer behind `serializeResult` and `SchemaFile.write`: insertion-order keys (assembly owns ordering — nothing is sorted), tab indentation by default, LF line endings and a single trailing newline, so equal documents serialize to equal bytes. Where `JSON.stringify` silently drops or rewrites `undefined`, `NaN` and non-plain objects, it fails typed instead — `NonJsonValueError` carries a JSON pointer to the offending value, and `JsonDepthExceededError` catches hostile nesting and cycles.
 
+`CanonicalJson.equals` is the matching content predicate: parsed-content equality with the serializer's own semantics — object key order is a serialization detail and never decides, array element order is data and always does, primitives compare exactly (`NaN` never equals), and values the serializer refuses (non-plain objects, `undefined`, functions, symbols, `bigint`s) compare unequal unless they are the identical reference. Comparing two documents (or two `JSON.parse` results) by content never needs a hand-rolled deep-equal again.
+
 ## Features
 
 - `StoreDocument` — the assembly pipeline: `fromSchema` / `fromSchemaResult`, the `draft07` constructor for hand-built documents, the flat `toJson()` publication shape, `serializeResult()`, the `DRAFT_07_META_SCHEMA` constant and `SchemaConversionError`.
@@ -332,7 +334,7 @@ The classification is key-order insensitive and keyword-position aware, like the
 - `SchemaPipeline` — the emit loop over a target manifest, two-phase and all-or-nothing across targets: `run` and `check`, the single-target `runOne` and `checkOne`, `PipelineFinding`, `SchemaGateError` and an overridable gating predicate, plus the contract gate (`ContractChangePolicy`, `ContractChangeTarget`, `SchemaContractChangeError`, `PipelineCheckResult.contractBlocked`) that refuses to rewrite a published document's validation contract in place.
 - `SchemaFile` — write-if-changed IO over core `FileSystem` / `Path`, comparing by content and answering what changed as a value; `check` is the non-writing drift half, answering `wouldWrite` alongside `change`.
 - `SchemaTarget` — the target manifest vocabulary: schema, `$id`, destination path, an optional name, an optional version that requires one, and optional per-target `jsonSchema` generation options.
-- `CanonicalJson` — the deterministic serializer with typed failures (`NonJsonValueError`, `JsonDepthExceededError`).
+- `CanonicalJson` — the deterministic serializer with typed failures (`NonJsonValueError`, `JsonDepthExceededError`), plus `equals` for parsed-content equality with the serializer's own semantics.
 
 ## License
 

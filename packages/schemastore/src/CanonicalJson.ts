@@ -124,7 +124,84 @@ export class CanonicalJson {
 		(value: unknown, options?: CanonicalJsonOptions): Effect.Effect<string, CanonicalJsonError> =>
 			Effect.fromResult(CanonicalJson.serializeResult(value, options)),
 	);
+
+	/**
+	 * Parsed-content equality: the serializer's own semantics as a predicate,
+	 * so a consumer comparing two documents (or two `JSON.parse` results) by
+	 * content never re-spells the walk. Object key order is a serialization
+	 * detail — a formatter may sort or compact — so it never decides equality;
+	 * array element order IS data, so it always does. Primitives compare
+	 * exactly, which means `NaN` is never equal (JSON has no `NaN`), and an
+	 * identical reference short-circuits equal whatever it is.
+	 *
+	 * Values {@link CanonicalJson.serialize} refuses — non-plain objects,
+	 * `undefined`, functions, symbols, `bigint`s — have no canonical bytes, so
+	 * distinct such values compare unequal (the conservative direction: a
+	 * difference a build repairs, never a false "same"). Comparison nesting
+	 * past a generous stack guard (8× the serializer's 256-level cap, which
+	 * also intercepts cycles between non-identical references) likewise
+	 * answers unequal rather than overflowing the stack.
+	 *
+	 * @public
+	 */
+	static equals(left: unknown, right: unknown): boolean {
+		return contentEqual(left, right, 0);
+	}
 }
+
+// A stack guard for the equality walk, deliberately looser than the
+// serializer's MAX_NESTING_DEPTH cap: the cap bounds what SERIALIZES, while
+// this only stops the comparison from overflowing the stack on hostile (or
+// cyclic) input. Sharing one budget made a deeply-nested but identical
+// document compare as different, because the walk ran out of frames before
+// reaching the leaves (the same pitfall DocumentDiff's leaf comparison
+// documents).
+const EQUALS_STACK_GUARD = MAX_NESTING_DEPTH * 8;
+
+const isPlainObject = (value: object): boolean => {
+	const prototype = Object.getPrototypeOf(value);
+	return prototype === Object.prototype || prototype === null;
+};
+
+// Order-insensitive for object keys, order-sensitive for arrays — key order
+// is a serialization detail, element order is data. Past the stack guard, or
+// on any value the serializer would refuse (non-plain object, undefined,
+// function, symbol, bigint), unequal-by-reference is reported as different,
+// which is the conservative direction.
+const contentEqual = (a: unknown, b: unknown, depth: number): boolean => {
+	if (a === b) {
+		return true;
+	}
+	if (depth >= EQUALS_STACK_GUARD) {
+		return false;
+	}
+	if (Array.isArray(a) || Array.isArray(b)) {
+		return (
+			Array.isArray(a) &&
+			Array.isArray(b) &&
+			a.length === b.length &&
+			a.every((element, index) => contentEqual(element, b[index], depth + 1))
+		);
+	}
+	if (typeof a !== "object" || typeof b !== "object" || a === null || b === null) {
+		// Primitives that failed `===` (including NaN), null against anything,
+		// and the non-object non-JSON values (undefined, function, symbol,
+		// bigint) the serializer refuses.
+		return false;
+	}
+	if (!isPlainObject(a) || !isPlainObject(b)) {
+		// A class instance or exotic object has no canonical bytes (serialize
+		// fails NonJsonValueError); identical references short-circuited above.
+		return false;
+	}
+	const left = a as Record<string, unknown>;
+	const right = b as Record<string, unknown>;
+	const keys = Object.keys(left);
+	return (
+		keys.length === Object.keys(right).length &&
+		keys.every((key) => Object.hasOwn(right, key) && contentEqual(left[key], right[key], depth + 1))
+	);
+};
 
 // A numeric indent must be a non-negative integer: `" ".repeat` throws a
 // bare RangeError on negatives and silently floors fractions — both are
