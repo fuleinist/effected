@@ -246,8 +246,10 @@ describe("ConfigResolver probe reporting", () => {
 
 	it.effect("gitRoot reports no candidates when there is no root", () =>
 		Effect.gen(function* () {
+			// The fallback must not coincide with the expected value, or the test
+			// passes with `resolveProbe` absent.
 			const noRoot = yield* ConfigResolver.gitRoot({ filename: "config.json", cwd: "/repo/pkg" }).resolveProbe ??
-				Effect.succeed({ match: Option.none(), probed: [] });
+				Effect.die("gitRoot must implement resolveProbe");
 			assert.isTrue(Option.isNone(noRoot.match));
 			assert.deepStrictEqual(noRoot.probed, []);
 		}).pipe(Effect.provide(platform({}))),

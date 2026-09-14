@@ -211,7 +211,7 @@ now expressed over `Walker.ascend`, `Walker.findUpward` and `Walker.findRoot`.
 
 ## Testing and building
 
-Tests live in `__test__/` (18 files, 182 passing), use `@effect/vitest`, and
+Tests live in `__test__/` (18 files, 191 passing), use `@effect/vitest`, and
 assert with `assert.*` — **never** `expect`.
 
 ```bash

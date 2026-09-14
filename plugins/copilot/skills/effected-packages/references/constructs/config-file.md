@@ -28,6 +28,7 @@
 | `ConfigMigration` | Class | Versioned migration support for config codecs. | upgrade an old config file schema to the latest version on load |
 | `ConfigMigrationError` | Class | Indicates that a versioned config migration failed. | handle a versioned config migration step failing to read, apply or write |
 | `ConfigMigrationOptions` | Interface | Options for `ConfigMigration.make`. | |
+| `ConfigProbe` | Interface | The full report of one resolver lookup: what matched, and what was checked. | |
 | `ConfigReadError` | TypeAlias | The failure modes of reading one known path. | |
 | `ConfigReadOptions` | Interface | Options for `ConfigFile.read`. | |
 | `ConfigResolver` | Class + Interface | Built-in resolvers, in the order a typical chain uses them. | find a config file: explicit path, static dir, upward walk, or /etc |

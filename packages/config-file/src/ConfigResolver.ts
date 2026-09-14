@@ -48,7 +48,7 @@ export interface ConfigResolver<R = never> {
 	 * Optional, and optional forever: a hand-rolled resolver that omits it is a
 	 * complete `ConfigResolver`, and the pipeline falls back to `resolveMatch`
 	 * (then `resolve`), contributing nothing to
-	 * {@link ConfigFileNotFoundError.candidates} — the failure-path mirror of
+	 * `ConfigFileNotFoundError.candidates` — the failure-path mirror of
 	 * `ConfigSource.match` degrading to a bare path. Every built-in implements
 	 * it, and derives the other two from it, so the three can never disagree.
 	 *
@@ -107,8 +107,8 @@ export interface ConfigProbe {
 	readonly match: Option.Option<ConfigMatch>;
 	/**
 	 * Candidate paths checked on disk, in probe order. Empty when the lookup
-	 * never reached a candidate check — no root found, platform short-circuit,
-	 * or an absorbed filesystem failure.
+	 * produced no candidate to report — no root found, a platform short-circuit,
+	 * or a filesystem failure absorbed across the whole probe.
 	 */
 	readonly probed: ReadonlyArray<string>;
 }
