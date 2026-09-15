@@ -1,6 +1,6 @@
 import type { SchemastoreConfig } from "@effected/schemastore";
 import { isSchemastoreConfig } from "@effected/schemastore";
-import { Effect, FileSystem, Path, Schema } from "effect";
+import { Effect, FileSystem, Path, Predicate, Schema } from "effect";
 import { createJiti } from "jiti";
 
 /**
@@ -21,8 +21,9 @@ export class ConfigNotFoundError extends Schema.TaggedError<ConfigNotFoundError>
 /**
  * The config file exists but could not be turned into a `SchemastoreConfig`:
  * the module threw on import, its default export is not a `defineConfig(...)`
- * value, a `schemas` element is not `SchemaTarget`-shaped, or two outputs
- * resolve to one absolute path.
+ * value, `outputDir`/`catalogPath` is not a string, a `schemas` element is
+ * not resolved-schema-shaped (or its `target`, `catalog`, or a `frozen`
+ * entry is not shaped), or two outputs resolve to one absolute path.
  *
  * @public
  */
@@ -37,7 +38,8 @@ export class ConfigLoadError extends Schema.TaggedError<ConfigLoadError>()("Conf
 
 /**
  * A loaded config: where it came from and its contents with every relative
- * `path` (schema targets and catalog entries) resolved against `directory`.
+ * `path` (`outputDir`, `catalogPath`, each schema's current target, and every
+ * frozen predecessor) resolved against `directory`.
  *
  * @public
  */
@@ -73,47 +75,59 @@ const jitiImport = (path: string): Promise<unknown> => createJiti(path, { intero
 const describeCause = (cause: unknown): string =>
 	cause instanceof Error ? (cause.stack ?? cause.message) : String(cause);
 
-// `defineConfig` validates the catalog block with a schema but takes `schemas`
-// on trust (they carry live Schema values). A plain-JS config can hand it
-// anything, so the loader checks the fields the pipeline and the drift
+// `defineConfig` validates every field it can check by shape, but a
+// hand-rolled module can forge the brand directly, skipping `defineConfig`
+// entirely. The loader re-checks the fields the pipeline and the drift
 // policy dereference. (A v4 Schema value is callable — `typeof` says
 // "function" — hence `isSchema`.)
-const describeMalformedTarget = (schemas: unknown): string | undefined => {
-	if (!Array.isArray(schemas)) {
+const isTargetShaped = (target: unknown): boolean =>
+	Predicate.isObject(target) &&
+	Schema.isSchema(target.schema) &&
+	typeof target.$id === "string" &&
+	typeof target.path === "string" &&
+	typeof target.published === "boolean";
+
+const isCatalogEntryShaped = (catalog: unknown): boolean =>
+	Predicate.isObject(catalog) &&
+	typeof catalog.name === "string" &&
+	typeof catalog.description === "string" &&
+	Array.isArray(catalog.fileMatch) &&
+	typeof catalog.url === "string";
+
+const describeMalformed = (config: SchemastoreConfig): string | undefined => {
+	if (typeof config.outputDir !== "string") {
+		return "outputDir is not a string";
+	}
+	if (typeof config.catalogPath !== "string") {
+		return "catalogPath is not a string";
+	}
+	if (!Array.isArray(config.schemas)) {
 		return "schemas is not an array";
 	}
-	for (const [index, target] of (schemas as ReadonlyArray<unknown>).entries()) {
-		const record = typeof target === "object" && target !== null ? (target as Record<string, unknown>) : undefined;
-		const shaped =
-			record !== undefined &&
-			Schema.isSchema(record.schema) &&
-			typeof record.$id === "string" &&
-			typeof record.path === "string" &&
-			typeof record.published === "boolean";
-		if (!shaped) {
-			return `schemas[${index}] is not a SchemaTarget (missing schema/$id/path/published)`;
+	for (const [index, schema] of (config.schemas as ReadonlyArray<unknown>).entries()) {
+		if (
+			!Predicate.isObject(schema) ||
+			typeof schema.name !== "string" ||
+			!Array.isArray(schema.frozen) ||
+			typeof schema.drift !== "string"
+		) {
+			return `schemas[${index}] is not a resolved schema (missing name/target/frozen/drift)`;
 		}
-	}
-	return undefined;
-};
-
-// A forged brand can carry a `catalog` that is not an array at all (a
-// `defineConfig`-produced config never does — it validates this) — guarded
-// separately from `describeMalformedTarget` since it stops a different
-// dereference: `.map` in `resolvePaths`, then `entry.config.path` per
-// element — a forged `catalog: [null]` would otherwise throw there.
-const describeMalformedCatalog = (catalog: unknown): string | undefined => {
-	if (!Array.isArray(catalog)) {
-		return "catalog is not an array";
-	}
-	for (const [index, entry] of (catalog as ReadonlyArray<unknown>).entries()) {
-		const record = typeof entry === "object" && entry !== null ? (entry as Record<string, unknown>) : undefined;
-		const config =
-			record !== undefined && typeof record.config === "object" && record.config !== null
-				? (record.config as Record<string, unknown>)
-				: undefined;
-		if (config === undefined || typeof config.path !== "string") {
-			return `catalog[${index}] is not a catalog entry (missing config.path)`;
+		if (!isTargetShaped(schema.target)) {
+			return `schemas[${index}].target is not a SchemaTarget (missing schema/$id/path/published)`;
+		}
+		if (schema.catalog !== undefined && !isCatalogEntryShaped(schema.catalog)) {
+			return `schemas[${index}].catalog is not a catalog entry (missing name/description/fileMatch/url)`;
+		}
+		for (const [j, frozen] of (schema.frozen as ReadonlyArray<unknown>).entries()) {
+			if (
+				!Predicate.isObject(frozen) ||
+				typeof frozen.version !== "string" ||
+				typeof frozen.path !== "string" ||
+				typeof frozen.url !== "string"
+			) {
+				return `schemas[${index}].frozen[${j}] is not a frozen version (missing version/path/url)`;
+			}
 		}
 	}
 	return undefined;
@@ -122,10 +136,14 @@ const describeMalformedCatalog = (catalog: unknown): string | undefined => {
 // `defineConfig` already rejects duplicate output paths lexically; two
 // spellings it could not unify (`../x/a.json` from one directory, `a.json`
 // after resolution) can still collide once absolute, so the check re-runs
-// here on the resolved paths.
+// here on the resolved paths, across every declared output: each schema's
+// current target, every frozen predecessor, and the catalog file.
 const describeDuplicatePath = (config: SchemastoreConfig): string | undefined => {
 	const seen = new Set<string>();
-	const paths = [...config.schemas.map((target) => target.path), ...config.catalog.map((c) => c.config.path)];
+	const paths = [
+		...config.schemas.flatMap((schema) => [schema.target.path, ...schema.frozen.map((f) => f.path)]),
+		config.catalogPath,
+	];
 	for (const p of paths) {
 		if (seen.has(p)) {
 			return `output path "${p}" is declared twice after resolution`;
@@ -185,9 +203,12 @@ export class ConfigLoader {
 	});
 
 	/**
-	 * Resolve every relative `path` in the config (schema targets and catalog
-	 * entries) against `directory`; absolute paths are left alone. The result
-	 * keeps the `defineConfig` brand.
+	 * Resolve every relative `path` in the config (`outputDir`, `catalogPath`,
+	 * each schema's current target, and every frozen predecessor) against
+	 * `directory`; absolute paths are left alone. `defineConfig` already
+	 * prefixes `outputDir` onto every target/frozen `path`, so resolving them
+	 * against the config directory equals resolving against the resolved
+	 * `outputDir`. The result keeps the `defineConfig` brand.
 	 */
 	static readonly resolvePaths = Effect.fn("ConfigLoader.resolvePaths")(function* (
 		config: SchemastoreConfig,
@@ -201,8 +222,13 @@ export class ConfigLoader {
 		// literal's type would carry it into declaration emit (TS4026).
 		const resolved: SchemastoreConfig = {
 			...config,
-			schemas: config.schemas.map((target) => ({ ...target, path: absolute(target.path) })),
-			catalog: config.catalog.map((c) => ({ ...c, config: { ...c.config, path: absolute(c.config.path) } })),
+			outputDir: absolute(config.outputDir),
+			catalogPath: absolute(config.catalogPath),
+			schemas: config.schemas.map((schema) => ({
+				...schema,
+				target: { ...schema.target, path: absolute(schema.target.path) },
+				frozen: schema.frozen.map((f) => ({ ...f, path: absolute(f.path) })),
+			})),
 		};
 		return resolved;
 	});
@@ -234,13 +260,9 @@ export class ConfigLoader {
 				}),
 			);
 		}
-		const malformed = describeMalformedTarget(exported.schemas);
+		const malformed = describeMalformed(exported);
 		if (malformed !== undefined) {
 			return yield* Effect.fail(new ConfigLoadError({ path: configPath, reason: malformed }));
-		}
-		const malformedCatalog = describeMalformedCatalog(exported.catalog);
-		if (malformedCatalog !== undefined) {
-			return yield* Effect.fail(new ConfigLoadError({ path: configPath, reason: malformedCatalog }));
 		}
 		const directory = path.dirname(configPath);
 		const config = yield* ConfigLoader.resolvePaths(exported, directory);
