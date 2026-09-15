@@ -225,7 +225,9 @@ Four things in that shape are load-bearing:
   writes, and it fails (exit `1`) whenever a build would write anything —
   wire it into `ci:test` ahead of the test run. Stale document: run
   `schema:build`, review the diff, commit. Never hand-edit the committed
-  file.
+  file. A `catalog.json` no schema declares is reported `orphaned` and fails
+  `check` the one way `build` cannot clear: delete the file by hand, or
+  restore a `catalog` block.
 - **Objects are closed.** The library emits `additionalProperties: false`
   by default (a published document is a contract; it does not follow core's
   open default). The action's decoders can keep tolerating excess keys — the
