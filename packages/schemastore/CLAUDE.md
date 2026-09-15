@@ -5,7 +5,8 @@ documents from Effect Schema sources: assembly over core's
 `Schema.toJsonSchemaDocument` + `JsonSchema.toDocumentDraft07`, annotation
 carrying for the language-server keyword families, the catalog vocabulary in
 both versioning modes, structural and hygiene lints, canonical JSON text,
-write-if-changed IO with change classification, and validation over ajv.
+write-if-changed IO with change classification, and the validation contract
+whose one shipped engine is the CLI's `AjvValidator`.
 
 **For the full design:** → `@./okf/modules/schemastore.md`
 
@@ -18,24 +19,34 @@ Children carry surfaces and evidence; **every rule is here**.
 - Modules → `@./CLAUDE.modules.md` — Load when: changing or extending a module, or asking what one exposes.
 - Verification → `@./CLAUDE.verification.md` — Load when: touching the suite, or before re-litigating a "does core do X?" question — the beta-probed facts, hardening budget and test pins live there.
 
-## Tier: integrated (since 2026-08-04)
+## Tier: boundary (integrated 2026-08-04 → 2026-09-15)
 
-**Flipped from boundary by owner decision (dogfood round 1, item 3).** `ajv` is
-a **direct runtime dependency**: `SchemaValidator.layer` is a shipped
-real-engine implementation, not a contract-only seam. The flip overturns a
-stated principle knowingly: this is build-time tooling installed as a
-devDependency, SchemaStore's own gate IS ajv strict mode, and purity here only
-made every consumer write the same adapter, worse (one collapsed ajv's
-structured errors into a single `path: ""` finding). **The seam survives as an
-interface** (`noop`, `makeTest`/`layerTest`, a substitutable engine), not as a
-requirement.
+**No ajv here.** `SchemaValidator` is the contract and its doubles only —
+`SchemaValidatorShape`, `SchemaValidatorOptions`, `SchemaValidatorError`,
+`ValidationFinding`, `noop`, `makeTest`/`layerTest`. The one shipped engine is
+`AjvValidator.layer` in `@effected/schemastore-cli` (`src/AjvValidator.ts`
+there), which the command composes and exports; `ajv`/`ajv-formats` are the
+CLI's dependencies. Never re-add an engine or an ajv import to this package:
+an application that imports the library at runtime (for `HostedSchema`, say —
+silk-release-action holds it in `dependencies`) must never pull an engine into
+its install or bundle.
+
+The history: the package flipped boundary → integrated on 2026-08-04 by owner
+decision (dogfood round 1, item 3) to ship `SchemaValidator.layer` as a real
+engine, on the premise that this was devDependency-only build tooling and
+purity only made every consumer write the same adapter, worse. Once the CLI
+became the only real-engine consumer and applications imported the library at
+runtime, that premise failed, the adapter moved to the CLI (once, there), and
+the tier flipped back — `okf/decisions/schemastore-engine-lives-in-the-cli.md`.
+The seam is still an interface with a substitutable engine.
 
 All IO lives in `src/SchemaFile.ts` — one module, one `Context.Service`, over
 core `FileSystem`/`Path` required in `R` (the `PackageJsonFile` pattern: no
 platform package, the consumer provides one at the edge). **Every other module
 is pure; keep it that way.** Peers on `effect`; one regular `workspace:^` edge
 on `@effected/semver` (version ordering only — no `SemVer` type surfaces
-publicly); `@effect/platform-node` is a devDependency for the integration tests.
+publicly), the only runtime dependency; `@effect/platform-node` is a
+devDependency for the integration tests.
 
 ## Scope fence
 
@@ -43,8 +54,8 @@ publicly); `@effect/platform-node` is a devDependency for the integration tests.
 redundant. Core owns the generation pipeline; this package owns the SchemaStore
 shape around it and **must not grow into a general JSON Schema package**: no
 schema construction, no ref resolution beyond the document's own `$defs` pool,
-no dialect conversion. Depending on ajv does not widen the fence — ajv is the
-validation gate, not a construction surface.
+no dialect conversion. The CLI's dependency on ajv does not widen the fence —
+ajv is the validation gate the command runs, not a construction surface.
 
 ## Rules
 
@@ -92,8 +103,8 @@ validation gate, not a construction surface.
   key set, any value must be JSON, and the one recommended (non-binding) key
   is `x-ai-hint`. After the prefix a key may use only `[A-Za-z0-9_$:-]` (ajv
   holds a keyword name to `/^[a-z_$][a-z0-9_$:-]*$/i`) — a dot, space, slash,
-  `@`, `+` or non-ASCII character makes the engine gate reject the document
-  as a finding. A declared-family value must not contain an `$id` (or a
+  `@`, `+` or non-ASCII character makes the CLI's engine gate reject the
+  document as a finding. A declared-family value must not contain an `$id` (or a
   repeated `$anchor`) at ANY depth, not merely as a top-level key — ajv's
   reference collection walks unknown keywords for them — and an empty-string
   `$id` resolves to the root id and collides too; a collision fails the
@@ -184,22 +195,63 @@ validation gate, not a construction surface.
   live ON the target and are forwarded to `fromSchema` by the pipeline — never
   add a pipeline-wide equivalent: a document that only reproduces under
   options held elsewhere is not self-describing (#688; the rc.113
-  `onExcessProperty` default flip is the motivating case).
-- **`defineConfig` fails with a clear `Error` on every malformed input, never
-  with a raw `TypeError`.** A missing/empty `outputDir`, an empty `schemas`
-  record, a schema key that is not a simple file base name, an invalid
-  `baseUrl`/`layout`/`versions`/`current`/`drift`/`onDrift`, a missing or
-  empty-`fileMatch` `catalog` under `baseUrl: "schemastore"`, or a duplicate
-  output path — every one is a `defineConfig: …` `Error` naming the offending
-  schema, before anything is written, the same shape as the CLI's load-error
-  wrap (exit `2`). Keep every guard ahead of the dereference it protects.
+  `onExcessProperty` default flip is the motivating case, and the target
+  option is what REOPENS a document that was published open, never what
+  closes one).
+- **Generated objects are closed by default — `fromSchema` spreads
+  `onExcessProperty: "error"` ahead of the caller's `jsonSchema`.** Core's
+  own default flipped to `"ignore"` (open) at rc.113 and this package does
+  not follow it: a published document is a contract, and an open object
+  accepts a typo'd key without complaint. `jsonSchema: { onExcessProperty:
+  "ignore" }` on a target (or a `defineConfig` entry) reopens that ONE
+  document. Breaking for anyone who relied on open objects — the
+  reasoning is `okf/decisions/schemastore-closed-objects-by-default.md`;
+  never restore core's default silently.
+- **`defineConfig` decodes its input with one `Schema.Struct` per level —
+  `errors: "all"`, `onExcessProperty: "error"` — and fails with a clear
+  `Error` on every malformed input, never with a raw `TypeError`.** The
+  decode is the guard: it runs before any dereference, reports every issue
+  on an entry at once, and NAMES a typo'd key rather than dropping it
+  (`defineConfig: schema "<name>" Expected string at ["baseUrl"]`, decode
+  issues collapsed onto one line). The literal unions (`drift`, `onDrift`,
+  `layout`) are derived from the exported types through an
+  exhaustive-`Record` helper, so the accepted lists cannot drift from the
+  types — extend the type and the compiler demands the record entry. Only
+  the rules a decode cannot express stay hand-written, AFTER it: an empty
+  `schemas` record, a key that is not a simple file base name, a `hosted`
+  entry keyed differently from `hosted.name` or spelling a hosting field
+  beside it, an entry with no `baseUrl` and no config default, a missing
+  `catalog` under `baseUrl: "schemastore"`, and a duplicate output path after
+  lexical normalisation. Every failure is a `defineConfig: …` `Error` naming
+  the offending schema, the same shape as the CLI's load-error wrap
+  (exit `2`). Never add a hand guard for something the struct could decode.
+- **Hosting and version rules belong to `HostedSchema`, and `defineConfig`
+  delegates to it — never re-implement one in the config.** `HostedSchema`
+  is a `Schema.Class` over `{ name, baseUrl, versions?, current?, layout? }`
+  whose ONE private `resolve` walk backs both the class check and every
+  getter, so what the check admits is exactly what `$id`/`url`/`fileName`
+  (and `idFor`/`urlFor`/`fileNameFor`) read. Build one through the named
+  constructors — `github({ repo, branch = "main", path?, … })`,
+  `schemastore({ … })`, `custom({ baseUrl: string | URL, … })` — which
+  validate via a decode and throw a plain `Error` naming the reason; the
+  class's `make` buries the same message in `cause`, so it is not the
+  documented path. An entry hands the value in as `hosted`: it must be
+  keyed by `hosted.name`, must not spell `baseUrl`/`versions`/`current`/
+  `layout` beside it, and ignores the config-level `baseUrl` default. An
+  entry without `hosted` is lowered onto a `HostedSchema` from its own
+  fields and the default, so the two spellings cannot diverge. The point:
+  an application derives its `$schema` URL from the same value it hands
+  to `defineConfig`, so the URL it writes and the `$id` the CLI emits
+  cannot disagree.
 - **Identity is derived, never cross-checked: `$id`, the file path and every
-  catalog URL come from one `relativeFile(name, version, layout)`; there is
-  no `$id` override by design (#715).** Frozen labels (`versions` other than
-  `current`) are advertised by the catalog and verified on disk by the CLI,
-  never regenerated. `baseUrl: "schemastore"` means two hosts —
-  `json.schemastore.org` in `$id`, `www.schemastore.org` in the catalog —
-  verified 2026-09-14.
+  catalog URL come from one `HostedSchema` (`idFor`, `urlFor`,
+  `fileNameFor`); there is no `$id` override by design (#715).** Frozen
+  labels (`versions` other than `current`) are advertised by the catalog and
+  verified on disk by the CLI — existence AND the declared `$id`
+  (`FrozenVersion.$id`, which differs from `url` only under
+  `"schemastore"`) — never regenerated. `baseUrl: "schemastore"` means two
+  hosts — `json.schemastore.org` in `$id`, `www.schemastore.org` in the
+  catalog — verified 2026-09-14.
 - **`SchemaPipeline` is a plain function, deliberately not a `Context.Service`**
   — it needs `SchemaFile | SchemaValidator` in `R`, which compose for free.
   `run` is **two-phase and all-or-nothing across targets**: phase 1 generates,
@@ -234,10 +286,13 @@ validation gate, not a construction surface.
   conclusion held for a different reason — the lowering dropped undeclared
   keywords — so do not restate the mechanism from memory.
 - **A validator's error channel is for the mechanism failing**, never for
-  findings (the `CatalogResolver` convention). `SchemaValidator.layer` registers
-  the declared families before compiling, so ajv cannot reject what
-  `DocumentLint` allows, and uses a fresh instance per call so shared `$id`s
-  never collide.
+  findings (the `CatalogResolver` convention). The contract lives here; the
+  engine that honours it is the CLI's `AjvValidator.layer`, which registers
+  the declared families (through this package's `KeywordFamilies.isDeclared`)
+  before compiling, so ajv cannot reject what `DocumentLint` allows, and uses
+  a fresh instance per call so shared `$id`s never collide. The three rules
+  below describe that engine — they are recorded here because
+  `KeywordFamilies` and `DocumentLint` are the other half of each one.
 - **The engine gate registers the standard `ajv-formats` vocabulary, and ONLY
   the vocabulary — `addFormats(ajv, { keywords: false })`.** Without it, strict
   mode rejects every document using `format` (`date-time`, `uri`, `email`, …)
@@ -251,8 +306,8 @@ validation gate, not a construction surface.
   registering them would drift the engine verdict from the lint verdict.
   Registration does NOT move the meta-schema (`validateSchema`) verdict —
   probed on `ajv@8.20.0` / `ajv-formats@3.0.1`.
-- **`ajv-formats` is bound with ONE hop and no cast:
-  `const addFormats = ajvFormats.default`.** The package does
+- **`ajv-formats` is bound with ONE hop and no cast (in the CLI's
+  `AjvValidator.ts`): `const addFormats = ajvFormats.default`.** The package does
   `module.exports = exports = formatsPlugin` and then
   `exports.default = formatsPlugin`, so the plugin points at itself and
   `.default` is the callable in BOTH worlds — Node's ESM interop (default
