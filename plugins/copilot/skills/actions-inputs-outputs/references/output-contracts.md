@@ -332,7 +332,7 @@ artifact rather than trusting it blindly.
 There is none to write. `schema:check` *is* the drift test — the same walk
 as `build` with no writes, exit `1` on anything a build would write, a gate
 failure, or drift on a published document — plus an orphaned catalog file,
-the one failure `build` cannot clear — and it runs the command's own
+which `build` never deletes — and it runs the command's own
 loader, engine and policy, so it cannot pass against wiring the build never
 uses (the failure a hand-rolled vitest drift test over an exported `targets`
 array was always one refactor away from). Put it in `ci:test`:
