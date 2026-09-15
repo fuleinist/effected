@@ -41,6 +41,13 @@ const writtenCatalog: CatalogReport = {
 	outcome: "written",
 };
 
+// Issue #743: `check` found a catalog file no schema declares.
+const orphanedCatalog: CatalogReport = {
+	path: "schemas/catalog.json",
+	entries: 0,
+	outcome: "orphaned",
+};
+
 const cleanBuild: RunReport = {
 	mode: "build",
 	configPath: "/repo/schemastore.config.ts",
@@ -215,6 +222,21 @@ describe("Report.human", () => {
 			"unchanged schemas/plain.json [policy semantic]",
 			"written catalog schemas/catalog.json (1 entries)",
 			"2 schema(s): 1 written, 1 unchanged, 0 drift, 0 gate failed — drift per schema (config), on-drift error",
+		]);
+	});
+
+	it("renders an orphaned catalog under check", () => {
+		const orphanCheck: RunReport = {
+			...cleanBuild,
+			mode: "check",
+			schemas: [unchangedSchema],
+			catalog: orphanedCatalog,
+			wrote: false,
+		};
+		assert.deepStrictEqual(Report.human(orphanCheck), [
+			"unchanged schemas/plain.json [policy semantic]",
+			"ORPHANED catalog schemas/catalog.json — no schema declares a catalog entry; delete the file",
+			"1 schema(s): 0 written, 1 unchanged, 0 drift, 0 gate failed — drift per schema (config), on-drift error",
 		]);
 	});
 

@@ -269,7 +269,14 @@ schemastore check [config] [--drift=…] [--on-drift=…] [--force] [--format=hu
   entry that differs from what the config generates, or one that is
   missing, is stale, and the message says to run `schemastore build` and
   commit the result (`StaleError`, evaluated after the gate and drift
-  verdicts). It retires the six drift tests. Never-writes is one predicate, not a separate code path: both modes
+  verdicts). It ALSO exits `1` when a file sits at `catalogPath` that no
+  schema declares: removing the last `catalog` block orphans the
+  previously written file, and a `check` that skipped it would no longer
+  prove the tree matches the config (`OrphanedCatalogError`, evaluated
+  after `StaleError`). The orphan is reported, never deleted — the CLI
+  does not remove a file it may not have written (a hand-authored catalog
+  can live at the same path); `build` leaves it alone and unreported.
+  It retires the six drift tests. Never-writes is one predicate, not a separate code path: both modes
   share one `SchemaFile`, and `Runner` gates every write — schemas and
   catalog entries alike — on a single `writing` predicate
   (`mode === "build" && !refused`), pinned by the "check never writes"
@@ -297,7 +304,7 @@ Exit codes:
 | code | meaning |
 | ------ | -------------------------------------------------------------------------- |
 | 0 | success, including drift under `onDrift: warn` |
-| 1 | drift under `onDrift: error`, a gate failure, a missing frozen version (`FrozenVersionMissingError`), or — for `check` — any document `build` would write |
+| 1 | drift under `onDrift: error`, a gate failure, a missing frozen version (`FrozenVersionMissingError`), or — for `check` — any document `build` would write or an orphaned catalog file (`OrphanedCatalogError`) |
 | 2 | config not found, failed to load, or failed `SchemastoreConfig` validation |
 | 3 | infrastructure failure (`CliRuntime.reportFailures` fallback) |
 | 64 | usage error — `ShowHelp` carrying parse errors, or `--force` combined with an explicit non-`allow` `--drift` (`ConflictingFlagsError`) |

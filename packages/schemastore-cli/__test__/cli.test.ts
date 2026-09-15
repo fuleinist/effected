@@ -9,7 +9,7 @@ import type { Command } from "effect/unstable/cli";
 import { CliError } from "effect/unstable/cli";
 import { ChildProcessSpawner } from "effect/unstable/process";
 import { ConfigLoadError, ConfigNotFoundError } from "../src/ConfigLoader.js";
-import { ConflictingFlagsError, DriftError, GateError, StaleError } from "../src/cli/execute.js";
+import { ConflictingFlagsError, DriftError, GateError, OrphanedCatalogError, StaleError } from "../src/cli/execute.js";
 import type { ProgramDeps } from "../src/cli/program.js";
 import { loggerLayer, program } from "../src/cli/program.js";
 import { FrozenVersionMissingError } from "../src/Runner.js";
@@ -176,6 +176,52 @@ describe("schemastore CLI", () => {
 				assert.include(out, `would write catalog ${CATALOG_PATH} (1 entries)`);
 			}),
 			{ ...builtSeed, [CATALOG_PATH]: '{"name":"basic","description":"old"}\n' },
+		),
+	);
+
+	// Issue #743: the config dropped its last `catalog` block but the file
+	// stayed on disk — `check` fails on the orphan, `build` ignores it.
+	const noCatalogConfig = () =>
+		defineConfig({
+			outputDir: "/repo/schemas",
+			baseUrl: "https://example.com/schemas",
+			schemas: { basic: { schema: Config, layout: "flat", published: true, versions: ["1.0"] } },
+		});
+
+	const orphanSeed: MemoryFileSystemSeed = {
+		[CONFIG_PATH]: "",
+		[BASIC_PATH]: emitted(Config, BASIC_ID),
+		[CATALOG_PATH]: "[]\n",
+	};
+
+	it.effect("check fails at exit 1 on an orphaned catalog file and never deletes it", () =>
+		run(
+			Effect.gen(function* () {
+				const error = yield* Effect.flip(program(["check"], deps(noCatalogConfig())));
+				assert.instanceOf(error, OrphanedCatalogError);
+				assert.strictEqual(exitCodeOf(error), 1);
+				assert.strictEqual(error.path, CATALOG_PATH);
+				assert.include(error.message, "orphaned");
+				const out = yield* stdout;
+				assert.include(out, `unchanged ${BASIC_PATH} [policy semantic]`);
+				assert.include(out, `ORPHANED catalog ${CATALOG_PATH} — no schema declares a catalog entry; delete the file`);
+				const fs = yield* FileSystem.FileSystem;
+				assert.strictEqual(yield* fs.readFileString(CATALOG_PATH), "[]\n", "check never deletes the orphan");
+			}),
+			orphanSeed,
+		),
+	);
+
+	it.effect("build ignores an orphaned catalog file: exit 0, file untouched, no catalog line", () =>
+		run(
+			Effect.gen(function* () {
+				yield* program(["build"], deps(noCatalogConfig()));
+				const out = yield* stdout;
+				assert.notInclude(out.join("\n"), "catalog");
+				const fs = yield* FileSystem.FileSystem;
+				assert.strictEqual(yield* fs.readFileString(CATALOG_PATH), "[]\n");
+			}),
+			orphanSeed,
 		),
 	);
 

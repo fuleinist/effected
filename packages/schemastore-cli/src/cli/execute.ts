@@ -68,6 +68,23 @@ export class StaleError extends Schema.TaggedError<StaleError>()("StaleError", {
 }
 
 /**
+ * `check` found a file at `config.catalogPath` that no schema declares —
+ * the config dropped its last `catalog` block but the previously written
+ * file stayed on disk, so the tree no longer matches the config. Reported,
+ * never deleted: the CLI does not remove a file it may not have written
+ * (a hand-authored catalog can live at the same path). Exit `1`.
+ *
+ * @public
+ */
+export class OrphanedCatalogError extends Schema.TaggedError<OrphanedCatalogError>()("OrphanedCatalogError", {
+	path: Schema.String,
+}) {
+	override get message(): string {
+		return `catalog ${this.path} is orphaned: no schema declares a catalog entry; delete the file, then re-run \`schemastore check\`.`;
+	}
+}
+
+/**
  * `--force` (shorthand for `--drift=allow`) was combined with an explicit
  * `--drift` that is not `allow`. Contradictory, so refused as a usage
  * error rather than silently resolving to `allow`. Exit `64`.
@@ -149,7 +166,8 @@ const emit = Effect.fn("schemastore.emit")(function* (report: RunReport, format:
  * applies the flag overrides, runs the shared walk, emits the report in the
  * requested format, appends the step summary, and fails typed —
  * `GateError`, then `DriftError`, then (for `check` only) `StaleError`,
- * each carrying exit `1` — when the report says the run refused to write
+ * then (for `check` only) `OrphanedCatalogError`, each carrying exit `1` —
+ * when the report says the run refused to write
  * or, under `check`, that a build would write. `SchemaFile` is built here
  * over the environment's `FileSystem`; the validator is `deps.validator` or
  * the real engine.
@@ -203,6 +221,9 @@ export const execute = Effect.fn("schemastore.execute")(function* (
 			(report.catalog?.outcome === "would-write" ? 1 : 0);
 		if (count > 0) {
 			return yield* Effect.fail(CliRuntime.reported(new StaleError({ count }), 1));
+		}
+		if (report.catalog !== undefined && report.catalog.outcome === "orphaned") {
+			return yield* Effect.fail(CliRuntime.reported(new OrphanedCatalogError({ path: report.catalog.path }), 1));
 		}
 	}
 });

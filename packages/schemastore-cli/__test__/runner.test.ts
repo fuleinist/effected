@@ -565,4 +565,40 @@ describe("Runner.run", () => {
 			assert.isFalse(yield* fs.exists(CATALOG_PATH));
 		}).pipe(Effect.provide(layers({}))),
 	);
+
+	// Issue #743: removing the last `catalog` block orphans the previously
+	// written file. `check` proves the tree matches the config, so it reports
+	// the orphan; `build` neither reports nor deletes it.
+	const noCatalogConfig = () =>
+		defineConfig({
+			outputDir: "/repo/schemas",
+			baseUrl: BASE,
+			schemas: { plain: { schema: Config } },
+		});
+
+	it.effect("check reports a catalog file no schema declares as orphaned and leaves it alone", () =>
+		Effect.gen(function* () {
+			const report = yield* Runner.run(noCatalogConfig(), options("check"));
+			assert.deepStrictEqual(report.catalog, { path: CATALOG_PATH, entries: 0, outcome: "orphaned" });
+			assert.isFalse(report.wrote);
+			const fs = yield* FileSystem.FileSystem;
+			assert.strictEqual(yield* fs.readFileString(CATALOG_PATH), "[]\n", "check never deletes the orphan");
+		}).pipe(Effect.provide(layers({ [PLAIN_PATH]: emitted(Config, PLAIN_ID), [CATALOG_PATH]: "[]\n" }))),
+	);
+
+	it.effect("check omits the catalog report when no schema declares one and no file is on disk", () =>
+		Effect.gen(function* () {
+			const report = yield* Runner.run(noCatalogConfig(), options("check"));
+			assert.isUndefined(report.catalog);
+		}).pipe(Effect.provide(layers({ [PLAIN_PATH]: emitted(Config, PLAIN_ID) }))),
+	);
+
+	it.effect("build neither reports nor removes a catalog file no schema declares", () =>
+		Effect.gen(function* () {
+			const report = yield* Runner.run(noCatalogConfig(), options("build"));
+			assert.isUndefined(report.catalog);
+			const fs = yield* FileSystem.FileSystem;
+			assert.strictEqual(yield* fs.readFileString(CATALOG_PATH), "[]\n", "build leaves the orphan untouched");
+		}).pipe(Effect.provide(layers({ [PLAIN_PATH]: emitted(Config, PLAIN_ID), [CATALOG_PATH]: "[]\n" }))),
+	);
 });

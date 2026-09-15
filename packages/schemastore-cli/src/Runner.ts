@@ -116,10 +116,16 @@ export interface SchemaReport {
 export interface CatalogReport {
 	/** Where the catalog is written (`config.catalogPath`). */
 	readonly path: string;
-	/** How many entries the file holds. */
+	/** How many entries the file holds; `0` for an `orphaned` file. */
 	readonly entries: number;
-	/** `held` mirrors {@link SchemaOutcome}: the run refused every write. */
-	readonly outcome: "written" | "unchanged" | "would-write" | "held";
+	/**
+	 * `held` mirrors {@link SchemaOutcome}: the run refused every write.
+	 * `orphaned` is `check`-only: no schema declares a catalog entry, yet a
+	 * file sits at `config.catalogPath` — stale by definition, reported so
+	 * the user can delete it. `build` never removes the file: the CLI does
+	 * not delete what it may not have written.
+	 */
+	readonly outcome: "written" | "unchanged" | "would-write" | "held" | "orphaned";
 }
 
 /**
@@ -226,7 +232,12 @@ const parsesEqual = (existing: string, text: string): boolean => {
  * `config.catalogPath` — never one file per schema — serialized canonically
  * and compared by parsed content against the file on disk, written only
  * when different and only when the run is writing. The report omits
- * `catalog` entirely when no schema declared one.
+ * `catalog` entirely when no schema declared one, with ONE exception:
+ * under `check`, a file still sitting at `config.catalogPath` that no
+ * schema declares is reported `orphaned` — `check` proves the tree matches
+ * the config, and an orphaned catalog is part of that proof. `build`
+ * leaves the file alone and unreported: deleting a file the CLI may not
+ * have written is the user's call.
  *
  * @public
  */
@@ -330,7 +341,17 @@ export class Runner {
 			schema.catalog !== undefined ? [schema.catalog] : [],
 		);
 		let catalog: CatalogReport | undefined;
-		if (entries.length > 0) {
+		if (entries.length === 0 && options.mode === "check") {
+			// The config declares no catalog, but a previously written (or
+			// hand-authored) file may still sit at `catalogPath`. `check` is
+			// the CI gate that proves the tree matches the config, so the
+			// orphan is reported (`OrphanedCatalogError`, exit `1`) and left
+			// for the user to delete — `build` never removes it.
+			const orphan = yield* orNone(fs.stat(config.catalogPath));
+			if (Option.isSome(orphan) && orphan.value.type === "File") {
+				catalog = { path: config.catalogPath, entries: 0, outcome: "orphaned" };
+			}
+		} else if (entries.length > 0) {
 			const text = yield* CanonicalJson.serialize(entries.map((entry) => Schema.encodeSync(CatalogEntry)(entry)));
 			// One read; a missing file is "different" (a build creates it), and so
 			// is text that does not parse — nothing unparseable is content-equal.
