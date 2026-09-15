@@ -15,6 +15,6 @@ import { commandFlags } from "../flags.js";
 export const makeCheckCommand = (deps: ExecuteDeps) =>
 	Command.make("check", commandFlags, (input) => execute("check", input, deps)).pipe(
 		Command.withDescription(
-			"Report what build would do, fail when it would write anything or refuse to or a catalog file is orphaned, and write nothing",
+			"Report what build would do, fail when it would write anything or refuse to, or when a catalog file is orphaned, and write nothing",
 		),
 	);
