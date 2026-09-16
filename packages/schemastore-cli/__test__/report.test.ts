@@ -208,6 +208,20 @@ const frozenBuild: RunReport = {
 	wrote: false,
 };
 
+// ── Fixture F: a check whose owned directories hold documents nothing
+// claims (#747) — one per orphan, in walk order, remedy on the line. ────────
+
+const orphanedCheck: RunReport = {
+	mode: "check",
+	configPath: "/repo/schemastore.config.ts",
+	onDrift: "error",
+	schemas: [unchangedSchema],
+	orphaned: ["schemas/1.2/okfit-1.2-old.json", "schemas/old-name.json"],
+	drifted: false,
+	gateFailed: false,
+	wrote: false,
+};
+
 describe("Report.human", () => {
 	it("renders a clean build", () => {
 		assert.deepStrictEqual(Report.human(cleanBuild), [
@@ -241,6 +255,15 @@ describe("Report.human", () => {
 		assert.deepStrictEqual(Report.human(prereleaseDriftBuild), [
 			"DRIFT contract at published 2.0.0-beta.1 — schemas/pre-2.0.0-beta.1.json [policy semantic]",
 			"1 schema(s): 0 written, 0 unchanged, 1 drift, 0 gate failed — drift per schema (config), on-drift error",
+		]);
+	});
+
+	it("renders one line per orphaned document, before the summary", () => {
+		assert.deepStrictEqual(Report.human(orphanedCheck), [
+			"unchanged schemas/plain.json [policy semantic]",
+			"orphaned document schemas/1.2/okfit-1.2-old.json (no target, frozen version, or catalog entry claims it — delete it by hand; build never will)",
+			"orphaned document schemas/old-name.json (no target, frozen version, or catalog entry claims it — delete it by hand; build never will)",
+			"1 schema(s): 0 written, 1 unchanged, 0 drift, 0 gate failed — drift per schema (config), on-drift error",
 		]);
 	});
 });
@@ -340,6 +363,13 @@ describe("Report.json", () => {
 		assert.isFalse(Object.hasOwn(doc, "catalog"));
 	});
 
+	it("carries orphaned when present and omits it when absent", () => {
+		const orphaned = JSON.parse(Report.json(orphanedCheck)) as Record<string, unknown>;
+		assert.deepStrictEqual(orphaned.orphaned, ["schemas/1.2/okfit-1.2-old.json", "schemas/old-name.json"]);
+		const clean = JSON.parse(Report.json(cleanBuild)) as Record<string, unknown>;
+		assert.isFalse(Object.hasOwn(clean, "orphaned"));
+	});
+
 	it("carries policy on every schema and frozen only when non-empty", () => {
 		const doc = JSON.parse(Report.json(frozenBuild)) as { schemas: ReadonlyArray<Record<string, unknown>> };
 		assert.deepStrictEqual(doc.schemas[0], {
@@ -399,5 +429,16 @@ describe("Report.markdown", () => {
 	it("omits the catalog table when the report has none", () => {
 		const markdown = Report.markdown(warnBuild);
 		assert.notInclude(markdown, "| catalog |");
+	});
+
+	it("renders one orphaned-document row each when the report has them", () => {
+		const markdown = Report.markdown(orphanedCheck);
+		assert.include(markdown, "| orphaned document | claimed by |");
+		assert.include(markdown, "| schemas/1.2/okfit-1.2-old.json | nothing — delete by hand |");
+		assert.include(markdown, "| schemas/old-name.json | nothing — delete by hand |");
+	});
+
+	it("omits the orphaned table when the report has none", () => {
+		assert.notInclude(Report.markdown(cleanBuild), "| orphaned document |");
 	});
 });

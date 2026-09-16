@@ -570,6 +570,111 @@ describe("Runner.run", () => {
 		}).pipe(Effect.provide(layers({}))),
 	);
 
+	// #747 — a rename (`appendVersion` flip, `name` or `layout` change) moves a
+	// document's derived path and leaves the previously written file on disk
+	// under the old name. Both modes report every unclaimed `*.json` file in a
+	// directory the config writes into; neither ever deletes one.
+	it.effect("an unclaimed document in an owned directory is reported orphaned under both modes and never deleted", () =>
+		Effect.gen(function* () {
+			const fs = yield* FileSystem.FileSystem;
+			const checked = yield* Runner.run(twoSchemas(), options("check"));
+			assert.deepStrictEqual(checked.orphaned, [
+				"/repo/schemas/5.0.0/pinned-5.0.0-old.json",
+				"/repo/schemas/4.0.0/pinned-4.0.0-old.json",
+				"/repo/schemas/old-name.json",
+			]);
+			const built = yield* Runner.run(twoSchemas(), options("build"));
+			assert.deepStrictEqual(built.orphaned, checked.orphaned, "build reports the same walk");
+			assert.isFalse(built.wrote, "a clean tree with orphans writes nothing");
+			for (const orphan of [
+				"/repo/schemas/5.0.0/pinned-5.0.0-old.json",
+				"/repo/schemas/4.0.0/pinned-4.0.0-old.json",
+				"/repo/schemas/old-name.json",
+			]) {
+				assert.isTrue(yield* fs.exists(orphan), `build never deletes ${orphan}`);
+			}
+		}).pipe(
+			Effect.provide(
+				layers({
+					...frozenSeed,
+					[PINNED_PATH]: emitted(Config, PINNED_ID),
+					[PLAIN_PATH]: emitted(Config, PLAIN_ID),
+					[CATALOG_PATH]: compactCatalogText(),
+					"/repo/schemas/5.0.0/pinned-5.0.0-old.json": "{}\n",
+					"/repo/schemas/4.0.0/pinned-4.0.0-old.json": "{}\n",
+					"/repo/schemas/old-name.json": "{}\n",
+				}),
+			),
+		),
+	);
+
+	it.effect("claimed outputs — targets, frozen files, the catalog — are never orphaned", () =>
+		Effect.gen(function* () {
+			const report = yield* Runner.run(twoSchemas(), options("check"));
+			assert.isUndefined(report.orphaned);
+		}).pipe(
+			Effect.provide(
+				layers({
+					...frozenSeed,
+					[PINNED_PATH]: emitted(Config, PINNED_ID),
+					[PLAIN_PATH]: emitted(Config, PLAIN_ID),
+					[CATALOG_PATH]: compactCatalogText(),
+				}),
+			),
+		),
+	);
+
+	it.effect("the orphan walk never leaves a directory the config writes into", () =>
+		Effect.gen(function* () {
+			// Versioned-only: the owned directories are the two version dirs; the
+			// `outputDir` root holds the catalog but no schema writes there, so it
+			// is claimed-against, never walked.
+			const config = defineConfig({
+				outputDir: "/repo/schemas",
+				baseUrl: BASE,
+				schemas: {
+					pinned: {
+						schema: Config,
+						versions: ["4.0.0", "5.0.0"],
+						published: true,
+						catalog: { description: "Pinned configuration", fileMatch: ["pinned.json"] },
+					},
+				},
+			});
+			const report = yield* Runner.run(config, options("check"));
+			assert.isUndefined(report.orphaned);
+		}).pipe(
+			Effect.provide(
+				layers({
+					...frozenSeed,
+					[PINNED_PATH]: emitted(Config, PINNED_ID),
+					[CATALOG_PATH]: compactCatalogText(),
+					"/repo/schemas/old-flat.json": "{}\n",
+					"/repo/schemas/6.0.0/stray.json": "{}\n",
+					"/repo/elsewhere/unrelated.json": "{}\n",
+				}),
+			),
+		),
+	);
+
+	it.effect("non-.json files and directories named *.json are not orphaned documents", () =>
+		Effect.gen(function* () {
+			const report = yield* Runner.run(twoSchemas(), options("check"));
+			assert.isUndefined(report.orphaned);
+		}).pipe(
+			Effect.provide(
+				layers({
+					...frozenSeed,
+					[PINNED_PATH]: emitted(Config, PINNED_ID),
+					[PLAIN_PATH]: emitted(Config, PLAIN_ID),
+					[CATALOG_PATH]: compactCatalogText(),
+					"/repo/schemas/notes.txt": "prose\n",
+					"/repo/schemas/data.json/inner.txt": "a directory wearing a .json name\n",
+				}),
+			),
+		),
+	);
+
 	it.effect("reports every missing frozen version, not just the first", () =>
 		Effect.gen(function* () {
 			const config = defineConfig({

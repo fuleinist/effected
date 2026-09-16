@@ -204,7 +204,8 @@ export const execute = Effect.fn("schemastore.execute")(function* (
 	if (mode === "check") {
 		const count =
 			report.schemas.filter((schema) => schema.outcome === "would-write").length +
-			(report.catalog?.outcome === "would-write" || report.catalog?.outcome === "orphaned" ? 1 : 0);
+			(report.catalog?.outcome === "would-write" || report.catalog?.outcome === "orphaned" ? 1 : 0) +
+			(report.orphaned?.length ?? 0);
 		if (count > 0) {
 			return yield* Effect.fail(CliRuntime.reported(new StaleError({ count }), 1));
 		}

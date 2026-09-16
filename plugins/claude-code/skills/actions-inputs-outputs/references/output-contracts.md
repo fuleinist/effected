@@ -225,7 +225,11 @@ Four things in that shape are load-bearing:
   writes, and it fails (exit `1`) whenever a build would write anything —
   wire it into `ci:test` ahead of the test run. Stale document: run
   `schema:build`, review the diff, commit. Never hand-edit the committed
-  file.
+  file. It also fails on an output nothing claims — a `*.json` document in
+  a directory the config writes into that no target, frozen version, or
+  catalog path names (an orphan a rename left behind), or an orphaned
+  `catalog.json` no schema declares; `build` reports orphans and never
+  deletes them, so delete by hand.
 - **Objects are closed.** The library emits `additionalProperties: false`
   by default (a published document is a contract; it does not follow core's
   open default). The action's decoders can keep tolerating excess keys — the
@@ -329,7 +333,10 @@ artifact rather than trusting it blindly.
 
 There is none to write. `schema:check` *is* the drift test — the same walk
 as `build` with no writes, exit `1` on anything a build would write, a gate
-failure, or drift on a published document — and it runs the command's own
+failure, drift on a published document, or an output nothing claims — an
+orphaned document a rename left in a directory the config writes into, or
+an orphaned catalog file (`build` reports orphans, never deletes them) —
+and it runs the command's own
 loader, engine and policy, so it cannot pass against wiring the build never
 uses (the failure a hand-rolled vitest drift test over an exported `targets`
 array was always one refactor away from). Put it in `ci:test`:

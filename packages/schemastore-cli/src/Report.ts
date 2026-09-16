@@ -72,6 +72,12 @@ const catalogLine = (entry: CatalogReport): string => {
 	}
 };
 
+// An orphaned document's remedy is its own: `build` never deletes it, so the
+// line says what to do rather than letting the summary's build-prescription
+// mislead.
+const orphanedLine = (orphan: string): string =>
+	`orphaned document ${orphan} (no target, frozen version, or catalog entry claims it — delete it by hand; build never will)`;
+
 // A flag-forced policy overrides every schema's own for this run; absent one,
 // drift is classified per schema under its own tolerance. This renders from
 // `policy`'s presence.
@@ -121,6 +127,9 @@ export class Report {
 		if (report.catalog !== undefined) {
 			lines.push(catalogLine(report.catalog));
 		}
+		for (const orphan of report.orphaned ?? []) {
+			lines.push(orphanedLine(orphan));
+		}
 		lines.push(summaryLine(report));
 		return lines;
 	}
@@ -169,6 +178,7 @@ export class Report {
 			...(report.catalog !== undefined
 				? { catalog: { path: report.catalog.path, entries: report.catalog.entries, outcome: report.catalog.outcome } }
 				: {}),
+			...(report.orphaned !== undefined ? { orphaned: report.orphaned } : {}),
 			drifted: report.drifted,
 			gateFailed: report.gateFailed,
 			wrote: report.wrote,
@@ -201,6 +211,14 @@ export class Report {
 				tableRow(["catalog", "entries", "outcome"]),
 				tableRow(["---", "---", "---"]),
 				tableRow([report.catalog.path, String(report.catalog.entries), report.catalog.outcome]),
+			);
+		}
+		if (report.orphaned !== undefined) {
+			lines.push(
+				"",
+				tableRow(["orphaned document", "claimed by"]),
+				tableRow(["---", "---"]),
+				...report.orphaned.map((orphan) => tableRow([orphan, "nothing — delete by hand"])),
 			);
 		}
 		lines.push("");

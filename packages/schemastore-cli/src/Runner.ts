@@ -206,6 +206,16 @@ export interface RunReport {
 	readonly schemas: ReadonlyArray<SchemaReport>;
 	/** Absent when no schema declared a catalog entry and no file sits at `catalogPath`. */
 	readonly catalog?: CatalogReport;
+	/**
+	 * Every `*.json` file in a directory the config writes into that no
+	 * target, frozen version, or the catalog path claims — left behind when
+	 * a derived path moved (an `appendVersion` flip, a `name` or `layout`
+	 * change). `check` counts them stale (exit `1`); `build` reports and
+	 * never deletes them (the CLI may not have written them). Absent when
+	 * none. In walk order: owned directories in first-claim order, files
+	 * within one directory sorted by name.
+	 */
+	readonly orphaned?: ReadonlyArray<string>;
 	/** At least one schema's verdict is `"drift"`. */
 	readonly drifted: boolean;
 	/** At least one schema failed its gate. */
@@ -300,6 +310,21 @@ const parsesEqual = (existing: string, text: string): boolean => {
  * one, nothing is written; a file still at `catalogPath` is reported
  * `orphaned` (stale under `check`) and left in place, and the report omits
  * `catalog` entirely only when there is no such file either.
+ *
+ * **A moved path leaves an orphan the derivation cannot see**: an
+ * `appendVersion` flip, a `name` change, or a `layout` change renames a
+ * document's derived path, and the previously written file stays on disk
+ * under the old name — for a `published` label, its advertised URL keeps
+ * serving a stale document with no report. So both modes also walk the
+ * directories the config writes into (each version directory a versioned
+ * target or frozen file lands in, and `outputDir` itself for a flat or
+ * unversioned one) and report every `*.json` FILE no target, frozen
+ * version, or `catalogPath` claims in {@link RunReport.orphaned}. The
+ * catalog file is claimed wherever it sits, but its directory joins the
+ * walk only when a schema already writes there. Orphans are reported,
+ * never deleted — the CLI may not have written them — and the walk never
+ * leaves an owned directory, so an unrelated file elsewhere in the tree
+ * is never touched.
  *
  * @public
  */
@@ -455,6 +480,61 @@ export class Runner {
 			catalog = { path: config.catalogPath, entries: entries.length, outcome };
 		}
 
+		// A rename leaves an orphan: `appendVersion`, a `name` change or a
+		// `layout` change all move a document's derived path, and the file
+		// written under the old name stays on disk — invisible to a walk that
+		// only reads the paths the config derives. Walk the directories the
+		// config writes into and report every `*.json` file nothing claims.
+		// Reported, never deleted: the CLI may not have written them.
+		const ownedDirs: Array<string> = [];
+		const claimedNames = new Map<string, Set<string>>();
+		const claim = (claimedPath: string, owned: boolean): void => {
+			// `dirname`/`basename` on the claimed string itself, and the candidate
+			// rebuilt as `${dir}/${name}`: string equality with the claimed paths
+			// holds by construction on every platform, which `path.join` would not
+			// guarantee (it normalises to the platform separator).
+			const dir = path.dirname(claimedPath);
+			const names = claimedNames.get(dir);
+			if (names === undefined) {
+				claimedNames.set(dir, new Set([path.basename(claimedPath)]));
+			} else {
+				names.add(path.basename(claimedPath));
+			}
+			if (owned && !ownedDirs.includes(dir)) {
+				ownedDirs.push(dir);
+			}
+		};
+		for (const schema of config.schemas) {
+			claim(schema.target.path, true);
+			for (const frozen of schema.frozen) {
+				claim(frozen.path, true);
+			}
+		}
+		// The catalog file is claimed wherever it sits, but its directory joins
+		// the walk only when a schema already writes there.
+		claim(config.catalogPath, false);
+		const orphaned: Array<string> = [];
+		for (const dir of ownedDirs) {
+			const listing = yield* orNone(fs.readDirectory(dir));
+			if (Option.isNone(listing)) {
+				// Nothing has been built here yet; no orphans to find.
+				continue;
+			}
+			const claimed = claimedNames.get(dir);
+			const candidates = [...listing.value].filter((name) => name.endsWith(".json")).sort();
+			for (const name of candidates) {
+				if (claimed?.has(name) === true) {
+					continue;
+				}
+				const file = `${dir}/${name}`;
+				const info = yield* orNone(fs.stat(file));
+				// A DIRECTORY named `*.json` is not a document; leave it alone.
+				if (Option.isSome(info) && info.value.type === "File") {
+					orphaned.push(file);
+				}
+			}
+		}
+
 		const report: RunReport = {
 			mode: options.mode,
 			configPath: options.configPath,
@@ -462,6 +542,7 @@ export class Runner {
 			...(options.policy !== undefined ? { policy: options.policy } : {}),
 			schemas,
 			...(catalog !== undefined ? { catalog } : {}),
+			...(orphaned.length > 0 ? { orphaned } : {}),
 			drifted,
 			gateFailed,
 			wrote: schemas.some((s) => s.outcome === "written") || catalog?.outcome === "written",

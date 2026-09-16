@@ -114,9 +114,9 @@ schemastore check [config] [--drift=strict|semantic|allow] [--on-drift=error|war
 
 - Before anything is generated, every frozen label is verified — present on disk, and self-identified by the derived `$id`.
 - `build` generates every schema, runs the gates (the structural lint and ajv strict mode), applies the drift policy, and writes what passes — content-compared, so an unchanged file is untouched — plus the catalog file when any entry declares one.
-- `check` is the identical walk with no writes: it reports what `build` would do under the same flags and exits the same way, and also fails (exit `1`) whenever a build would write anything — a stale or missing document is fixed by running `schemastore build` and committing the result. A `catalog.json` left behind after the last `catalog` block was removed is reported `orphaned` and fails `check` the same way, but `build` never deletes it: delete the file by hand, or restore a `catalog` block.
+- `check` is the identical walk with no writes: it reports what `build` would do under the same flags and exits the same way, and also fails (exit `1`) whenever a build would write anything — a stale or missing document is fixed by running `schemastore build` and committing the result. A `catalog.json` left behind after the last `catalog` block was removed is reported `orphaned` and fails `check` the same way, but `build` never deletes it: delete the file by hand, or restore a `catalog` block. So is any other `*.json` document left behind in a directory the config writes into — an `appendVersion` flip, a `name` change, or a `layout` change moved its derived path and nothing claims the old file any more: reported as an orphaned document under both commands, failed by `check`, never deleted by `build`.
 - `--drift` and `--on-drift` override the config for one run; `--force` is sugar for `--drift=allow` (combined with a different explicit `--drift` it is a usage error).
-- `--format=json` emits one JSON document on stdout (per-schema outcome and effective tolerance, the catalog outcome, `drift: { onDrift, policy? }`); human text moves to stderr. When `GITHUB_STEP_SUMMARY` is set, both commands append a markdown table.
+- `--format=json` emits one JSON document on stdout (per-schema outcome and effective tolerance, the catalog outcome, the `orphaned` document paths when any, `drift: { onDrift, policy? }`); human text moves to stderr. When `GITHUB_STEP_SUMMARY` is set, both commands append a markdown table.
 
 ## The engine, as a library export
 
@@ -140,7 +140,7 @@ Findings come back as values; the error channel carries `SchemaValidatorError` o
 | code | meaning |
 | ---- | -------------------------------------------------------------------------- |
 | 0 | success, including drift under `onDrift: warn` |
-| 1 | drift under `onDrift: error` (one line per drifting schema: `$id`, change, current and next version), a gate failure, a missing or mis-identified frozen version, or — for `check` — anything `build` would write |
+| 1 | drift under `onDrift: error` (one line per drifting schema: `$id`, change, current and next version), a gate failure, a missing or mis-identified frozen version, or — for `check` — anything `build` would write or an output nothing claims (an orphaned catalog file, or an orphaned document in a directory the config writes into) |
 | 2 | config not found, failed to load, or failed `defineConfig` validation |
 | 3 | infrastructure failure |
 | 64 | usage error |
