@@ -57,9 +57,11 @@ const BASIC_PATH = "/repo/schemas/basic-1.0.json";
 const CATALOG_PATH = "/repo/schemas/catalog.json";
 const CONFIG_PATH = "/repo/schemastore.config.ts";
 
-const basicConfig = (options: { readonly onDrift?: OnDrift; readonly versions?: ReadonlyArray<string> } = {}) =>
+const basicConfig = (
+	options: { readonly onDrift?: OnDrift; readonly versions?: ReadonlyArray<string>; readonly outputDir?: string } = {},
+) =>
 	defineConfig({
-		outputDir: "/repo/schemas",
+		outputDir: options.outputDir ?? "/repo/schemas",
 		baseUrl: "https://example.com/schemas",
 		...(options.onDrift !== undefined ? { onDrift: options.onDrift } : {}),
 		schemas: {
@@ -572,6 +574,30 @@ describe("schemastore CLI", () => {
 				...builtSeed,
 				"/repo/schemas/1.0/basic-1.0.json": emitted(Config, "https://example.com/schemas/1.0/basic-1.0.json"),
 			},
+		),
+	);
+
+	// The loader resolves a relative outputDir (the README's own example) and
+	// every claimed path through the platform Path, so the probe's candidates
+	// must be produced by the same operation or every live target reads as an
+	// orphan. A clean tree must stay clean, and a real orphan must still show.
+	it.effect("a relative outputDir resolves the probe and the claim set alike", () =>
+		run(
+			Effect.gen(function* () {
+				const fs = yield* FileSystem.FileSystem;
+				const config = basicConfig({ outputDir: "schemas" });
+				yield* program(["check"], deps(config));
+				yield* fs.makeDirectory("/repo/schemas/1.0");
+				yield* fs.writeFileString("/repo/schemas/1.0/basic-1.0.json", "{}\n");
+				const error = yield* Effect.flip(program(["check"], deps(config)));
+				assert.instanceOf(error, StaleError);
+				assert.strictEqual(error.orphaned, 1, "the live target is claimed; only the sibling is an orphan");
+				assert.include(
+					yield* stdout,
+					"orphaned document /repo/schemas/1.0/basic-1.0.json (no target, frozen version, or catalog entry claims it — delete it by hand; build never will)",
+				);
+			}),
+			builtSeed,
 		),
 	);
 

@@ -28,6 +28,6 @@ Any future feature that needs "what else is here" — a `name`-change orphan, a 
 
 ## Consequences
 
-- The sibling-shape probe has zero false positives on a shared directory and catches both config-driven renames (`appendVersion`, `layout`) in both directions — one more than the walk did.
+- The sibling-shape probe reports nothing on a shared directory that this config could not itself have written, and catches both config-driven renames (`appendVersion`, `layout`) in both directions — one more than the walk did. The one residual false positive is two configs that derive the same `name` and label under different layouts into one `outputDir`: `defineConfig` rejects duplicate paths only within a config, so config A's `<v>/<name>.json` is config B's sibling shape. That is two configs publishing one schema identity to one host — an error in its own right, so no cross-config uniqueness check is added.
 - A `name` change and a dropped version label are **not** caught; the old name is unknowable from the config. The docs say so, and the remedy is a hand delete. Closing that gap is the manifest design, tracked with #754, not a wider walk.
 - The two configs sharing an `outputDir` that this decision protects still collide on the default `catalogPath` (#754); until that is designed, they must set distinct `catalogPath`s.

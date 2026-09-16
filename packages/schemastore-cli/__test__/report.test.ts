@@ -208,15 +208,16 @@ const frozenBuild: RunReport = {
 	wrote: false,
 };
 
-// ── Fixture F: a check whose owned directories hold documents nothing
-// claims (#747) — one per orphan, in walk order, remedy on the line. ────────
+// ── Fixture F: a check that found documents at sibling shapes of derived
+// paths (#747) — one line per orphan, in config order, remedy on the line.
+// The renderer does not interpret the paths; these are just two shapes. ────
 
 const orphanedCheck: RunReport = {
 	mode: "check",
 	configPath: "/repo/schemastore.config.ts",
 	onDrift: "error",
 	schemas: [unchangedSchema],
-	orphaned: ["schemas/1.2/okfit-1.2-old.json", "schemas/old-name.json"],
+	orphaned: ["schemas/1.2/okfit.json", "schemas/okfit-1.2.json"],
 	drifted: false,
 	gateFailed: false,
 	wrote: false,
@@ -261,8 +262,8 @@ describe("Report.human", () => {
 	it("renders one line per orphaned document, before the summary", () => {
 		assert.deepStrictEqual(Report.human(orphanedCheck), [
 			"unchanged schemas/plain.json [policy semantic]",
-			"orphaned document schemas/1.2/okfit-1.2-old.json (no target, frozen version, or catalog entry claims it — delete it by hand; build never will)",
-			"orphaned document schemas/old-name.json (no target, frozen version, or catalog entry claims it — delete it by hand; build never will)",
+			"orphaned document schemas/1.2/okfit.json (no target, frozen version, or catalog entry claims it — delete it by hand; build never will)",
+			"orphaned document schemas/okfit-1.2.json (no target, frozen version, or catalog entry claims it — delete it by hand; build never will)",
 			"1 schema(s): 0 written, 1 unchanged, 0 drift, 0 gate failed — drift per schema (config), on-drift error",
 		]);
 	});
@@ -365,7 +366,7 @@ describe("Report.json", () => {
 
 	it("carries orphaned when present and omits it when absent", () => {
 		const orphaned = JSON.parse(Report.json(orphanedCheck)) as Record<string, unknown>;
-		assert.deepStrictEqual(orphaned.orphaned, ["schemas/1.2/okfit-1.2-old.json", "schemas/old-name.json"]);
+		assert.deepStrictEqual(orphaned.orphaned, ["schemas/1.2/okfit.json", "schemas/okfit-1.2.json"]);
 		const clean = JSON.parse(Report.json(cleanBuild)) as Record<string, unknown>;
 		assert.isFalse(Object.hasOwn(clean, "orphaned"));
 	});
@@ -434,8 +435,8 @@ describe("Report.markdown", () => {
 	it("renders one orphaned-document row each when the report has them", () => {
 		const markdown = Report.markdown(orphanedCheck);
 		assert.include(markdown, "| orphaned document | claimed by |");
-		assert.include(markdown, "| schemas/1.2/okfit-1.2-old.json | nothing — delete by hand |");
-		assert.include(markdown, "| schemas/old-name.json | nothing — delete by hand |");
+		assert.include(markdown, "| schemas/1.2/okfit.json | nothing — delete by hand |");
+		assert.include(markdown, "| schemas/okfit-1.2.json | nothing — delete by hand |");
 	});
 
 	it("omits the orphaned table when the report has none", () => {

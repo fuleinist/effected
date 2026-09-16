@@ -490,11 +490,15 @@ export class Runner {
 		// else on disk is ever looked at: `outputDir` may be shared with
 		// another config, a deploy folder, or the repository root.
 		// Reported, never deleted: the CLI may not have written them.
-		const claimed = new Set<string>([config.catalogPath]);
+		// `ConfigLoader.resolvePaths` re-resolves every claimed path through the
+		// platform `Path`, so on win32 a relative `outputDir` yields backslashes
+		// while an absolute forward-slash one is passed through untouched.
+		// Normalise both sides so equality holds by construction everywhere.
+		const claimed = new Set<string>([path.normalize(config.catalogPath)]);
 		for (const schema of config.schemas) {
-			claimed.add(schema.target.path);
+			claimed.add(path.normalize(schema.target.path));
 			for (const frozen of schema.frozen) {
-				claimed.add(frozen.path);
+				claimed.add(path.normalize(frozen.path));
 			}
 		}
 		const orphaned: Array<string> = [];
@@ -513,9 +517,7 @@ export class Runner {
 				),
 			];
 			for (const shape of shapes) {
-				// Built the way `defineConfig` builds every claimed path, so a claim
-				// matches by string equality on every platform.
-				const file = `${config.outputDir}/${shape}`;
+				const file = path.normalize(path.join(config.outputDir, shape));
 				if (claimed.has(file)) {
 					continue;
 				}

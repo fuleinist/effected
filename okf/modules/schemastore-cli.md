@@ -383,7 +383,7 @@ Exit codes:
 | code | meaning |
 | ------ | -------------------------------------------------------------------------- |
 | 0 | success, including drift under `onDrift: warn` |
-| 1 | drift under `onDrift: error`, a gate failure, a missing frozen version (`FrozenVersionMissingError`), a frozen file without its derived `$id` (`FrozenVersionIdMismatchError`), or — for `check` — any document `build` would write, an orphaned catalog file, or an orphaned document in a directory the config writes into |
+| 1 | drift under `onDrift: error`, a gate failure, a missing frozen version (`FrozenVersionMissingError`), a frozen file without its derived `$id` (`FrozenVersionIdMismatchError`), or — for `check` — any document `build` would write, an orphaned catalog file, or an orphaned document at a sibling shape of a derived path |
 | 2 | config not found, failed to load, or failed `SchemastoreConfig` validation |
 | 3 | infrastructure failure (`CliRuntime.reportFailures` fallback) |
 | 64 | usage error — `ShowHelp` carrying parse errors, or `--force` combined with an explicit non-`allow` `--drift` (`ConflictingFlagsError`) |

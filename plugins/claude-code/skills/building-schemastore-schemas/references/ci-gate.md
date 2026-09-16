@@ -62,7 +62,7 @@ schemastore check [config] [--drift=strict|semantic|allow] [--on-drift=error|war
 | code | meaning |
 | --- | --- |
 | `0` | success, including drift under `--on-drift=warn` |
-| `1` | drift under `--on-drift=error`, a gate failure (lint warning, ajv strict finding), a missing frozen version (`FrozenVersionMissingError`), or — for `check` — any document `build` would write |
+| `1` | drift under `--on-drift=error`, a gate failure (lint warning, ajv strict finding), a missing frozen version (`FrozenVersionMissingError`), or — for `check` — any document `build` would write or an orphaned output (a catalog file no schema declares, a document an `appendVersion` or `layout` rename left behind) |
 | `2` | config not found, failed to load, or failed `defineConfig` validation |
 | `3` | infrastructure failure |
 | `64` | usage error (an unknown flag, a bad literal) |
@@ -131,10 +131,13 @@ drift or gate finding.
   verified exist on disk.
 - `findings` — every finding, blocking or not: `source`, `severity`,
   optional `check`, `path`, `message`.
-- `catalog` — a single optional object, present only when at least one
-  schema declared a `catalog` block: `{ path, entries, outcome }` for the
-  one catalog file, never one entry per schema. Outcomes are `written` |
-  `unchanged` | `would-write` | `held`.
+- `catalog` — a single optional object: `{ path, entries, outcome }` for
+  the one catalog file, never one entry per schema, present when at least
+  one schema declared a `catalog` block or a file still sits at
+  `catalogPath` without one. Outcomes are `written` | `unchanged` |
+  `would-write` | `held` | `orphaned`.
+- `orphaned` — optional `string[]`: the documents left at a sibling shape of
+  a derived path that nothing claims; `build` never deletes them.
 
 ## The GitHub step summary
 
