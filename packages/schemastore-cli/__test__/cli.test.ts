@@ -577,10 +577,11 @@ describe("schemastore CLI", () => {
 		),
 	);
 
-	// The loader resolves a relative outputDir (the README's own example) and
-	// every claimed path through the platform Path, so the probe's candidates
-	// must be produced by the same operation or every live target reads as an
-	// orphan. A clean tree must stay clean, and a real orphan must still show.
+	// A relative outputDir (the README's own example) round-trips through the
+	// loader: a clean tree stays clean and a real orphan still shows. This does
+	// not pin the win32 separator contract the probe depends on — under the
+	// posix-only `Path.layer` the candidate is byte-identical whether
+	// `path.join` or a `/` template built it, so a regression here stays green.
 	it.effect("a relative outputDir resolves the probe and the claim set alike", () =>
 		run(
 			Effect.gen(function* () {
