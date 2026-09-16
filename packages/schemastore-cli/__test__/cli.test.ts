@@ -57,9 +57,11 @@ const BASIC_PATH = "/repo/schemas/basic-1.0.json";
 const CATALOG_PATH = "/repo/schemas/catalog.json";
 const CONFIG_PATH = "/repo/schemastore.config.ts";
 
-const basicConfig = (options: { readonly onDrift?: OnDrift; readonly versions?: ReadonlyArray<string> } = {}) =>
+const basicConfig = (
+	options: { readonly onDrift?: OnDrift; readonly versions?: ReadonlyArray<string>; readonly outputDir?: string } = {},
+) =>
 	defineConfig({
-		outputDir: "/repo/schemas",
+		outputDir: options.outputDir ?? "/repo/schemas",
 		baseUrl: "https://example.com/schemas",
 		...(options.onDrift !== undefined ? { onDrift: options.onDrift } : {}),
 		schemas: {
@@ -536,6 +538,65 @@ describe("schemastore CLI", () => {
 				yield* program(["build"], deps(uncataloged));
 				const fs = yield* FileSystem.FileSystem;
 				assert.isTrue(yield* fs.exists(CATALOG_PATH), "build reports the orphan but never deletes it");
+			}),
+			builtSeed,
+		),
+	);
+
+	// #747 — a document left behind under an old derived name (here the
+	// versioned shape a `layout: "flat"` flip abandoned) is stale under check,
+	// reported and kept under build.
+	it.effect("an orphaned document at a sibling shape is stale under check and reported but kept under build", () =>
+		run(
+			Effect.gen(function* () {
+				const error = yield* Effect.flip(program(["check"], deps(basicConfig())));
+				assert.instanceOf(error, StaleError);
+				assert.strictEqual(error.count, 1, "the orphaned document alone");
+				assert.strictEqual(error.orphaned, 1);
+				assert.strictEqual(
+					error.message,
+					"1 orphaned output(s) must be deleted by hand; build never will.",
+					"the final line must not prescribe a build that cannot clear it",
+				);
+				assert.strictEqual(exitCodeOf(error), 1);
+				assert.include(
+					yield* stdout,
+					"orphaned document /repo/schemas/1.0/basic-1.0.json (no target, frozen version, or catalog entry claims it — delete it by hand; build never will)",
+				);
+				yield* program(["build"], deps(basicConfig()));
+				const fs = yield* FileSystem.FileSystem;
+				assert.isTrue(
+					yield* fs.exists("/repo/schemas/1.0/basic-1.0.json"),
+					"build reports the orphan but never deletes it",
+				);
+			}),
+			{
+				...builtSeed,
+				"/repo/schemas/1.0/basic-1.0.json": emitted(Config, "https://example.com/schemas/1.0/basic-1.0.json"),
+			},
+		),
+	);
+
+	// A relative outputDir (the README's own example) round-trips through the
+	// loader: a clean tree stays clean and a real orphan still shows. This does
+	// not pin the win32 separator contract the probe depends on — under the
+	// posix-only `Path.layer` the candidate is byte-identical whether
+	// `path.join` or a `/` template built it, so a regression here stays green.
+	it.effect("a relative outputDir resolves the probe and the claim set alike", () =>
+		run(
+			Effect.gen(function* () {
+				const fs = yield* FileSystem.FileSystem;
+				const config = basicConfig({ outputDir: "schemas" });
+				yield* program(["check"], deps(config));
+				yield* fs.makeDirectory("/repo/schemas/1.0");
+				yield* fs.writeFileString("/repo/schemas/1.0/basic-1.0.json", "{}\n");
+				const error = yield* Effect.flip(program(["check"], deps(config)));
+				assert.instanceOf(error, StaleError);
+				assert.strictEqual(error.orphaned, 1, "the live target is claimed; only the sibling is an orphan");
+				assert.include(
+					yield* stdout,
+					"orphaned document /repo/schemas/1.0/basic-1.0.json (no target, frozen version, or catalog entry claims it — delete it by hand; build never will)",
+				);
 			}),
 			builtSeed,
 		),

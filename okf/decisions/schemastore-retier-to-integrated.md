@@ -10,8 +10,8 @@ sources:
     resource: ../../packages/schemastore/CLAUDE.md
 generated:
   by: "okfit/claude-code"
-  at: 2026-09-13T05:33:04Z
-  body_sha256: 4d0ae081bc1b0510ccc787b44fd92c50a4aab0cc6957bd4b708d4ec00b1b432c
+  at: 2026-09-15T15:38:20Z
+  body_sha256: 5154436eecf28a8f8706d09ea00880543f7d71f6a520e12e8d8e580699cfca73
 ---
 
 # Schemastore retiers from boundary to integrated for a direct ajv dependency

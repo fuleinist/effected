@@ -8,8 +8,8 @@ sources:
     resource: ../../packages/schemastore/CLAUDE.md
 generated:
   by: "okfit/claude-code"
-  at: 2026-09-13T05:33:04Z
-  body_sha256: 7dc956d39db19ff5df388f5a04b7c327d9e55f59c38497bd0fb9c7d2b805193e
+  at: 2026-09-15T15:38:20Z
+  body_sha256: 0ac05b1440426f9ce91e20ae75982e899c69dcf876bfef904db0240a113c1ee3
 ---
 
 # The validation gate ships a real ajv engine, closed by default

@@ -24,8 +24,8 @@ sources:
     resource: ../../packages/schemastore/src/StoreDocument.ts
 generated:
   by: "okfit/claude-code"
-  at: 2026-09-14T16:39:01Z
-  body_sha256: 45df36e84925eb37488acea83030925dbecbf16b35efe219a7c24f4a1f65f676
+  at: 2026-09-15T15:38:20Z
+  body_sha256: 07cea1b3f77a697bfded284c3edbc0fb2ce964a6503c4fe5598c428b80f25591
 ---
 
 # @effected/schemastore

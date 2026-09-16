@@ -206,6 +206,16 @@ export interface RunReport {
 	readonly schemas: ReadonlyArray<SchemaReport>;
 	/** Absent when no schema declared a catalog entry and no file sits at `catalogPath`. */
 	readonly catalog?: CatalogReport;
+	/**
+	 * Every document sitting at a sibling shape of a path the config derives
+	 * — the file an `appendVersion` flip or a `layout` change left behind
+	 * under the old derived name — that no target, frozen version, or the
+	 * catalog path claims. `check` counts them stale (exit `1`); `build`
+	 * reports and never deletes them (the CLI may not have written them).
+	 * Absent when none. In config order: schema by schema, the unversioned
+	 * shape first, then each label's three other shapes.
+	 */
+	readonly orphaned?: ReadonlyArray<string>;
 	/** At least one schema's verdict is `"drift"`. */
 	readonly drifted: boolean;
 	/** At least one schema failed its gate. */
@@ -300,6 +310,22 @@ const parsesEqual = (existing: string, text: string): boolean => {
  * one, nothing is written; a file still at `catalogPath` is reported
  * `orphaned` (stale under `check`) and left in place, and the report omits
  * `catalog` entirely only when there is no such file either.
+ *
+ * **A moved path leaves an orphan the derivation cannot see**: an
+ * `appendVersion` flip or a `layout` change renames a document's derived
+ * path, and the previously written file stays on disk under the old name —
+ * for a `published` label, its advertised URL keeps serving a stale
+ * document with no report. The derivation has exactly four shapes for a
+ * name and label (`<name>.json`, `<name>-<v>.json`, `<v>/<name>.json`,
+ * `<v>/<name>-<v>.json`), so both modes probe the sibling shapes of every
+ * label the config still knows and report each one that exists as a FILE
+ * and that no target, frozen version, or `catalogPath` claims in
+ * {@link RunReport.orphaned}. Nothing else on disk is looked at: an
+ * `outputDir` shared with another config, a deploy folder, or the
+ * repository root holds documents this config cannot tell from its own
+ * leftovers, so they are never reported. A `name` change is therefore not
+ * caught either — the old name is unknowable. Orphans are reported, never
+ * deleted: the CLI may not have written them.
  *
  * @public
  */
@@ -455,6 +481,54 @@ export class Runner {
 			catalog = { path: config.catalogPath, entries: entries.length, outcome };
 		}
 
+		// A rename leaves an orphan: an `appendVersion` flip or a `layout`
+		// change moves a document's derived path, and the file written under
+		// the old name stays on disk — invisible to a walk that only reads the
+		// paths the config derives. The derivation has exactly four shapes per
+		// name and label, so probe the sibling shapes of every label the
+		// config still knows and report any that exists as a FILE. Nothing
+		// else on disk is ever looked at: `outputDir` may be shared with
+		// another config, a deploy folder, or the repository root.
+		// Reported, never deleted: the CLI may not have written them.
+		// `ConfigLoader.resolvePaths` re-resolves every claimed path through the
+		// platform `Path`, so on win32 a relative `outputDir` yields backslashes
+		// while an absolute forward-slash one is passed through untouched.
+		// Normalise both sides so equality holds by construction everywhere.
+		const claimed = new Set<string>([path.normalize(config.catalogPath)]);
+		for (const schema of config.schemas) {
+			claimed.add(path.normalize(schema.target.path));
+			for (const frozen of schema.frozen) {
+				claimed.add(path.normalize(frozen.path));
+			}
+		}
+		const orphaned: Array<string> = [];
+		for (const schema of config.schemas) {
+			const labels = [schema.target.version, ...schema.frozen.map((frozen) => frozen.version)];
+			const shapes = [
+				SchemaVersioning.fileName(schema.name),
+				...labels.flatMap((version) =>
+					version === undefined
+						? []
+						: [
+								SchemaVersioning.fileName(schema.name, version, "flat"),
+								SchemaVersioning.fileName(schema.name, version, "versioned"),
+								SchemaVersioning.fileName(schema.name, version, "versioned", false),
+							],
+				),
+			];
+			for (const shape of shapes) {
+				const file = path.normalize(path.join(config.outputDir, shape));
+				if (claimed.has(file)) {
+					continue;
+				}
+				const info = yield* orNone(fs.stat(file));
+				// A DIRECTORY wearing a derived name is not a document; leave it alone.
+				if (Option.isSome(info) && info.value.type === "File") {
+					orphaned.push(file);
+				}
+			}
+		}
+
 		const report: RunReport = {
 			mode: options.mode,
 			configPath: options.configPath,
@@ -462,6 +536,7 @@ export class Runner {
 			...(options.policy !== undefined ? { policy: options.policy } : {}),
 			schemas,
 			...(catalog !== undefined ? { catalog } : {}),
+			...(orphaned.length > 0 ? { orphaned } : {}),
 			drifted,
 			gateFailed,
 			wrote: schemas.some((s) => s.outcome === "written") || catalog?.outcome === "written",

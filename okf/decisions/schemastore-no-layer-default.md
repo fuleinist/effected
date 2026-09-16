@@ -8,8 +8,8 @@ sources:
     resource: ../../packages/schemastore/CLAUDE.modules.md
 generated:
   by: "okfit/claude-code"
-  at: 2026-09-13T05:33:04Z
-  body_sha256: cc1d92c4d858a708eb6d841d02d23710c1531d220bb7b8fb00d4e90e70824acc
+  at: 2026-09-15T15:38:20Z
+  body_sha256: 4a7f537556e351c2ef70e917c8c825ae415302720b37895b31a5f7e0582eb143
 ---
 
 # No layerDefault on SchemaValidator or SchemaFile

@@ -48,9 +48,9 @@ schemastore check [config] [--drift=…] [--on-drift=…] [--force] [--format=hu
 ```
 
 - **`build`** generates, gates (structural lint + ajv strict mode), applies the drift table, and writes what passes — content-compared, so an unchanged or merely reformatted file is untouched — then the catalog entries the same way. When any schema fails the gate, or drifts under `onDrift: "error"`, **nothing is written** and every otherwise-writable schema reports `held`.
-- **`check`** is the identical walk with no writes: it reports exactly what `build` would do under the same flags (`would write`, `unchanged`, `DRIFT`, `held`, `GATE FAILED`) and exits under the same conditions — and, as the CI gate, it also exits `1` whenever a build would write anything (`StaleError`: ``N document(s) are stale; run `schemastore build` and commit the result.``), evaluated after the gate and drift verdicts. It replaces a hand-written drift test.
+- **`check`** is the identical walk with no writes: it reports exactly what `build` would do under the same flags (`would write`, `unchanged`, `DRIFT`, `held`, `GATE FAILED`) and exits under the same conditions — and, as the CI gate, it also exits `1` whenever a build would write anything (`StaleError`: ``N document(s) are stale; run `schemastore build` and commit the result.``), evaluated after the gate and drift verdicts, or when an output nothing claims sits on disk — an orphaned `catalog.json` no schema declares, or a document left behind at a sibling shape of a derived path (`<name>.json`, `<name>-<v>.json`, `<v>/<name>.json`, `<v>/<name>-<v>.json` — an `appendVersion` flip or a `layout` change moved it) that no target, frozen version, or catalog path names; nothing else in `outputDir` is looked at, so a shared or deploy directory is safe unless two configs derive one schema name and version under different layouts into it; `build` reports both and deletes neither — delete by hand. It replaces a hand-written drift test.
 - **`--force`** is `--drift=allow` for one run, announced loudly; it never overrides a gate failure. Combined with an explicit non-`allow` `--drift` (`strict` or `semantic`) it is refused as a usage error (`ConflictingFlagsError`, exit `64`) before the config loads — a contradiction, not a precedence question; `--force --drift=allow` is redundant and accepted.
-- **`--format=json`** emits one document on stdout — `mode`, `configPath`, `drift: { onDrift, policy? }` (`policy` present only when a flag forced one tolerance over every schema's own), per-schema `{ $id, path, name, version?, published, change, verdict, policy, outcome, nextVersion?, frozen?, findings }`, one optional `catalog: { path, entries, outcome }` for the single catalog file, `drifted`, `gateFailed`, `wrote` — and moves every human line to stderr.
+- **`--format=json`** emits one document on stdout — `mode`, `configPath`, `drift: { onDrift, policy? }` (`policy` present only when a flag forced one tolerance over every schema's own), per-schema `{ $id, path, name, version?, published, change, verdict, policy, outcome, nextVersion?, frozen?, findings }`, one optional `catalog: { path, entries, outcome }` for the single catalog file, one optional `orphaned: string[]` of leftover document paths in config order, `drifted`, `gateFailed`, `wrote` — and moves every human line to stderr.
 - When `GITHUB_STEP_SUMMARY` is set (read through Effect `Config`), both commands append a markdown table and the drift verdict; a failure to write it is logged, never fatal.
 
 ## Drift
@@ -69,7 +69,7 @@ schemastore check [config] [--drift=…] [--on-drift=…] [--force] [--format=hu
 | code | meaning |
 | ------ | --------- |
 | 0 | success, including drift under `onDrift: "warn"` |
-| 1 | drift under `onDrift: "error"`, a gate failure, or — for `check` — any document `build` would write |
+| 1 | drift under `onDrift: "error"`, a gate failure, or — for `check` — any document `build` would write or an output nothing claims (an orphaned catalog file or document) |
 | 2 | config not found, failed to load, or not a `defineConfig(...)` value |
 | 3 | infrastructure failure |
 | 64 | usage error |
