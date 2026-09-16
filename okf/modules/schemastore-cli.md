@@ -324,22 +324,24 @@ schemastore check [config] [--drift=…] [--on-drift=…] [--force] [--format=hu
   CLI may not have written it; the human line reads
   `orphaned catalog <path> (no schema declares a catalog)`. The report
   omits `catalog` only when there is no such file either. Both modes
-  also walk the directories the config writes into — each version
-  directory a versioned target or frozen file lands in, and `outputDir`
-  itself for a flat or unversioned one — and report every `*.json` FILE
-  no target, frozen version, or `catalogPath` claims in `orphaned`: a
-  document left behind under an old derived name after an `appendVersion`
-  flip, a `name` change, or a `layout` change moved its path (for a
+  also probe the sibling shapes of every derived path —
+  `SchemaVersioning.fileName` has exactly four per name and label
+  (`<name>.json`, `<name>-<v>.json`, `<v>/<name>.json`,
+  `<v>/<name>-<v>.json`) — for every label the config still declares,
+  and report each FILE that exists and that no target, frozen version,
+  or `catalogPath` claims in `orphaned`: the document an `appendVersion`
+  flip or a `layout` change left behind under its old name (for a
   `published` label, the advertised URL keeps serving the stale document
   with no report — the same shape the orphaned catalog closes). Stale
   (exit `1`) under `check`, reported but **never deleted** under `build`;
   the human line reads `orphaned document <path> (no target, frozen
   version, or catalog entry claims it — delete it by hand; build never
-  will)`. The walk never leaves an owned directory, so an unrelated file
-  elsewhere in the tree is never touched; the catalog file is claimed
-  wherever it sits, but its directory joins the walk only when a schema
-  already writes there. A directory named `*.json` is not a document and
-  is never reported.
+  will)`. Nothing else on disk is read — `outputDir` is never listed, because it
+  may be shared with another config, a deploy folder, or the repository
+  root, where a neighbour's document cannot be told from a leftover; the
+  cost is that a `name` change or a dropped label leaves a file the
+  command cannot know about (the old name is unknowable). A directory
+  wearing a derived name is not a document and is never reported.
 - `check` is the identical walk with **no writes**: it reports what
   `build` would do under the same flags and exits under the same
   conditions — and, because it is the CI drift gate, it ALSO exits `1`
@@ -347,7 +349,10 @@ schemastore check [config] [--drift=…] [--on-drift=…] [--force] [--format=hu
   entry that differs from what the config generates, or one that is
   missing, is stale, and the message says to run `schemastore build` and
   commit the result (`StaleError`, evaluated after the gate and drift
-  verdicts). It retires the six drift tests. Never-writes is one predicate, not a separate code path: both modes
+  verdicts). Orphaned outputs count toward the same `StaleError` but are
+  carried separately in its `orphaned` field, so the final line names
+  the remedy a build cannot supply: `N orphaned output(s) must be deleted
+  by hand; build never will.` It retires the six drift tests. Never-writes is one predicate, not a separate code path: both modes
   share one `SchemaFile`, and `Runner` gates every write — schemas and
   catalog entries alike — on a single `writing` predicate
   (`mode === "build" && !refused`), pinned by the "check never writes"
@@ -367,7 +372,7 @@ schemastore check [config] [--drift=…] [--on-drift=…] [--force] [--format=hu
   `catalog: { path, entries, outcome }` for the single catalog file
   (`outcome` is `written`, `unchanged`, `would-write`, `held` or
   `orphaned`), one optional `orphaned: string[]` (the unclaimed-document
-  paths, in walk order), and
+  paths, in config order), and
   `drifted`/`gateFailed`/`wrote`. Human text moves to stderr in this mode
   so stdout stays parseable.
 - A bare `schemastore` or `--help` prints help and exits `0`; a no-match
@@ -505,4 +510,4 @@ becomes moot: there is no longer a canonical generator script to copy.
 [^config]: `SchemastoreConfig.ts` — `defineConfig`, `SchemastoreConfigInput`, `SchemaEntryInput` (including `hosted`), `ResolvedSchema`, `FrozenVersion` (`version`/`path`/`$id`/`url`); the keyed-by-name shape, the per-level `Schema.Struct` decode, and the delegation of hosting and version rules to `HostedSchema`.
 [^ajv-validator]: `packages/schemastore-cli/src/AjvValidator.ts` — `AjvValidator.layer`: strict mode, `KeywordFamilies` registration, `addFormats(ajv, { keywords: false })`, a fresh `Ajv` per call.
 [^cli-package-json]: `packages/schemastore-cli/package.json` — the `.` export to `src/index.ts`, `ajv` and `ajv-formats` as regular dependencies, `effect` and `@effected/schemastore` as peers.
-[^runner]: `packages/schemastore-cli/src/Runner.ts` — `FrozenVersionMissingError`, `FrozenVersionIdMismatchError`, the frozen pre-flight (existence, then declared `$id`) that runs before generation, the single-`catalog.json` write, the `orphaned` `CatalogReport` outcome, and the owned-directory walk that reports unclaimed `*.json` documents in `RunReport.orphaned`.
+[^runner]: `packages/schemastore-cli/src/Runner.ts` — `FrozenVersionMissingError`, `FrozenVersionIdMismatchError`, the frozen pre-flight (existence, then declared `$id`) that runs before generation, the single-`catalog.json` write, the `orphaned` `CatalogReport` outcome, and the sibling-shape probe that reports unclaimed leftover documents in `RunReport.orphaned`.

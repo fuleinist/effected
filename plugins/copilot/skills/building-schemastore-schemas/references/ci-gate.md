@@ -37,7 +37,7 @@ the generated files as `schema:build`'s outputs:
 Locally, `schema:build` regenerates and you commit the result; in CI,
 `schema:check` proves the committed documents match the schemas. A `check`
 that reports `would write` means someone changed a schema and did not run
-the build; it fails with ``N document(s) are stale; run `schemastore build` and commit the result.`` at exit `1`.
+the build; it fails with ``N document(s) are stale; run `schemastore build` and commit the result.`` at exit `1`. An orphaned output (a catalog file no schema declares, a document an `appendVersion` or `layout` rename left behind) fails the same way, but its line reads `N orphaned output(s) must be deleted by hand; build never will.` — a build does not clear it.
 
 ## Commands and flags
 

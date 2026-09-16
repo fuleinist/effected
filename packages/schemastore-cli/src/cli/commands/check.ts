@@ -7,9 +7,9 @@ import { commandFlags } from "../flags.js";
  * `schemastore check`: the same walk as `build`, reported and never written.
  * The CI drift gate: it also fails when the committed documents are stale,
  * i.e. whenever `build` would write anything — and on the outputs nothing
- * claims (an orphaned catalog file, or a `*.json` document left behind in a
- * directory the config writes into), which `build` never deletes: remove
- * them by hand.
+ * claims (an orphaned catalog file, or a document left behind at a sibling
+ * shape of a derived path), which `build` never deletes: remove them by
+ * hand.
  *
  * @public
  */

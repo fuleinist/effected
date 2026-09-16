@@ -541,28 +541,37 @@ describe("schemastore CLI", () => {
 		),
 	);
 
-	// #747 — a document left behind under an old derived name (a rename the
-	// config no longer knows) is stale under check, reported and kept under
-	// build.
-	it.effect("an orphaned document in an owned directory is stale under check and reported but kept under build", () =>
+	// #747 — a document left behind under an old derived name (here the
+	// versioned shape a `layout: "flat"` flip abandoned) is stale under check,
+	// reported and kept under build.
+	it.effect("an orphaned document at a sibling shape is stale under check and reported but kept under build", () =>
 		run(
 			Effect.gen(function* () {
 				const error = yield* Effect.flip(program(["check"], deps(basicConfig())));
 				assert.instanceOf(error, StaleError);
 				assert.strictEqual(error.count, 1, "the orphaned document alone");
+				assert.strictEqual(error.orphaned, 1);
+				assert.strictEqual(
+					error.message,
+					"1 orphaned output(s) must be deleted by hand; build never will.",
+					"the final line must not prescribe a build that cannot clear it",
+				);
 				assert.strictEqual(exitCodeOf(error), 1);
 				assert.include(
 					yield* stdout,
-					"orphaned document /repo/schemas/basic-0.9.json (no target, frozen version, or catalog entry claims it — delete it by hand; build never will)",
+					"orphaned document /repo/schemas/1.0/basic-1.0.json (no target, frozen version, or catalog entry claims it — delete it by hand; build never will)",
 				);
 				yield* program(["build"], deps(basicConfig()));
 				const fs = yield* FileSystem.FileSystem;
 				assert.isTrue(
-					yield* fs.exists("/repo/schemas/basic-0.9.json"),
+					yield* fs.exists("/repo/schemas/1.0/basic-1.0.json"),
 					"build reports the orphan but never deletes it",
 				);
 			}),
-			{ ...builtSeed, "/repo/schemas/basic-0.9.json": emitted(Config, "https://example.com/schemas/basic-0.9.json") },
+			{
+				...builtSeed,
+				"/repo/schemas/1.0/basic-1.0.json": emitted(Config, "https://example.com/schemas/1.0/basic-1.0.json"),
+			},
 		),
 	);
 

@@ -207,13 +207,13 @@ export interface RunReport {
 	/** Absent when no schema declared a catalog entry and no file sits at `catalogPath`. */
 	readonly catalog?: CatalogReport;
 	/**
-	 * Every `*.json` file in a directory the config writes into that no
-	 * target, frozen version, or the catalog path claims — left behind when
-	 * a derived path moved (an `appendVersion` flip, a `name` or `layout`
-	 * change). `check` counts them stale (exit `1`); `build` reports and
-	 * never deletes them (the CLI may not have written them). Absent when
-	 * none. In walk order: owned directories in first-claim order, files
-	 * within one directory sorted by name.
+	 * Every document sitting at a sibling shape of a path the config derives
+	 * — the file an `appendVersion` flip or a `layout` change left behind
+	 * under the old derived name — that no target, frozen version, or the
+	 * catalog path claims. `check` counts them stale (exit `1`); `build`
+	 * reports and never deletes them (the CLI may not have written them).
+	 * Absent when none. In config order: schema by schema, the unversioned
+	 * shape first, then each label's three other shapes.
 	 */
 	readonly orphaned?: ReadonlyArray<string>;
 	/** At least one schema's verdict is `"drift"`. */
@@ -312,19 +312,20 @@ const parsesEqual = (existing: string, text: string): boolean => {
  * `catalog` entirely only when there is no such file either.
  *
  * **A moved path leaves an orphan the derivation cannot see**: an
- * `appendVersion` flip, a `name` change, or a `layout` change renames a
- * document's derived path, and the previously written file stays on disk
- * under the old name — for a `published` label, its advertised URL keeps
- * serving a stale document with no report. So both modes also walk the
- * directories the config writes into (each version directory a versioned
- * target or frozen file lands in, and `outputDir` itself for a flat or
- * unversioned one) and report every `*.json` FILE no target, frozen
- * version, or `catalogPath` claims in {@link RunReport.orphaned}. The
- * catalog file is claimed wherever it sits, but its directory joins the
- * walk only when a schema already writes there. Orphans are reported,
- * never deleted — the CLI may not have written them — and the walk never
- * leaves an owned directory, so an unrelated file elsewhere in the tree
- * is never touched.
+ * `appendVersion` flip or a `layout` change renames a document's derived
+ * path, and the previously written file stays on disk under the old name —
+ * for a `published` label, its advertised URL keeps serving a stale
+ * document with no report. The derivation has exactly four shapes for a
+ * name and label (`<name>.json`, `<name>-<v>.json`, `<v>/<name>.json`,
+ * `<v>/<name>-<v>.json`), so both modes probe the sibling shapes of every
+ * label the config still knows and report each one that exists as a FILE
+ * and that no target, frozen version, or `catalogPath` claims in
+ * {@link RunReport.orphaned}. Nothing else on disk is looked at: an
+ * `outputDir` shared with another config, a deploy folder, or the
+ * repository root holds documents this config cannot tell from its own
+ * leftovers, so they are never reported. A `name` change is therefore not
+ * caught either — the old name is unknowable. Orphans are reported, never
+ * deleted: the CLI may not have written them.
  *
  * @public
  */
@@ -480,55 +481,46 @@ export class Runner {
 			catalog = { path: config.catalogPath, entries: entries.length, outcome };
 		}
 
-		// A rename leaves an orphan: `appendVersion`, a `name` change or a
-		// `layout` change all move a document's derived path, and the file
-		// written under the old name stays on disk — invisible to a walk that
-		// only reads the paths the config derives. Walk the directories the
-		// config writes into and report every `*.json` file nothing claims.
+		// A rename leaves an orphan: an `appendVersion` flip or a `layout`
+		// change moves a document's derived path, and the file written under
+		// the old name stays on disk — invisible to a walk that only reads the
+		// paths the config derives. The derivation has exactly four shapes per
+		// name and label, so probe the sibling shapes of every label the
+		// config still knows and report any that exists as a FILE. Nothing
+		// else on disk is ever looked at: `outputDir` may be shared with
+		// another config, a deploy folder, or the repository root.
 		// Reported, never deleted: the CLI may not have written them.
-		const ownedDirs: Array<string> = [];
-		const claimedNames = new Map<string, Set<string>>();
-		const claim = (claimedPath: string, owned: boolean): void => {
-			// `dirname`/`basename` on the claimed string itself, and the candidate
-			// rebuilt as `${dir}/${name}`: string equality with the claimed paths
-			// holds by construction on every platform, which `path.join` would not
-			// guarantee (it normalises to the platform separator).
-			const dir = path.dirname(claimedPath);
-			const names = claimedNames.get(dir);
-			if (names === undefined) {
-				claimedNames.set(dir, new Set([path.basename(claimedPath)]));
-			} else {
-				names.add(path.basename(claimedPath));
-			}
-			if (owned && !ownedDirs.includes(dir)) {
-				ownedDirs.push(dir);
-			}
-		};
+		const claimed = new Set<string>([config.catalogPath]);
 		for (const schema of config.schemas) {
-			claim(schema.target.path, true);
+			claimed.add(schema.target.path);
 			for (const frozen of schema.frozen) {
-				claim(frozen.path, true);
+				claimed.add(frozen.path);
 			}
 		}
-		// The catalog file is claimed wherever it sits, but its directory joins
-		// the walk only when a schema already writes there.
-		claim(config.catalogPath, false);
 		const orphaned: Array<string> = [];
-		for (const dir of ownedDirs) {
-			const listing = yield* orNone(fs.readDirectory(dir));
-			if (Option.isNone(listing)) {
-				// Nothing has been built here yet; no orphans to find.
-				continue;
-			}
-			const claimed = claimedNames.get(dir);
-			const candidates = [...listing.value].filter((name) => name.endsWith(".json")).sort();
-			for (const name of candidates) {
-				if (claimed?.has(name) === true) {
+		for (const schema of config.schemas) {
+			const labels = [schema.target.version, ...schema.frozen.map((frozen) => frozen.version)];
+			const shapes = [
+				SchemaVersioning.fileName(schema.name),
+				...labels.flatMap((version) =>
+					version === undefined
+						? []
+						: [
+								SchemaVersioning.fileName(schema.name, version, "flat"),
+								SchemaVersioning.fileName(schema.name, version, "versioned"),
+								SchemaVersioning.fileName(schema.name, version, "versioned", false),
+							],
+				),
+			];
+			for (const shape of shapes) {
+				// Built the way `defineConfig` builds every claimed path, so a claim
+				// matches by string equality on every platform.
+				const file = `${config.outputDir}/${shape}`;
+				if (claimed.has(file)) {
 					continue;
 				}
-				const file = `${dir}/${name}`;
 				const info = yield* orNone(fs.stat(file));
-				// A DIRECTORY named `*.json` is not a document; leave it alone.
+				// A DIRECTORY wearing a derived name is not a document; leave it alone.
 				if (Option.isSome(info) && info.value.type === "File") {
 					orphaned.push(file);
 				}

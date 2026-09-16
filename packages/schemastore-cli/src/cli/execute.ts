@@ -57,14 +57,26 @@ export class GateError extends Schema.TaggedError<GateError>()("GateError", { co
 
 /**
  * `check` found committed documents that differ from what the config
- * generates (or are missing), so a `build` would write. `check` is the CI
- * drift gate, so a stale tree fails it. Exit `1`.
+ * generates (or are missing), so a `build` would write — or outputs
+ * nothing claims (an orphaned catalog file, an orphaned document), which
+ * `build` never deletes. `check` is the CI drift gate, so a stale tree
+ * fails it. Exit `1`. `count` is every finding; `orphaned` the part of it
+ * a build cannot clear, so the message names both remedies.
  *
  * @public
  */
-export class StaleError extends Schema.TaggedError<StaleError>()("StaleError", { count: Schema.Number }) {
+export class StaleError extends Schema.TaggedError<StaleError>()("StaleError", {
+	count: Schema.Number,
+	orphaned: Schema.optionalKey(Schema.Number),
+}) {
 	override get message(): string {
-		return `${this.count} document(s) are stale; run \`schemastore build\` and commit the result.`;
+		const orphaned = this.orphaned ?? 0;
+		const stale = this.count - orphaned;
+		const parts = [
+			...(stale > 0 ? [`${stale} document(s) are stale; run \`schemastore build\` and commit the result.`] : []),
+			...(orphaned > 0 ? [`${orphaned} orphaned output(s) must be deleted by hand; build never will.`] : []),
+		];
+		return parts.join(" ");
 	}
 }
 
@@ -202,12 +214,15 @@ export const execute = Effect.fn("schemastore.execute")(function* (
 		return yield* Effect.fail(CliRuntime.reported(new DriftError({ drifted }), 1));
 	}
 	if (mode === "check") {
+		const orphaned = (report.catalog?.outcome === "orphaned" ? 1 : 0) + (report.orphaned?.length ?? 0);
 		const count =
 			report.schemas.filter((schema) => schema.outcome === "would-write").length +
-			(report.catalog?.outcome === "would-write" || report.catalog?.outcome === "orphaned" ? 1 : 0) +
-			(report.orphaned?.length ?? 0);
+			(report.catalog?.outcome === "would-write" ? 1 : 0) +
+			orphaned;
 		if (count > 0) {
-			return yield* Effect.fail(CliRuntime.reported(new StaleError({ count }), 1));
+			return yield* Effect.fail(
+				CliRuntime.reported(new StaleError({ count, ...(orphaned > 0 ? { orphaned } : {}) }), 1),
+			);
 		}
 	}
 });
