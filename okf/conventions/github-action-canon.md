@@ -16,8 +16,8 @@ sources:
     resource: ../../plugins/claude-code/skills/structuring-an-action/SKILL.md
 generated:
   by: "okfit/claude-code"
-  at: 2026-09-13T05:33:04Z
-  body_sha256: 2f208c2168e14ed19432290b9a057f0ff1ef76f458c0f7132a7209e8bc070407
+  at: 2026-09-15T15:38:20Z
+  body_sha256: a98a973104a911f51c5fee111c867195c26143a1801730ea57c33f39a0f319ef
 ---
 
 # Build a GitHub Action repository to the kit's canonical shape

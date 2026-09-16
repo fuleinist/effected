@@ -16,8 +16,8 @@ sources:
     resource: ../../packages/lockfiles/src
 generated:
   by: "okfit/claude-code"
-  at: 2026-09-13T05:33:04Z
-  body_sha256: 979ee0205669c359407e14288098131a58b00b164068e852d5d317444978ed57
+  at: 2026-09-15T15:38:20Z
+  body_sha256: f7023a22ec7fb274de74de596856ff20eedc31eeeaa0516fbafab0fd92dadb7d
 ---
 
 # Dependency policy: R1-R4

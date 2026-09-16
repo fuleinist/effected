@@ -23,6 +23,8 @@ sources:
     resource: ../../packages/schemastore/src/SchemaValidator.ts
 generated:
   by: "okfit/claude-code"
+  at: 2026-09-15T15:38:20Z
+  body_sha256: ad684991aad01de69b8b51aa010c9eaca975a137fa268c59758005455e57c1dc
 ---
 
 # The ajv engine lives in the CLI, and the library returns to boundary tier

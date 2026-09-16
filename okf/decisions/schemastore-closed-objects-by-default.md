@@ -12,6 +12,8 @@ sources:
     resource: ../../packages/schemastore/src/SchemaTarget.ts
 generated:
   by: "okfit/claude-code"
+  at: 2026-09-15T15:38:20Z
+  body_sha256: 3df4d6ecdca932ff44d751a45ba53993a394b1e260edd70d8b5cf3b1aaea638e
 ---
 
 # Generated objects are closed by default, departing from core's open default
