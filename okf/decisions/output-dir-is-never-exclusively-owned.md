@@ -6,6 +6,10 @@ status: draft
 tags:
   - schemastore
   - monorepo
+generated:
+  by: okfit/claude-code
+  at: 2026-09-16T18:59:18Z
+  body_sha256: ad9957ecd6368a7b3acf2f97fa89e3e4936b02b950dacd6c9328960848bf889c
 ---
 
 # A schemastore outputDir is never exclusively the CLI's

@@ -2,6 +2,7 @@
 type: Interface
 title: "@effected/github GraphQL"
 description: Typed GraphQL documents over the same client, errors and spans as REST.
+status: stable
 kind: api
 resource: ../../packages/github/src/GraphQL.ts
 tags: [bundle]

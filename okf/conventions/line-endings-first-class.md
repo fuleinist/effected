@@ -2,6 +2,7 @@
 type: Convention
 title: Treat line endings as a first-class invariant in any file-rewriting code
 description: Detect and preserve a document's dominant EOL, and normalize for comparison rather than for storage, or drift detection silently breaks on CRLF input.
+status: stable
 stale_after: "2027-03-13T00:00:00Z"
 tags: [dx]
 generated:

@@ -2,6 +2,7 @@
 type: Module
 title: "@effected/yaml"
 description: Pure-tier YAML 1.2 parsing, editing, formatting and linting as Effect schemas, with a vendored engine and full per-node comment fidelity.
+status: stable
 kind: package
 resource: ../../packages/yaml
 tags: [architecture, bundle]

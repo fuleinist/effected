@@ -1,8 +1,20 @@
 # Log
 
+## 2026-09-17
+
+* Updated "Wait for the kit" leaves raw spawns and duplicated regex behind
+* Updated @effected/workspaces catalogs and the config-dependency seam
+* Updated @effected/workspaces discovery and detection
+* Updated @effected/workspaces peer-dependency checking
+* Updated Design a GitHub Action repository on the kit
+* Updated Regenerate the GitHub Action template repository
+* Updated app
+* Updated store
+
 ## 2026-09-16
 
 * Updated @effected/schemastore-cli
+* Added A schemastore outputDir is never exclusively the CLI's
 
 ## 2026-09-15
 

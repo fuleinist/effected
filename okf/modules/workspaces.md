@@ -2,6 +2,7 @@
 type: Module
 title: "@effected/workspaces: monorepo tooling"
 description: The integrated-tier package that finds a workspace root, enumerates its packages, walks the dependency graph, detects the package manager, assembles pnpm catalogs, checks peer dependencies, and reads git-scoped snapshots.
+status: stable
 kind: package
 resource: ../../packages/workspaces
 tags:

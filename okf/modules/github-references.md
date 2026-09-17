@@ -2,6 +2,7 @@
 type: Module
 title: "@effected/github-references"
 description: GitHub's issue-reference grammar as pure functions, extracted from @effected/github.
+status: stable
 kind: package
 resource: ../../packages/github-references
 tags: [bundle]

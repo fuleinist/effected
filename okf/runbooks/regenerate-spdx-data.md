@@ -2,6 +2,7 @@
 type: Runbook
 title: Regenerate the vendored SPDX datasets
 description: The hand-run procedure for refreshing @effected/spdx's license-id, exception and metadata literals after an upstream SPDX release.
+status: stable
 resource: ../../packages/spdx/lib/scripts/generate-data.ts
 tags: [architecture]
 generated:

@@ -2,6 +2,7 @@
 type: Interface
 title: "@effected/workspaces release surface"
 description: PublishabilityDetector, VersioningStrategy, and ReleaseTag — the release-shaped questions the workspace model already holds the facts for.
+status: stable
 kind: api
 resource: ../../packages/workspaces/src/Publishability.ts
 tags:

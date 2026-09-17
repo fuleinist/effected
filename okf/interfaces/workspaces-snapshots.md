@@ -2,6 +2,7 @@
 type: Interface
 title: "@effected/workspaces snapshots"
 description: WorkspaceSnapshots and WorkspaceStateSnapshot — point-in-time workspace reads at a git ref or in the worktree, and the at/worktree hook-catalog asymmetry.
+status: stable
 kind: api
 resource: ../../packages/workspaces/src/WorkspaceSnapshots.ts
 tags:

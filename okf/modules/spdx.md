@@ -2,6 +2,7 @@
 type: Module
 title: "@effected/spdx"
 description: SPDX license identifiers, exceptions and license expressions modeled as pure Effect Schema classes, owning the grammar rather than depending on a parser package.
+status: stable
 kind: package
 resource: ../../packages/spdx
 tags: [architecture, bundle]

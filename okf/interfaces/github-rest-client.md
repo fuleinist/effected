@@ -2,6 +2,7 @@
 type: Interface
 title: "@effected/github REST client"
 description: The route-keyed REST client, its escape hatch, and the pagination model over octokit.
+status: stable
 kind: api
 resource: ../../packages/github/src/Rest.ts
 tags: [bundle]

@@ -8,8 +8,8 @@ tags:
   - dx
 generated:
   by: "okfit/claude-code"
-  at: 2026-09-13T05:33:04Z
-  body_sha256: 8e1df03f19e8be39c572cb31292db531b2c22c6286fd06d1cc5e7b8168ac559c
+  at: 2026-09-17T04:41:11Z
+  body_sha256: f012f8aca114d1d5e35b1f5e80e80ead56a7f3f51ff8c7fdeeeee092d8a9a6a3
 ---
 
 # Regenerate the GitHub Action template repository
@@ -52,11 +52,11 @@ finding, not a preference:
    small structured `result` output, a script that runs it, and the
    generator's own `targets` constant exercised by a drift test under
    `__test__/unit/` — per
-   [B4](../conventions/github-action-canon.md#b4--json-schema-publication-is-conditional-canon).
+   [B4](../conventions/github-action-canon.md#b4-json-schema-publication-is-conditional-canon).
 3. Have `program.ts` emit the output baseline first, per
-   [B10](../conventions/github-action-canon.md#b10--emit-the-output-baseline-first),
+   [B10](../conventions/github-action-canon.md#b10-emit-the-output-baseline-first),
    and add the two-sided compile-time layers proof test, per
-   [B11](../conventions/github-action-canon.md#b11--the-layers-proof-is-compile-time-and-two-sided).
+   [B11](../conventions/github-action-canon.md#b11-the-layers-proof-is-compile-time-and-two-sided).
 4. Stop ignoring the plugin's skills and agents directories in
    `.gitignore`.
 5. Add a "bootstrapping this template" section to the root `CLAUDE.md`

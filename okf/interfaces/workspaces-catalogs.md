@@ -2,6 +2,7 @@
 type: Interface
 title: "@effected/workspaces catalogs and the config-dependency seam"
 description: WorkspaceCatalogs and CatalogSet assembly, the release-age gate, and the ConfigDependencyHooks opt-in replay seam over pnpm config dependencies.
+status: stable
 kind: api
 resource: ../../packages/workspaces/src/WorkspaceCatalogs.ts
 tags:
@@ -16,8 +17,8 @@ sources:
     resource: ../../packages/workspaces/src/internal/catalogs.ts
 generated:
   by: "okfit/claude-code"
-  at: 2026-09-13T05:33:04Z
-  body_sha256: 734908c85c39db27d4c707f417420e2b8c8af06149535218e7a243bdfaa8a005
+  at: 2026-09-17T04:41:11Z
+  body_sha256: 28a0c1a09d4fbab271ed62c5e2ccf73cfb6afcd5bd74be75fbe41ec7588961e0
 ---
 
 # @effected/workspaces catalogs and the config-dependency seam
@@ -107,7 +108,7 @@ threaded config's initial value, and whatever the hooks return comes back
 out — a hook that overwrites overwrites for pnpm too, and this must never
 be "fixed" into a kit-owned merger, which would be a second, divergent
 implementation of a rule pnpm already owns. See
-[peer-dependency rules](workspaces-peer-check.md#peer-dependency-rules)
+[peer-dependency rules](workspaces-peer-check.md#peer-dependency-rules-pnpms-suppression-policy-seeded-not-merged)
 for the full rationale.
 
 ### layerSubprocess

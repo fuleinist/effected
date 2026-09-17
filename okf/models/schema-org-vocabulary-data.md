@@ -2,6 +2,7 @@
 type: DataModel
 title: The committed schema.org vocabulary document
 description: The vendored schema.org -current release document that seeds @effected/schema-org's interned vocabulary table, and the invariants a regeneration must not let slip.
+status: stable
 resource: ../../packages/schema-org/lib/data/schemaorg-current-https.jsonld
 tags: [architecture]
 generated:

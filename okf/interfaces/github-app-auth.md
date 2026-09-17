@@ -2,6 +2,7 @@
 type: Interface
 title: "@effected/github App authentication"
 description: The App JWT, installation-token lifecycle, and the seam the GitHub Actions runtime bridges on.
+status: stable
 kind: api
 resource: ../../packages/github/src/GitHubApp.ts
 tags: [bundle, security]

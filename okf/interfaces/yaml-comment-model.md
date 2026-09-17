@@ -2,6 +2,7 @@
 type: Interface
 title: "@effected/yaml comment model"
 description: The per-node comment fields, their attribution rules, one-string storage with its spaces-only escape, and the recorded divergences from the reference implementation.
+status: stable
 kind: api
 resource: ../../packages/yaml/src/internal/composer/comments.ts
 tags: [architecture]

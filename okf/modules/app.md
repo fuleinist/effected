@@ -15,8 +15,8 @@ sources:
     resource: ../../packages/app/CLAUDE.md
 generated:
   by: "okfit/claude-code"
-  at: 2026-09-13T05:33:04Z
-  body_sha256: 45ad5ed61a7ce236841e5cf927444fdaaa4d558d49afedf3c78851de99ece106
+  at: 2026-09-17T04:41:11Z
+  body_sha256: 84dbcd1e86dee184dd89ebc4f16dcf898895168ae24ef66269eb4e1ddc761e4f
 ---
 
 # app
@@ -159,7 +159,7 @@ wrapper class.
 
 ## The ensure-before-open contract
 
-**The entire reason this package exists.** [store](store.md#the-v4-sqlite-decision)
+**The entire reason this package exists.** [store](../decisions/store-v4-sqlite.md#decision)
 established that `SqliteClient.layer` has no error channel and defects
 on a missing parent directory, so a package wiring a database path is
 responsible for ensuring the directory exists before the layer is built

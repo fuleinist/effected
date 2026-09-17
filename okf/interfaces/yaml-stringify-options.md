@@ -2,6 +2,7 @@
 type: Interface
 title: "@effected/yaml stringify options"
 description: The emitter's optional presentation and compatibility behaviours -- indentSequences, explicit-key spill, lineWidth folding, requoteScalars and quoteCompat.
+status: stable
 kind: api
 resource: ../../packages/yaml/src/YamlFormat.ts
 tags: [architecture]

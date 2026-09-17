@@ -2,6 +2,7 @@
 type: Interface
 title: "@effected/workspaces discovery and detection"
 description: "Root finding, the packages: enumerator, the WorkspacePackage located-member model, and package-manager detection."
+status: stable
 kind: api
 resource: ../../packages/workspaces/src/WorkspaceDiscovery.ts
 tags:
@@ -21,8 +22,8 @@ sources:
     resource: ../../packages/workspaces/src/internal/traverse.ts
 generated:
   by: "okfit/claude-code"
-  at: 2026-09-13T05:33:04Z
-  body_sha256: 61e37cb9cc4793f5e097d6e9e96a5e6e0727f0a2820f93ad2c5bf5708303bde1
+  at: 2026-09-17T04:41:11Z
+  body_sha256: 4fd1968533b3071a520ce9f9becfda80a5369f651e17b6a425b4f182f88c6398
 ---
 
 # @effected/workspaces discovery and detection
@@ -61,7 +62,7 @@ index, never `Array.shift()`, since `shift()` re-indexes the array on every
 dequeue and makes draining a near-budget worklist quadratic), the depth
 rule, the visit budget, and the prune list.[^traverse-ts] Both the Effect
 enumerator and the [sync escape
-hatch](../modules/workspaces.md#workspacessync--the-escape-hatch) drive this
+hatch](../modules/workspaces.md#workspacessync-the-escape-hatch) drive this
 one state machine, and neither re-decides any of it. The depth cap bounds
 what is enumerated, not merely what is descended into. The one deliberate
 divergence between the two entry points is what happens at a bound: the

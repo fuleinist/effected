@@ -2,6 +2,7 @@
 type: Module
 title: "@effected/cli"
 description: The boundary layer of an effect/unstable/cli program — a plain-text logger, a failure-reporting combinator, and two schema-issue renderers.
+status: stable
 kind: package
 resource: ../../packages/cli
 tags: [dx]

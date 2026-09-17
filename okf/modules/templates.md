@@ -2,6 +2,7 @@
 type: Module
 title: "@effected/templates"
 description: A managed-section mechanism — delimited BEGIN/END blocks a tool owns inside a file the user otherwise owns.
+status: stable
 kind: package
 resource: ../../packages/templates
 tags: [dx]

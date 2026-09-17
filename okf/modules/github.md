@@ -2,6 +2,7 @@
 type: Module
 title: "@effected/github"
 description: The kit's typed GitHub REST and GraphQL API layer, owning the octokit runtime.
+status: stable
 kind: package
 resource: ../../packages/github
 tags: [bundle, architecture]

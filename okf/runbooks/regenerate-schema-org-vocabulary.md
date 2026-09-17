@@ -2,6 +2,7 @@
 type: Runbook
 title: Regenerate the vendored schema.org vocabulary table
 description: The hand-run procedure for refreshing @effected/schema-org's interned vocabulary literals after a schema.org release.
+status: stable
 resource: ../../packages/schema-org/lib/scripts/generate-data.ts
 tags: [architecture]
 generated:

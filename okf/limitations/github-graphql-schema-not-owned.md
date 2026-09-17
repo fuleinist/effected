@@ -2,6 +2,7 @@
 type: Limitation
 title: "@effected/github does not own every GraphQL document"
 description: A document over a consumer-specific domain (project boards, etc.) is deliberately not modelled in the kit.
+status: stable
 bounds: ../interfaces/github-graphql.md
 tags: [bundle, architecture]
 generated:

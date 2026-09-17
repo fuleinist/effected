@@ -2,6 +2,7 @@
 type: Module
 title: "@effected/schema-org"
 description: The schema.org vocabulary as pure Effect Schema classes, a JsonLdDocument graph assembler with a script-safe serializer, and offline conformance validation over the vendored vocabulary.
+status: stable
 kind: package
 resource: ../../packages/schema-org
 tags: [architecture, bundle]

@@ -2,6 +2,7 @@
 type: Module
 title: "@effected/commands"
 description: The kit's tool-and-output layer over core's subprocess contract — structured running and CLI tool discovery.
+status: stable
 kind: package
 resource: ../../packages/commands
 tags: [bundle, dx]

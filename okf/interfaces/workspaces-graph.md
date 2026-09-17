@@ -2,6 +2,7 @@
 type: Interface
 title: "@effected/workspaces dependency graph"
 description: The pure DependencyGraph value class over the discovered package list — the edge index, cycle detection, topological levels, and Mermaid rendering.
+status: stable
 kind: api
 resource: ../../packages/workspaces/src/DependencyGraph.ts
 tags:

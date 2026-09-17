@@ -2,6 +2,7 @@
 type: Interface
 title: "@effected/workspaces peer-dependency checking"
 description: PeerCheck — a lockfile-only reproduction of pnpm peers check, returning a report rather than an array and failing closed on what it cannot verify.
+status: stable
 kind: api
 resource: ../../packages/workspaces/src/PeerCheck.ts
 tags:
@@ -12,8 +13,8 @@ sources:
     resource: ../../packages/workspaces/src/PeerCheck.ts
 generated:
   by: "okfit/claude-code"
-  at: 2026-09-13T05:33:04Z
-  body_sha256: 631945fdcd2ffb6968eb901f37790b06d87079c255f77811b48a72bef987312e
+  at: 2026-09-17T04:41:11Z
+  body_sha256: d2c139da1dee421c512cb69fae4505c65bc2efe16fa8cfaafdd714b23bf0ae6e
 ---
 
 # @effected/workspaces peer-dependency checking
@@ -113,7 +114,7 @@ therefore be part of the tree's identity, while suppression rules change
 only what pnpm *says* about a tree it would have built identically. So a
 lockfile-only peer check cannot be correct without external input, by
 construction, and the [config-dependency
-seam](workspaces-catalogs.md#configdependencyhooks--the-opt-in-replay-seam)
+seam](workspaces-catalogs.md#configdependencyhooks-the-opt-in-replay-seam)
 exists to supply that input rather than to guess at it.
 
 The rules have two sources: the `pnpm-workspace.yaml` block and

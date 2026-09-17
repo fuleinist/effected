@@ -2,6 +2,7 @@
 type: Interface
 title: "@effected/schema-org validate entrypoint"
 description: The offline conformance validator and vocabulary read API over the vendored schema.org dataset, exposed only from the ./validate subpath.
+status: stable
 kind: api
 resource: ../../packages/schema-org/src/conformance-entry.ts
 tags: [architecture]

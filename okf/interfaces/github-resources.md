@@ -2,6 +2,7 @@
 type: Interface
 title: "@effected/github resource services"
 description: One context service per GitHub noun, turning typed endpoints into domain operations.
+status: stable
 kind: api
 resource: ../../packages/github/src
 tags: [bundle]

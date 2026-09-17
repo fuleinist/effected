@@ -2,6 +2,7 @@
 type: Limitation
 title: "@effected/commands does not supervise or archive processes"
 description: Reap-after-detach, readiness polling, and archive helpers are deliberately absent, and stay a level up.
+status: stable
 bounds: ../modules/commands.md
 tags: [bundle]
 generated:

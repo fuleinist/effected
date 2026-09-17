@@ -16,8 +16,8 @@ sources:
     resource: ../../packages/store/CLAUDE.md
 generated:
   by: "okfit/claude-code"
-  at: 2026-09-13T05:33:04Z
-  body_sha256: 10cf4c8b9abcd03e03194a0a73c07811274ab98450d4bd1d2d83308af16f5c6d
+  at: 2026-09-17T04:41:11Z
+  body_sha256: b463542a624ca095a3ed44b24eb157ec10da10ae42015607bd3f7d876c2e5398
 ---
 
 # store
@@ -97,7 +97,7 @@ sites opens the database **twice** — two connections onto one file, two
 ledger setups, and for `Cache` two independent PubSubs whose subscribers
 each see half the events. Bind the result to a `const` once and reuse
 that binding; every package wiring a layer over a path inherits this
-discipline (see [app](app.md#the-memoization-trap-at-maximum-cost) for
+discipline (see [app](app.md#memoization) for
 where it bites hardest).
 
 Deliberately not done: no `mkdir: true` on `layerSqlite` — directory

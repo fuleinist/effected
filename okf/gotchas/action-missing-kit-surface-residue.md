@@ -9,8 +9,8 @@ tags:
   - dx
 generated:
   by: "okfit/claude-code"
-  at: 2026-09-13T05:33:04Z
-  body_sha256: cafc85fbe7e7ee098fcc7b440ea1726db8edb8ba4053eebbeab6ea58b34aa207
+  at: 2026-09-17T04:41:11Z
+  body_sha256: f488352de4f6e9e771763a643d09af5b222626bab268fbf14cadd588dfdeb3f3
 ---
 
 # "Wait for the kit" leaves raw spawns and duplicated regex behind
@@ -25,7 +25,7 @@ An action's `src/` contains a raw `ChildProcess.Command` invocation of
 ## What they would wrongly conclude
 
 That this is a deliberate, still-necessary escape hatch — the kind a
-genuine capability gap under [B8](../conventions/github-action-canon.md#b8--blessed-shims-live-in-srcshims)
+genuine capability gap under [B8](../conventions/github-action-canon.md#b8-blessed-shims-live-in-srcshims)
 would justify — rather than dead weight left over from before the kit
 covered the case.
 
@@ -50,7 +50,7 @@ one-time fact about two packages: on every kit-version bump, re-audit
 `src/` for raw subprocess spawns of tools the kit wraps and for
 hand-written parsing logic that duplicates a kit package's grammar.
 Route a genuine, currently-real gap through a
-[B8 shim](../conventions/github-action-canon.md#b8--blessed-shims-live-in-srcshims)
+[B8 shim](../conventions/github-action-canon.md#b8-blessed-shims-live-in-srcshims)
 with a tracking issue and a removal condition, and re-audit the shim
 register when that issue closes — a shim with no removal condition is
 indistinguishable from a workaround nobody remembers to remove.

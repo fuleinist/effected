@@ -2,6 +2,7 @@
 type: Interface
 title: "@effected/yaml lint system"
 description: The yamllint-class rule engine, public token stream, autofix, config schema and config-inference surface built on the yaml engine.
+status: stable
 kind: api
 resource: ../../packages/yaml/src/YamlLint.ts
 tags: [architecture]

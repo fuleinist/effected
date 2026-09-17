@@ -2,6 +2,7 @@
 type: DataModel
 title: The committed SPDX license catalog
 description: The vendored SPDX license-list document that seeds @effected/spdx's generated metadata table, and what breaks when it falls out of sync with the identifier devDependency.
+status: stable
 resource: ../../packages/spdx/lib/data/spdx-licenses.json
 tags: [architecture]
 generated:
