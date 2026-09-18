@@ -40,12 +40,13 @@
 		"@effected/walker": "workspace:*",
 		"@effected/workspaces": "workspace:*",
 		"@effected/xdg": "workspace:*",
-		"@effected/yaml": "workspace:*",
-		"effect": "catalog:effect"
+		"@effected/yaml": "workspace:*"
 	},
 	"devDependencies": {
+		"@effect/platform-node": "catalog:effect",
 		"@effect/vitest": "catalog:effect",
 		"@types/node": "catalog:build",
+		"effect": "catalog:effect",
 		"tsx": "^4.23.12",
 		"typescript": "catalog:build"
 	}
