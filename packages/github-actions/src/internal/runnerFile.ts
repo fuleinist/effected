@@ -29,11 +29,25 @@ export const delimiterFor = (value: string): string => {
 
 /**
  * Whether `name` can head a block without breaking the structure it lives
- * in: non-empty, and free of the line breaks that would end it early.
+ * in: non-empty, free of the line breaks that would end it early, and free
+ * of the separators the runner's file-command parser would re-split the
+ * line on.
+ *
+ * @remarks
+ * The runner (`FileCommandManager`) locates the first `=` and the first
+ * `<<` on each line and whichever comes first decides the shape: a
+ * `key=value` property assignment, or a `name<<delimiter` heredoc block.
+ * Because a block line is always `name<<DELIMITER`, an `=` anywhere in the
+ * name precedes the marker and the line parses as a property assignment cut
+ * at that `=`, leaving every line of the block to be read as stray entries;
+ * a `<<` inside the name splits there instead and yields a delimiter the
+ * terminating line can never match. Either way the entries after the
+ * malformed block are corrupted, so both separators are refused.
  *
  * @internal
  */
-export const isUsableName = (name: string): boolean => name !== "" && !/[\r\n]/.test(name);
+export const isUsableName = (name: string): boolean =>
+	name !== "" && !/[\r\n]/.test(name) && !name.includes("=") && !name.includes("<<");
 
 /**
  * One heredoc block, ready to append. The caller has checked the name with

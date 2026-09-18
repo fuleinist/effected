@@ -160,6 +160,28 @@ describe("ActionOutputs", () => {
 				files,
 			);
 		});
+
+		it.effect("refuses a name containing the runner-file separators", () => {
+			const files = runnerFiles();
+			return live(
+				Effect.gen(function* () {
+					// The runner reads each line up to its first `=` or `<<`, whichever
+					// comes first: a name carrying `=` parses as a key=value property
+					// before the block ever opens, and a name carrying `<<` splits at
+					// the wrong delimiter — either way every entry after it is corrupt.
+					const forEquals = yield* Effect.flip((yield* ActionOutputs).set("bad=name", "1"));
+					assert.instanceOf(forEquals, InvalidOutputNameError);
+					const forHeredoc = yield* Effect.flip((yield* ActionOutputs).set("bad<<name", "1"));
+					assert.instanceOf(forHeredoc, InvalidOutputNameError);
+					const forEnv = yield* Effect.flip((yield* ActionOutputs).exportVariable("bad=name", "1"));
+					assert.instanceOf(forEnv, InvalidOutputNameError);
+					const forJson = yield* Effect.flip((yield* ActionOutputs).setJson("bad<<name", 1, Schema.Number));
+					assert.instanceOf(forJson, InvalidOutputNameError);
+					assert.strictEqual(files.written.paths().length, 0, "nothing may be written when the name is refused");
+				}),
+				files,
+			);
+		});
 	});
 
 	describe("workflow commands", () => {
@@ -447,6 +469,12 @@ describe("ActionOutputs", () => {
 				assert.instanceOf(forEnv, InvalidOutputNameError);
 				const forJson = yield* Effect.flip(outputs.setJson("bad\nname", 1, Schema.Number));
 				assert.instanceOf(forJson, InvalidOutputNameError);
+				const forEquals = yield* Effect.flip(outputs.set("bad=name", "1"));
+				assert.instanceOf(forEquals, InvalidOutputNameError);
+				const forSeparator = yield* Effect.flip(outputs.exportVariable("bad<<name", "1"));
+				assert.instanceOf(forSeparator, InvalidOutputNameError);
+				const forJsonSeparator = yield* Effect.flip(outputs.setJson("bad=name", 1, Schema.Number));
+				assert.instanceOf(forJsonSeparator, InvalidOutputNameError);
 				assert.strictEqual(recorder.entries().length, 0);
 			}).pipe(Effect.provide(recorder.layer));
 		});

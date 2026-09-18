@@ -62,6 +62,28 @@ describe("ActionState", () => {
 		});
 	});
 
+	it.effect("refuses a key containing the runner-file separators, and writes nothing", () => {
+		// The runner reads each line up to its first `=` or `<<`, whichever comes
+		// first: a key carrying `=` parses as a key=value property before the
+		// block ever opens, and a key carrying `<<` splits at the wrong delimiter
+		// — either way every entry after it is corrupt, so both fail typed.
+		const { files, run } = live(
+			Effect.gen(function* () {
+				const forEquals = yield* Effect.flip((yield* ActionState).save("to=ken", { value: "abc", expires: 1 }, Token));
+				assert.strictEqual(forEquals.reason, "writeFailed");
+				assert.strictEqual(forEquals.key, "to=ken");
+				const forHeredoc = yield* Effect.flip(
+					(yield* ActionState).save("to<<ken", { value: "abc", expires: 1 }, Token),
+				);
+				assert.strictEqual(forHeredoc.reason, "writeFailed");
+				assert.strictEqual(forHeredoc.key, "to<<ken");
+			}),
+		);
+		return Effect.map(run, () => {
+			assert.isUndefined(files.written.text("/rf/state"));
+		});
+	});
+
 	it.effect(
 		"reads a value back from the STATE_ variable the runner republishes",
 		() =>
