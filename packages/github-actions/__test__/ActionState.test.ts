@@ -66,7 +66,9 @@ describe("ActionState", () => {
 		// The runner reads each line up to its first `=` or `<<`, whichever comes
 		// first: a key carrying `=` parses as a key=value property before the
 		// block ever opens, and a key carrying `<<` splits at the wrong delimiter
-		// — either way every entry after it is corrupt, so both fail typed.
+		// — either way every entry after it is corrupt, so both fail typed. A key
+		// ending in `<` composes a header (`to<<<DELIM`) whose first `<<` matches
+		// one character early, leaving a delimiter the terminator can never match.
 		const { files, run } = live(
 			Effect.gen(function* () {
 				const forEquals = yield* Effect.flip((yield* ActionState).save("to=ken", { value: "abc", expires: 1 }, Token));
@@ -77,6 +79,9 @@ describe("ActionState", () => {
 				);
 				assert.strictEqual(forHeredoc.reason, "writeFailed");
 				assert.strictEqual(forHeredoc.key, "to<<ken");
+				const forTrailing = yield* Effect.flip((yield* ActionState).save("to<", { value: "abc", expires: 1 }, Token));
+				assert.strictEqual(forTrailing.reason, "writeFailed");
+				assert.strictEqual(forTrailing.key, "to<");
 			}),
 		);
 		return Effect.map(run, () => {

@@ -169,6 +169,9 @@ describe("ActionOutputs", () => {
 					// comes first: a name carrying `=` parses as a key=value property
 					// before the block ever opens, and a name carrying `<<` splits at
 					// the wrong delimiter — either way every entry after it is corrupt.
+					// A name ending in `<` composes a header (`a<<<DELIM`) whose first
+					// `<<` matches one character early, so the delimiter the runner
+					// waits for can never be matched by the terminating line.
 					const forEquals = yield* Effect.flip((yield* ActionOutputs).set("bad=name", "1"));
 					assert.instanceOf(forEquals, InvalidOutputNameError);
 					const forHeredoc = yield* Effect.flip((yield* ActionOutputs).set("bad<<name", "1"));
@@ -177,6 +180,10 @@ describe("ActionOutputs", () => {
 					assert.instanceOf(forEnv, InvalidOutputNameError);
 					const forJson = yield* Effect.flip((yield* ActionOutputs).setJson("bad<<name", 1, Schema.Number));
 					assert.instanceOf(forJson, InvalidOutputNameError);
+					const forTrailing = yield* Effect.flip((yield* ActionOutputs).set("bad<", "1"));
+					assert.instanceOf(forTrailing, InvalidOutputNameError);
+					const forJsonTrailing = yield* Effect.flip((yield* ActionOutputs).setJson("<", 1, Schema.Number));
+					assert.instanceOf(forJsonTrailing, InvalidOutputNameError);
 					assert.strictEqual(files.written.paths().length, 0, "nothing may be written when the name is refused");
 				}),
 				files,
@@ -475,6 +482,10 @@ describe("ActionOutputs", () => {
 				assert.instanceOf(forSeparator, InvalidOutputNameError);
 				const forJsonSeparator = yield* Effect.flip(outputs.setJson("bad=name", 1, Schema.Number));
 				assert.instanceOf(forJsonSeparator, InvalidOutputNameError);
+				const forTrailing = yield* Effect.flip(outputs.set("bad<", "1"));
+				assert.instanceOf(forTrailing, InvalidOutputNameError);
+				const forTrailingJson = yield* Effect.flip(outputs.setJson("bad<", 1, Schema.Number));
+				assert.instanceOf(forTrailingJson, InvalidOutputNameError);
 				assert.strictEqual(recorder.entries().length, 0);
 			}).pipe(Effect.provide(recorder.layer));
 		});

@@ -42,12 +42,18 @@ export const delimiterFor = (value: string): string => {
  * at that `=`, leaving every line of the block to be read as stray entries;
  * a `<<` inside the name splits there instead and yields a delimiter the
  * terminating line can never match. Either way the entries after the
- * malformed block are corrupted, so both separators are refused.
+ * malformed block are corrupted, so both separators are refused. A name
+ * ending in a single `<` corrupts the block the same way: the composed
+ * header `name<<<DELIMITER` matches the runner's first `<<` one character
+ * early, so the delimiter it waits for is `<DELIMITER` and the terminating
+ * line never matches — the whole file is lost. An interior `<` is safe
+ * (`a<b` still composes a header that splits exactly at the marker), so
+ * only the trailing position is refused.
  *
  * @internal
  */
 export const isUsableName = (name: string): boolean =>
-	name !== "" && !/[\r\n]/.test(name) && !name.includes("=") && !name.includes("<<");
+	name !== "" && !/[\r\n]/.test(name) && !name.includes("=") && !name.includes("<<") && !name.endsWith("<");
 
 /**
  * One heredoc block, ready to append. The caller has checked the name with
