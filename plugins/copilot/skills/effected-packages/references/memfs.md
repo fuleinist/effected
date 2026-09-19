@@ -16,6 +16,9 @@ Single entrypoint; no subpaths.
 - **`MemoryFileSystem.layer`** — `Layer<FileSystem.FileSystem>` backed by a fresh, empty volume.
 - **`MemoryFileSystem.layerWith(seed)`** — same, pre-populated from a `MemoryFileSystemSeed`: absolute POSIX paths mapped to contents, `string` (UTF-8-encoded) or `Uint8Array` (written verbatim). Parent directories are created recursively before each file — a seed never lists directories, and therefore cannot express an *empty* one; call `makeDirectory` on the built filesystem for that. A self-contradictory seed (a file seeded at a path another entry needs as a directory) is a test-wiring bug and **dies** with the typed error as its cause.
 - **`MemoryFileSystem.make` / `makeWith(seed)`** — the effect-level constructors: `Effect<FileSystem.FileSystem>` / `Effect<FileSystem.FileSystem, PlatformError>`. `makeWith` keeps seeding failures in the typed error channel where `layerWith` converts them to a defect.
+- **`MemoryFileSystem.layerInspectable` / `layerInspectableWith(seed)`** — `Layer<FileSystem.FileSystem | MemoryFileSystemVolume>`: one volume published twice, as the filesystem and as a synchronous read-back view (`snapshot()`, `text`, `bytes`, `has`, `paths`, `readDirectory`, `isDirectory`, `mtime`) resolved with `yield* MemoryFileSystem.Volume`.
+- **`MemoryFileSystem.makeInspectable` / `makeInspectableWith(seed)`** — the value-level pair `{ fileSystem, volume }` over one volume; the seeded form fails typed.
+- **`MemoryFileSystem.layerFaulty(faults)` / `layerFaultyWith(seed, faults)` / `makeFaulty(fileSystem, faults)`** — delegate-by-default fault injection: per intercepted method a handler replaces the call (typically `Effect.fail(PlatformError.systemError({...}))`), `undefined` declines and delegates to the wrapped filesystem, and `failTimes(n, error)` builds a transient fault failing `n` calls then delegating forever.
 
 ## The founding contract: honest absence
 
@@ -37,6 +40,30 @@ const SeededFs = MemoryFileSystem.layerWith({
 });
 
 program.pipe(Effect.provide(SeededFs));
+```
+
+## Asserting on writes: the re-seed hazard
+
+The layer forms build — and re-seed — a fresh volume **per provide**, and a second `Effect.provide` of the same layer *value* counts as another provide:
+
+```ts
+const layers = MemoryFileSystem.layerInspectableWith({ [PATH]: predecessor });
+const error = yield* Effect.flip(Effect.provide(run([t]), layers));
+const volume = yield* Effect.provide(MemoryFileSystem.Volume, layers); // a FRESH volume
+assert.isFalse(volume.has(OTHER_PATH)); // passes vacuously — nothing was ever written here
+```
+
+Every "nothing was written" assertion passes regardless of what the code did — a silent false green in exactly the assertion class the inspectable pair exists to serve. Two safe shapes:
+
+- **Assertions inside the program** — resolve `MemoryFileSystem.Volume` under the same `Effect.provide` the code under test runs under, so both halves observe one volume.
+- **Assertions after the run** — build the pair once with `makeInspectableWith(seed)`, wrap it in `Layer.succeed(FileSystem.FileSystem, pair.fileSystem)` (optionally decorated by `makeFaulty` first), and assert on `pair.volume` — the identity is pinned.
+
+For fault injection plus read-back in one graph, compose the layers so the decorated `FileSystem` wins while `Volume` survives:
+
+```ts
+const layers = MemoryFileSystem.layerFaulty(faults).pipe(
+  Layer.provideMerge(MemoryFileSystem.layerInspectableWith({})),
+);
 ```
 
 ## Testing machinery
