@@ -1,6 +1,6 @@
 # @effected/memfs
 
-In-memory implementation of core Effect's `FileSystem` service: one class, `MemoryFileSystem`, providing an isolated virtual POSIX volume — files, directories, symlinks, hard links, open descriptors, temporary resources, globbing, watching — behind the standard `FileSystem.FileSystem` key. Pure tier: `effect` is the only peer, zero runtime dependencies, and the layers' `R` is `never` — the package *provides* `FileSystem`, requiring nothing. Born in the 2026-08-14 wave (effected#249): a hand-rolled `FileSystem.layerNoop` stub answering unarranged reads with `""` caused a real silent-changeset-drop bug, and this package exists to kill that footgun.
+In-memory implementation of core Effect's `FileSystem` service: one class, `MemoryFileSystem`, providing an isolated virtual POSIX volume — files, directories, symlinks, hard links, open descriptors, temporary resources, globbing, watching — behind the standard `FileSystem.FileSystem` key. Pure tier: `effect` is the only peer, zero runtime dependencies, and the self-contained layers' `R` is `never` — the package *provides* `FileSystem`, requiring nothing (the one exception is the `layerFaulty` wrapper, which decorates a base `FileSystem` you supply). Born in the 2026-08-14 wave (effected#249): a hand-rolled `FileSystem.layerNoop` stub answering unarranged reads with `""` caused a real silent-changeset-drop bug, and this package exists to kill that footgun.
 
 ## Import
 
@@ -16,9 +16,10 @@ Single entrypoint; no subpaths.
 - **`MemoryFileSystem.layer`** — `Layer<FileSystem.FileSystem>` backed by a fresh, empty volume.
 - **`MemoryFileSystem.layerWith(seed)`** — same, pre-populated from a `MemoryFileSystemSeed`: absolute POSIX paths mapped to contents, `string` (UTF-8-encoded) or `Uint8Array` (written verbatim). Parent directories are created recursively before each file — a seed never lists directories, and therefore cannot express an *empty* one; call `makeDirectory` on the built filesystem for that. A self-contradictory seed (a file seeded at a path another entry needs as a directory) is a test-wiring bug and **dies** with the typed error as its cause.
 - **`MemoryFileSystem.make` / `makeWith(seed)`** — the effect-level constructors: `Effect<FileSystem.FileSystem>` / `Effect<FileSystem.FileSystem, PlatformError>`. `makeWith` keeps seeding failures in the typed error channel where `layerWith` converts them to a defect.
-- **`MemoryFileSystem.layerInspectable` / `layerInspectableWith(seed)`** — `Layer<FileSystem.FileSystem | MemoryFileSystemVolume>`: one volume published twice, as the filesystem and as a synchronous read-back view (`snapshot()`, `text`, `bytes`, `has`, `paths`, `readDirectory`, `isDirectory`, `mtime`) resolved with `yield* MemoryFileSystem.Volume`.
+- **`MemoryFileSystem.layerInspectable` / `layerInspectableWith(seed)`** — `Layer<FileSystem.FileSystem | MemoryFileSystemVolume>`: one volume published twice, as the filesystem and as a synchronous read-back view (`snapshot()`, `text`, `bytes`, `has`, `paths`, `readDirectory`, `isDirectory`, `mtime`, `readLink`) resolved with `yield* MemoryFileSystem.Volume`.
 - **`MemoryFileSystem.makeInspectable` / `makeInspectableWith(seed)`** — the value-level pair `{ fileSystem, volume }` over one volume; the seeded form fails typed.
-- **`MemoryFileSystem.layerFaulty(faults)` / `layerFaultyWith(seed, faults)` / `makeFaulty(fileSystem, faults)`** — delegate-by-default fault injection: per intercepted method a handler replaces the call (typically `Effect.fail(PlatformError.systemError({...}))`), `undefined` declines and delegates to the wrapped filesystem, and `failTimes(n, error)` builds a transient fault failing `n` calls then delegating forever.
+- **`MemoryFileSystem.syncFileSystem(volume)`** — the `node:fs` synchronous subset (`existsSync`, `readFileSync(p, "utf8")`, `readdirSync`, `statSync(p).isDirectory()`) over a `MemoryFileSystemVolume`, following symbolic links where the literal volume view does not — the structural port consumer packages' sync entry points ask for.
+- **`MemoryFileSystem.layerFaultyWith(seed, faults)` / `layerFaulty(faults)` / `makeFaulty(fileSystem, faults)`** — delegate-by-default fault injection: per intercepted method a handler replaces the call (typically `Effect.fail(PlatformError.systemError({...}))`), `undefined` declines and delegates to the wrapped filesystem, and `failTimes(n, error)` builds a transient fault failing `n` calls then delegating forever. The naming points the opposite way from the `R` types: `layerFaultyWith` is self-contained (`R = never`), while `layerFaulty` wraps a base and so leaves `FileSystem.FileSystem` in `R` — for the no-seed standalone case reach for `layerFaultyWith({}, faults)`, not `layerFaulty(faults)`.
 
 ## The founding contract: honest absence
 
@@ -47,10 +48,14 @@ program.pipe(Effect.provide(SeededFs));
 The layer forms build — and re-seed — a fresh volume **per provide**, and a second `Effect.provide` of the same layer *value* counts as another provide:
 
 ```ts
-const layers = MemoryFileSystem.layerInspectableWith({ [PATH]: predecessor });
-const error = yield* Effect.flip(Effect.provide(run([t]), layers));
+const layers = MemoryFileSystem.layerInspectableWith({ "/repo/out.txt": "before" });
+const write = Effect.gen(function* () {
+  const fs = yield* FileSystem.FileSystem;
+  yield* fs.writeFileString("/repo/written.txt", "content");
+});
+yield* Effect.provide(write, layers); // the write lands in ONE volume
 const volume = yield* Effect.provide(MemoryFileSystem.Volume, layers); // a FRESH volume
-assert.isFalse(volume.has(OTHER_PATH)); // passes vacuously — nothing was ever written here
+assert.isFalse(volume.has("/repo/written.txt")); // passes vacuously — nothing was ever written here
 ```
 
 Every "nothing was written" assertion passes regardless of what the code did — a silent false green in exactly the assertion class the inspectable pair exists to serve. Two safe shapes:
