@@ -39,11 +39,18 @@ export interface DescendOptions {
 	/**
 	 * Whether to descend into symlinked directories. Defaults to `false`: a
 	 * symlinked directory is never entered (cycle safety). Under `true` links
-	 * are followed with the cycle guard kept underneath — every link descent
-	 * records the target's real path (`FileSystem.realPath`) and a link
-	 * resolving to an already-visited real path is skipped, so link cycles
-	 * terminate. This is Node's `fs.promises.readdir(path, { recursive: true })`
-	 * behaviour and `@actions/glob`'s default `followSymbolicLinks: true`.
+	 * are followed with the cycle guard kept underneath, in `@actions/glob`'s
+	 * `traversalChain` semantics: each descended directory records its real
+	 * path (`FileSystem.realPath`) on its own branch's ancestor chain, and a
+	 * directory whose real path is already an ancestor of the current branch
+	 * closes a cycle and is skipped — so link loops terminate while two
+	 * sibling links resolving to the same target both enumerate. A link whose
+	 * real path cannot be resolved is skipped: the guard cannot reason about
+	 * it. Following links matches `@actions/glob`'s default
+	 * `followSymbolicLinks: true` and Node's `fs.promises.readdir(path,
+	 * { recursive: true })` — but the cycle guard is `@actions/glob`'s alone:
+	 * Node's recursive `readdir` keeps no traversal chain and recurses without
+	 * bound on a link loop.
 	 */
 	readonly followSymlinks?: boolean;
 }
@@ -156,11 +163,23 @@ const escapesCwd = (relative: string): boolean => {
 	return false;
 };
 
-/** A directory queued for reading: its cwd-relative POSIX path, its absolute path, and its depth below the base. */
+/** Shared empty ancestor chain: frames under `followSymlinks: false` never consult theirs. */
+const NO_ANCESTORS: ReadonlyArray<string> = Object.freeze([]);
+
+/**
+ * A directory queued for reading: its cwd-relative POSIX path, its absolute
+ * path, its depth below the base, and — only under `followSymlinks` — the
+ * real paths of this branch's ancestors, inherited from the parent frame.
+ * The chain is per-branch, never walk-global: it is `@actions/glob`'s
+ * `traversalChain` carried on the worklist, so a link is a cycle only when it
+ * resolves to an ancestor of the branch it sits on, and two sibling links to
+ * one target both enumerate.
+ */
 interface DescendFrame {
 	readonly relative: string;
 	readonly absolute: string;
 	readonly depth: number;
+	readonly ancestors: ReadonlyArray<string>;
 }
 
 /**
@@ -190,14 +209,6 @@ const descendImpl: (
 	const prune = new Set(options.prune ?? DEFAULT_PRUNE);
 	const onUnreadable = options.onUnreadable ?? "fail";
 	const followSymlinks = options.followSymlinks ?? false;
-	// Real paths already descended into, seeded with the walk base and added to
-	// on every link descent; populated only under followSymlinks. A link whose
-	// target real path is already here closes a cycle (to the base, an ancestor,
-	// or an earlier link's target) and is skipped, so the walk terminates even
-	// when links form loops. Real (non-link) directories are never recorded:
-	// reaching one later through a link is duplicate enumeration — exactly what
-	// Node's recursive readdir does — not a cycle.
-	const visitedReal = new Set<string>();
 	// Populated only under "record"; the wrapper decides the return shape.
 	const unreadable: Array<UnreadableDirectory> = [];
 
@@ -216,12 +227,29 @@ const descendImpl: (
 		);
 
 	/**
-	 * The real path of `absolute`, falling back to `absolute` itself when
-	 * resolution fails — a directory that stat-resolved moments ago can still
-	 * vanish before the resolve, and a benign race must not fail the walk.
+	 * The real path of a non-link directory, falling back to `absolute` itself
+	 * when resolution fails — a directory that stat-resolved moments ago can
+	 * still vanish before the resolve, and a benign race must not fail the
+	 * walk. Only for entries that are NOT links: a link whose real path fails
+	 * to resolve goes through {@link realOfLink} and is skipped instead.
 	 */
 	const realOf = (absolute: string): Effect.Effect<string> =>
 		fs.realPath(absolute).pipe(Effect.orElseSucceed(() => absolute));
+
+	/**
+	 * The real path of a symlink, or `undefined` when resolution fails. A link
+	 * the resolver cannot resolve is one the cycle guard cannot reason about —
+	 * recording a stand-in (the link's own path) would make every hop around a
+	 * loop look unseen, so the walk skips the link instead. A target that
+	 * vanished between the listing and the resolve would have read as empty
+	 * anyway, and `EACCES` on a path component means a subtree this walk has
+	 * no business enumerating through a link.
+	 */
+	const realOfLink = (absolute: string): Effect.Effect<string | undefined> =>
+		fs.realPath(absolute).pipe(
+			Effect.map((real): string | undefined => real),
+			Effect.orElseSucceed(() => undefined),
+		);
 
 	/** Wrap the walk's success value per `onUnreadable`: a plain array unless "record" asked for the pair. */
 	const finish = (matches: ReadonlyArray<string>): ReadonlyArray<string> | DescendResult =>
@@ -245,7 +273,10 @@ const descendImpl: (
 	if (escapesCwd(base)) return finish([]);
 	const absoluteBase = base === "" ? options.cwd : path.join(options.cwd, base);
 	if ((yield* typeOf(absoluteBase)) !== "Directory") return finish([]);
-	if (followSymlinks) visitedReal.add(yield* realOf(absoluteBase));
+	// Under followSymlinks the base's real path seeds the root frame's ancestor
+	// chain — the `@actions/glob` traversalChain position for the search path —
+	// so a link resolving back to the base is the cycle it is, on every branch.
+	const baseAncestors: ReadonlyArray<string> = followSymlinks ? [yield* realOf(absoluteBase)] : NO_ANCESTORS;
 
 	// Only a pattern that can match below one level earns a descent; a negated
 	// pattern matches everything its inner pattern does NOT, so it can match
@@ -253,7 +284,7 @@ const descendImpl: (
 	const deep = pattern.crossesSegments || pattern.negated;
 
 	const results: Array<string> = [];
-	const frames: Array<DescendFrame> = [{ relative: base, absolute: absoluteBase, depth: 0 }];
+	const frames: Array<DescendFrame> = [{ relative: base, absolute: absoluteBase, depth: 0, ancestors: baseAncestors }];
 	// A head index, never Array.shift(): shift() re-indexes the whole array on
 	// every dequeue, turning a large walk quadratic.
 	for (let head = 0; head < frames.length; head += 1) {
@@ -295,16 +326,25 @@ const descendImpl: (
 			// Prune suppresses DIRECTORIES only, per the option's contract — a
 			// FILE named `.git` (a submodule or worktree gitlink) stays matchable.
 			if (prune.has(entry)) continue;
-			// A symlinked directory is skipped unless followSymlinks asked for it;
-			// when it does, the cycle guard is real-path deduplication rather than
-			// the blanket refusal: a link resolving to an already-visited real path
-			// closes a cycle, and every other link descent records its target's real
-			// path before queuing the frame.
-			if (yield* isSymbolicLink(absolute)) {
-				if (!followSymlinks) continue;
-				const real = yield* realOf(absolute);
-				if (visitedReal.has(real)) continue;
-				visitedReal.add(real);
+			// A symlinked directory is skipped unless followSymlinks asked for
+			// it; when it does, the cycle guard is `@actions/glob`'s
+			// traversalChain carried per branch: every descended directory
+			// records its real path on the frame's ancestor chain, and a
+			// directory whose real path is already an ancestor of the current
+			// branch closes a cycle and is skipped. Sibling links resolving to
+			// one target sit on separate branches, so both enumerate — the
+			// parity the runner's globber has, which a walk-global visited set
+			// would break. A link whose real path cannot be resolved is
+			// skipped: the guard cannot reason about it, and recording a
+			// stand-in (the link's own path) would make every hop around a
+			// loop look unseen and never terminate.
+			let ancestors = frame.ancestors;
+			if (followSymlinks) {
+				const real = (yield* isSymbolicLink(absolute)) ? yield* realOfLink(absolute) : yield* realOf(absolute);
+				if (real === undefined || frame.ancestors.includes(real)) continue;
+				ancestors = [...frame.ancestors, real];
+			} else if (yield* isSymbolicLink(absolute)) {
+				continue;
 			}
 			// Depth exhaustion is a typed failure, not a truncation.
 			if (frame.depth + 1 > maxDepth) {
@@ -315,7 +355,7 @@ const descendImpl: (
 					limit: maxDepth,
 				});
 			}
-			frames.push({ relative, absolute, depth: frame.depth + 1 });
+			frames.push({ relative, absolute, depth: frame.depth + 1, ancestors });
 		}
 	}
 
@@ -359,13 +399,14 @@ export function descend(
  * (`FileSystem.stat` follows links, as node's does); a symlinked directory is
  * never descended into by default (cycle safety — detected by a `readLink`
  * probe), unless `followSymlinks: true` asks for it, which follows links under
- * a real-path (`FileSystem.realPath`) cycle guard: a link whose target real
- * path was already descended into — the base, an ancestor, or an earlier
- * link's target — is skipped, so link loops terminate. A dangling symlink is
- * not a match. A directory that vanishes between its
- * parent's listing and its own read is a benign race and reads as empty. A
- * pattern that cannot match below one level (no globstar, no mid-pattern
- * magic segment) reads a single level and never descends.
+ * `@actions/glob`'s `traversalChain` cycle guard: a directory is a cycle only
+ * when its real path is already an ancestor of the current branch, so sibling
+ * links resolving to the same target both enumerate. A link whose real path
+ * cannot be resolved is skipped. A dangling symlink is not a match. A
+ * directory that vanishes between its parent's listing and its own read is a
+ * benign race and reads as empty. A pattern that cannot match below one level
+ * (no globstar, no mid-pattern magic segment) reads a single level and never
+ * descends.
  *
  * The descent is a worklist, not a recursion — it cannot overflow the stack —
  * dequeued by head index, never `Array.shift()`. Like `ascend`, `maxDepth`

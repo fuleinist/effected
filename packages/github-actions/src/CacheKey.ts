@@ -452,11 +452,16 @@ export class CacheKey extends Schema.Class<CacheKey>("CacheKey")(
 		yield* fs.stat(workspace).pipe(Effect.mapError((cause) => new CacheKeyReadError({ path: workspace, cause })));
 
 		// The walk is `@effected/walker`'s: each include is expanded from its own
+		// The walk is `@effected/walker`'s: each include is expanded from its own
 		// literal prefix (a literal include is one stat, never a walk), files
 		// only, `cwd`-relative posix paths — so a Windows runner matches too.
 		// Nothing is pruned implicitly, matching the runner's own `hashFiles()`;
 		// an exclusion is the caller's `!pattern`, re-applied over the union
-		// below because each include is expanded alone.
+		// below because each include is expanded alone. Under `followSymlinks`
+		// the walk follows symlinked directories with `@actions/glob`'s
+		// traversal-chain cycle guard, so files reachable only through a
+		// symlinked directory contribute to the key — matching the runner's
+		// `hashFiles()` default of `followSymbolicLinks: true`.
 		const candidates = new Set<string>();
 		for (const literal of set.literals) {
 			const target = path.join(workspace, literal);

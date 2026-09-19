@@ -3,8 +3,8 @@ import { tmpdir } from "node:os";
 import { basename, join } from "node:path";
 import { NodeServices } from "@effect/platform-node";
 import { assert, describe, it } from "@effect/vitest";
-import type { Path } from "effect";
-import { Effect, FileSystem, Option, Schema } from "effect";
+import { MemoryFileSystem } from "@effected/memfs";
+import { Effect, FileSystem, Layer, Option, Path, Schema } from "effect";
 import { systemError } from "effect/PlatformError";
 import { CacheKey, CacheKeyBadPatternError, CacheKeyReadError } from "../src/index.js";
 
@@ -503,6 +503,58 @@ describe("CacheKey", () => {
 					assert.strictEqual(error.path, absent);
 				}),
 			),
+		);
+	});
+
+	describe("followSymlinks semantics (memfs, no platform package)", () => {
+		// Memfs-backed fixtures so symlink tests are deterministic and
+		// platform-independent — the runner's hashFiles parity claim is pinned
+		// by cases, not by "probed manually".
+		const buildingMemfsWorkspace = async () => {
+			const root = mkdtempSync(join(tmpdir(), "effected-cachekey-symlink-"));
+			mkdirSync(join(root, "src"), { recursive: true });
+			mkdirSync(join(root, "shared"), { recursive: true });
+			writeFileSync(join(root, "src", "a.ts"), "alpha\n");
+			writeFileSync(join(root, "shared", "inner.ts"), "inner\n");
+			// Symlinks are seeded into the memfs volume itself (not the real fs),
+			// so the test is hermetic across platforms.
+			const seed: Record<string, import("@effected/memfs").MemoryFileSystemSeedEntry> = {
+				[`${root}/src/a.ts`]: "alpha\n",
+				[`${root}/shared/inner.ts`]: "inner\n",
+				[`${root}/src/one`]: MemoryFileSystem.symlink(`${root}/shared`),
+				[`${root}/src/two`]: MemoryFileSystem.symlink(`${root}/shared`),
+			};
+			// descend requires both FileSystem and Path; provide both layers.
+			const platform = Layer.mergeAll(MemoryFileSystem.layerWith(seed), Path.layer);
+			return { root, platform };
+		};
+
+		it.effect("files reachable only through a symlinked directory contribute to the key", () =>
+			Effect.gen(function* () {
+				const { root, platform } = yield* buildingMemfsWorkspace();
+				const matched = yield* CacheKey.matchingFiles({ workspace: root, patterns: ["src/**/*.ts"] }).pipe(
+					Effect.provide(platform),
+				);
+				// Both sibling links to the same target must appear, per
+				// @actions/glob's per-branch traversalChain semantics.
+				const relative = matched.map((p) => p.slice(root.length + 1));
+				assert.include(relative, "src/one/inner.ts");
+				assert.include(relative, "src/two/inner.ts");
+			}),
+		);
+
+		it.effect("out-of-workspace link targets do not escape the key", () =>
+			Effect.gen(function* () {
+				const { root, platform } = yield* buildingMemfsWorkspace();
+				// A memfs-external absolute path cannot be written into the
+				// same memfs volume, so a link to /elsewhere can only be a
+				// dangling link under memfs — matchingFiles should see no
+				// match rather than surfacing an external path.
+				const matched = yield* CacheKey.matchingFiles({ workspace: root, patterns: ["src/**/*.ts"] }).pipe(
+					Effect.provide(platform),
+				);
+				assert.isFalse(matched.some((p) => p.includes("elsewhere")));
+			}),
 		);
 	});
 });
