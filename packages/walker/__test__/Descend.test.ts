@@ -191,8 +191,8 @@ layer(platform(symlinkTree, symlinkOptions))("descend, symlinks", (it) => {
 
 // followSymlinks: the opt-in that gives descend Node's recursive-readdir and
 // @actions/glob's default followSymbolicLinks behaviour — links to directories
-// are entered, and the cycle guard becomes real-path deduplication instead of
-// the blanket refusal.
+// are entered, and the cycle guard becomes @actions/glob's per-branch
+// traversalChain instead of the blanket refusal.
 const followTree = {
 	"/proj/real/file.ts": "",
 	"/proj/real/dir/inner.ts": "",
@@ -237,6 +237,33 @@ layer(platform(followTree, followOptions))("descend, followSymlinks", (it) => {
 	);
 });
 
+// Two sibling links resolving to the SAME target: not a cycle — the guard is
+// per-branch (@actions/glob's traversalChain), so both enumerate. A
+// walk-global visited set would silently drop whichever came second.
+const siblingLinkTree = {
+	"/proj/shared/inner.ts": "",
+	"/proj/src/a.ts": "",
+};
+const siblingLinkOptions = {
+	symlinks: {
+		"/proj/src/one": "/proj/shared",
+		"/proj/src/two": "/proj/shared",
+	},
+};
+
+layer(platform(siblingLinkTree, siblingLinkOptions))("descend, followSymlinks sibling links", (it) => {
+	it.effect("two links to one target both enumerate — the guard is per-branch, not walk-global", () =>
+		Effect.gen(function* () {
+			const pattern = yield* GlobPattern.compile("src/**/*.ts");
+			assert.deepStrictEqual(yield* descend(pattern, { cwd: "/proj", followSymlinks: true }), [
+				"src/a.ts",
+				"src/one/inner.ts",
+				"src/two/inner.ts",
+			]);
+		}),
+	);
+});
+
 // A link back to the walk base: the guard seeds the base's real path, so the
 // link is skipped instead of revisiting the whole tree through it.
 const baseCycleTree = {
@@ -260,9 +287,10 @@ layer(platform(baseCycleTree, baseCycleOptions))("descend, followSymlinks base c
 	);
 });
 
-// A mutual link cycle between two real directories: each real path is entered
-// at most once through a link, so the walk terminates and every file is
-// matched through both of its link-reachable paths.
+// A mutual link cycle between two real directories: a link is skipped only
+// when its real path is an ANCESTOR of the branch it sits on, so the walk
+// terminates and every file is matched through both of its link-reachable
+// paths.
 const mutualCycleTree = {
 	"/proj/a/x.ts": "",
 	"/proj/b/y.ts": "",

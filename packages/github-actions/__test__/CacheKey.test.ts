@@ -507,53 +507,38 @@ describe("CacheKey", () => {
 	});
 
 	describe("followSymlinks semantics (memfs, no platform package)", () => {
-		// Memfs-backed fixtures so symlink tests are deterministic and
-		// platform-independent — the runner's hashFiles parity claim is pinned
-		// by cases, not by "probed manually".
-		const buildingMemfsWorkspace = async () => {
-			const root = mkdtempSync(join(tmpdir(), "effected-cachekey-symlink-"));
-			mkdirSync(join(root, "src"), { recursive: true });
-			mkdirSync(join(root, "shared"), { recursive: true });
-			writeFileSync(join(root, "src", "a.ts"), "alpha\n");
-			writeFileSync(join(root, "shared", "inner.ts"), "inner\n");
-			// Symlinks are seeded into the memfs volume itself (not the real fs),
-			// so the test is hermetic across platforms.
-			const seed: Record<string, import("@effected/memfs").MemoryFileSystemSeedEntry> = {
-				[`${root}/src/a.ts`]: "alpha\n",
-				[`${root}/shared/inner.ts`]: "inner\n",
-				[`${root}/src/one`]: MemoryFileSystem.symlink(`${root}/shared`),
-				[`${root}/src/two`]: MemoryFileSystem.symlink(`${root}/shared`),
-			};
-			// descend requires both FileSystem and Path; provide both layers.
-			const platform = Layer.mergeAll(MemoryFileSystem.layerWith(seed), Path.layer);
-			return { root, platform };
+		// A pure virtual POSIX volume — no real-filesystem paths anywhere, so
+		// the fixture is byte-identical across platforms. (A Windows tmpdir
+		// path mixed into memfs seeds produced spellings the volume's symlink
+		// resolver never matched, so the links silently read as dangling.)
+		const seed: Record<string, import("@effected/memfs").MemoryFileSystemSeedEntry> = {
+			"/repo/src/a.ts": "alpha\n",
+			"/repo/shared/inner.ts": "inner\n",
+			"/repo/src/one": MemoryFileSystem.symlink("/repo/shared"),
+			"/repo/src/two": MemoryFileSystem.symlink("/repo/shared"),
+			// A link resolving OUTSIDE the workspace, target seeded in the same
+			// volume: @actions/glob follows links out of the tree, so hashFiles()
+			// parity says matchingFiles must too.
+			"/repo/src/out": MemoryFileSystem.symlink("/outside"),
+			"/outside/secret.ts": "secret\n",
 		};
+		// descend requires both FileSystem and Path; provide both layers.
+		const symlinkPlatform = Layer.mergeAll(MemoryFileSystem.layerWith(seed), Path.layer);
 
 		it.effect("files reachable only through a symlinked directory contribute to the key", () =>
 			Effect.gen(function* () {
-				const { root, platform } = yield* buildingMemfsWorkspace();
-				const matched = yield* CacheKey.matchingFiles({ workspace: root, patterns: ["src/**/*.ts"] }).pipe(
-					Effect.provide(platform),
+				const matched = yield* CacheKey.matchingFiles({ workspace: "/repo", patterns: ["src/**/*.ts"] }).pipe(
+					Effect.provide(symlinkPlatform),
 				);
-				// Both sibling links to the same target must appear, per
-				// @actions/glob's per-branch traversalChain semantics.
-				const relative = matched.map((p) => p.slice(root.length + 1));
-				assert.include(relative, "src/one/inner.ts");
-				assert.include(relative, "src/two/inner.ts");
-			}),
-		);
-
-		it.effect("out-of-workspace link targets do not escape the key", () =>
-			Effect.gen(function* () {
-				const { root, platform } = yield* buildingMemfsWorkspace();
-				// A memfs-external absolute path cannot be written into the
-				// same memfs volume, so a link to /elsewhere can only be a
-				// dangling link under memfs — matchingFiles should see no
-				// match rather than surfacing an external path.
-				const matched = yield* CacheKey.matchingFiles({ workspace: root, patterns: ["src/**/*.ts"] }).pipe(
-					Effect.provide(platform),
-				);
-				assert.isFalse(matched.some((p) => p.includes("elsewhere")));
+				// Both sibling links to one target appear — @actions/glob's
+				// per-branch traversalChain enumerates both — and so does the
+				// out-of-workspace link target, matching the runner's hashFiles().
+				assert.deepStrictEqual(matched, [
+					"/repo/src/a.ts",
+					"/repo/src/one/inner.ts",
+					"/repo/src/out/secret.ts",
+					"/repo/src/two/inner.ts",
+				]);
 			}),
 		);
 	});

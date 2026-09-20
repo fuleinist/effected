@@ -390,8 +390,11 @@ export function descend(
  * match paths outside that prefix, so it walks from `cwd` itself. A missing
  * base directory is likewise an empty result, because zero matches is a
  * normal glob answer — as is any pattern that lexically climbs above `cwd`
- * via `..` segments (walked paths never contain `..`, and the walk never
- * reads outside its documented root). Only an unreadable directory mid-walk
+ * via `..` segments (walked paths never contain `..`). "Never reads outside
+ * its documented root" holds lexically always, and physically only while
+ * `followSymlinks` is off: under it, a link whose target lives outside `cwd`
+ * is descended, exactly as `@actions/glob` follows links out of the tree.
+ * Only an unreadable directory mid-walk
  * (under the default `onUnreadable: "fail"`) or a walk past `maxDepth` fails,
  * typed as {@link DescendError}.
  *

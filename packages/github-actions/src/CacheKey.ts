@@ -417,9 +417,12 @@ export class CacheKey extends Schema.Class<CacheKey>("CacheKey")(
 	 * failure mode a cache key has.
 	 *
 	 * Candidates are matched by their path **relative to the workspace**, and a
-	 * literal that climbs above it (`../lockfile`) is dropped, which is what
-	 * makes "never hash a file outside the workspace" structural rather than a
-	 * rule someone has to remember. Directories are excluded: a directory
+	 * literal that climbs above it (`../lockfile`) is dropped lexically — no
+	 * literal reaches outside the workspace through path text. The walk is
+	 * another matter: under `followSymlinks` a symlinked directory whose target
+	 * lives outside the workspace IS descended, and its files DO contribute to
+	 * the key — parity with `@actions/glob`, which follows links out of the
+	 * tree too. Directories are excluded: a directory
 	 * called `notes.txt` matches `**\/*.txt` and is not a file, and hashing it
 	 * would fail rather than being ignored. An absent literal is a miss; any
 	 * other failure to read one is a typed `CacheKeyReadError`, because a key
@@ -452,7 +455,6 @@ export class CacheKey extends Schema.Class<CacheKey>("CacheKey")(
 		yield* fs.stat(workspace).pipe(Effect.mapError((cause) => new CacheKeyReadError({ path: workspace, cause })));
 
 		// The walk is `@effected/walker`'s: each include is expanded from its own
-		// The walk is `@effected/walker`'s: each include is expanded from its own
 		// literal prefix (a literal include is one stat, never a walk), files
 		// only, `cwd`-relative posix paths — so a Windows runner matches too.
 		// Nothing is pruned implicitly, matching the runner's own `hashFiles()`;
@@ -466,7 +468,9 @@ export class CacheKey extends Schema.Class<CacheKey>("CacheKey")(
 		for (const literal of set.literals) {
 			const target = path.join(workspace, literal);
 			// A literal that climbs above the workspace is not this workspace's
-			// file, whatever is there; the walk below cannot reach outside either.
+			// file, whatever is there. (The walk below is not so bounded: a
+			// symlinked directory targeting outside the workspace is descended,
+			// matching `@actions/glob`'s out-of-tree link following.)
 			const relative = path.relative(workspace, target);
 			if (relative === "" || relative.startsWith("..") || path.isAbsolute(relative)) {
 				continue;
