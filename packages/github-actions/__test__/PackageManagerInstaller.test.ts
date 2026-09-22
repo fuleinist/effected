@@ -239,13 +239,18 @@ const scriptedSpawner = (
 		string,
 	});
 
-/** A stub-backed layer for the short-circuit tests: no download path exists unless stubbed. */
+/**
+ * A stub-backed layer for the short-circuit tests: no download path exists
+ * unless stubbed. Loggers are cleared for the same reason `live` clears them —
+ * an unsigned pin's "no integrity hash" warning would leak through the reporter.
+ */
 const stubbed = (options: {
 	readonly installer?: Parameters<typeof ToolInstaller.layerTest>[0] | undefined;
 	readonly spawner?: Layer.Layer<ChildProcessSpawner.ChildProcessSpawner> | undefined;
 	readonly env?: Record<string, string> | undefined;
 }) =>
 	PackageManagerInstaller.layer.pipe(
+		Layer.provideMerge(Logger.layer([])),
 		Layer.provide(
 			Layer.mergeAll(
 				ActionEnvironment.layerTest(options.env ?? {}),
