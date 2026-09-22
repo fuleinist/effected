@@ -189,6 +189,205 @@ layer(platform(symlinkTree, symlinkOptions))("descend, symlinks", (it) => {
 	);
 });
 
+// followSymlinks: the opt-in that gives descend Node's recursive-readdir and
+// @actions/glob's default followSymbolicLinks behaviour — links to directories
+// are entered, and the cycle guard becomes @actions/glob's per-branch
+// traversalChain instead of the blanket refusal.
+const followTree = {
+	"/proj/real/file.ts": "",
+	"/proj/real/dir/inner.ts": "",
+	"/proj/src/a.ts": "",
+};
+const followOptions = {
+	symlinks: {
+		"/proj/src/link.ts": "/proj/real/file.ts",
+		"/proj/src/linkdir": "/proj/real/dir",
+		"/proj/src/ghost.ts": "/proj/real/gone.ts",
+	},
+};
+
+layer(platform(followTree, followOptions))("descend, followSymlinks", (it) => {
+	it.effect("descends into a symlinked directory under followSymlinks: true", () =>
+		Effect.gen(function* () {
+			const pattern = yield* GlobPattern.compile("src/**/*.ts");
+			assert.deepStrictEqual(yield* descend(pattern, { cwd: "/proj", followSymlinks: true }), [
+				"src/a.ts",
+				"src/link.ts",
+				"src/linkdir/inner.ts",
+			]);
+		}),
+	);
+
+	it.effect("explicit followSymlinks: false keeps the never-descend default", () =>
+		Effect.gen(function* () {
+			const pattern = yield* GlobPattern.compile("src/**/*.ts");
+			assert.deepStrictEqual(yield* descend(pattern, { cwd: "/proj", followSymlinks: false }), [
+				"src/a.ts",
+				"src/link.ts",
+			]);
+		}),
+	);
+
+	it.effect("a dangling link is still no match under followSymlinks: true", () =>
+		Effect.gen(function* () {
+			const pattern = yield* GlobPattern.compile("src/*.ts");
+			const found = yield* descend(pattern, { cwd: "/proj", followSymlinks: true });
+			assert.notInclude(found, "src/ghost.ts");
+		}),
+	);
+});
+
+// Two sibling links resolving to the SAME target: not a cycle — the guard is
+// per-branch (@actions/glob's traversalChain), so both enumerate. A
+// walk-global visited set would silently drop whichever came second.
+const siblingLinkTree = {
+	"/proj/shared/inner.ts": "",
+	"/proj/src/a.ts": "",
+};
+const siblingLinkOptions = {
+	symlinks: {
+		"/proj/src/one": "/proj/shared",
+		"/proj/src/two": "/proj/shared",
+	},
+};
+
+layer(platform(siblingLinkTree, siblingLinkOptions))("descend, followSymlinks sibling links", (it) => {
+	it.effect("two links to one target both enumerate — the guard is per-branch, not walk-global", () =>
+		Effect.gen(function* () {
+			const pattern = yield* GlobPattern.compile("src/**/*.ts");
+			assert.deepStrictEqual(yield* descend(pattern, { cwd: "/proj", followSymlinks: true }), [
+				"src/a.ts",
+				"src/one/inner.ts",
+				"src/two/inner.ts",
+			]);
+		}),
+	);
+});
+
+// A link back to the walk base: the guard seeds the base's real path, so the
+// link is skipped instead of revisiting the whole tree through it.
+const baseCycleTree = {
+	"/proj/real/file.ts": "",
+	"/proj/src/a.ts": "",
+};
+const baseCycleOptions = {
+	symlinks: {
+		"/proj/src/up": "/proj",
+	},
+};
+
+layer(platform(baseCycleTree, baseCycleOptions))("descend, followSymlinks base cycle", (it) => {
+	it.effect("a link to the walk base is skipped and the walk terminates", () =>
+		Effect.gen(function* () {
+			const pattern = yield* GlobPattern.compile("**/*.ts");
+			const found = yield* descend(pattern, { cwd: "/proj", followSymlinks: true });
+			assert.deepStrictEqual(found, ["real/file.ts", "src/a.ts"]);
+			assert.isFalse(found.some((entry) => entry.startsWith("src/up/")));
+		}),
+	);
+});
+
+// A mutual link cycle between two real directories: a link is skipped only
+// when its real path is an ANCESTOR of the branch it sits on, so the walk
+// terminates and every file is matched through both of its link-reachable
+// paths.
+const mutualCycleTree = {
+	"/proj/a/x.ts": "",
+	"/proj/b/y.ts": "",
+};
+const mutualCycleOptions = {
+	symlinks: {
+		"/proj/a/to-b": "/proj/b",
+		"/proj/b/to-a": "/proj/a",
+	},
+};
+
+layer(platform(mutualCycleTree, mutualCycleOptions))("descend, followSymlinks mutual cycle", (it) => {
+	it.effect("terminates on a two-directory link cycle, matching files through both link paths", () =>
+		Effect.gen(function* () {
+			const pattern = yield* GlobPattern.compile("**/*.ts");
+			assert.deepStrictEqual(yield* descend(pattern, { cwd: "/proj", followSymlinks: true }), [
+				"a/to-b/y.ts",
+				"a/x.ts",
+				"b/to-a/x.ts",
+				"b/y.ts",
+			]);
+		}),
+	);
+});
+
+// A symlinked directory whose real path cannot be resolved. The walk never
+// enters it (the guard cannot reason about a link it cannot identify), and
+// the failure is VISIBLE under onUnreadable exactly as a failed readDirectory
+// is — a silent skip would hand back a smaller answer with nothing reporting
+// it, the failure "fail" exists to prevent. NotFound stays the benign race.
+const unresolvableTree = {
+	"/proj/real/dir/inner.ts": "",
+	"/proj/src/a.ts": "",
+};
+const unresolvableOptions = {
+	symlinks: { "/proj/src/linkdir": "/proj/real/dir" },
+	unresolvable: { "/proj/src/linkdir": "PermissionDenied" as const },
+};
+
+layer(platform(unresolvableTree, unresolvableOptions))("descend, followSymlinks unresolvable link", (it) => {
+	it.effect("fails typed by default, naming the link as the unreadable directory", () =>
+		Effect.gen(function* () {
+			const pattern = yield* GlobPattern.compile("src/**/*.ts");
+			const error = yield* Effect.flip(descend(pattern, { cwd: "/proj", followSymlinks: true }));
+			assert.strictEqual(error._tag, "DescendError");
+			assert.strictEqual(error.reason, "unreadableDirectory");
+			assert.strictEqual(error.path, "src/linkdir");
+		}),
+	);
+
+	it.effect("records the link with the realPath failure under onUnreadable: record", () =>
+		Effect.gen(function* () {
+			const pattern = yield* GlobPattern.compile("src/**/*.ts");
+			const result = yield* descend(pattern, { cwd: "/proj", followSymlinks: true, onUnreadable: "record" });
+			assert.deepStrictEqual(result.matches, ["src/a.ts"]);
+			assert.strictEqual(result.unreadable.length, 1);
+			const [entry] = result.unreadable;
+			assert.strictEqual(entry?.path, "src/linkdir");
+			assert.strictEqual(entry?.cause.reason._tag, "PermissionDenied");
+			assert.strictEqual(entry?.cause.reason.method, "realPath");
+		}),
+	);
+
+	it.effect("skips the link and forgets it under onUnreadable: skip", () =>
+		Effect.gen(function* () {
+			const pattern = yield* GlobPattern.compile("src/**/*.ts");
+			const found = yield* descend(pattern, { cwd: "/proj", followSymlinks: true, onUnreadable: "skip" });
+			assert.deepStrictEqual(found, ["src/a.ts"]);
+		}),
+	);
+
+	it.effect("the resolve never happens under followSymlinks: false, so the fault is unreachable", () =>
+		Effect.gen(function* () {
+			const pattern = yield* GlobPattern.compile("src/**/*.ts");
+			assert.deepStrictEqual(yield* descend(pattern, { cwd: "/proj" }), ["src/a.ts"]);
+		}),
+	);
+});
+
+// The same link, vanishing between the listing and the resolve.
+const vanishedLinkOptions = {
+	symlinks: { "/proj/src/linkdir": "/proj/real/dir" },
+	unresolvable: { "/proj/src/linkdir": "NotFound" as const },
+};
+
+layer(platform(unresolvableTree, vanishedLinkOptions))("descend, followSymlinks vanished link", (it) => {
+	it.effect("a NotFound on the resolve is a benign race: silent under fail, never recorded", () =>
+		Effect.gen(function* () {
+			const pattern = yield* GlobPattern.compile("src/**/*.ts");
+			assert.deepStrictEqual(yield* descend(pattern, { cwd: "/proj", followSymlinks: true }), ["src/a.ts"]);
+			const result = yield* descend(pattern, { cwd: "/proj", followSymlinks: true, onUnreadable: "record" });
+			assert.deepStrictEqual(result.matches, ["src/a.ts"]);
+			assert.deepStrictEqual(result.unreadable, []);
+		}),
+	);
+});
+
 // An unreadable directory inside the walked subtree.
 const unreadableTree = {
 	"/proj/src/a.ts": "",

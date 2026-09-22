@@ -1,6 +1,6 @@
 {
 	"name": "@effected/jsonc",
-	"version": "0.11.1",
+	"version": "0.12.0",
 	"private": true,
 	"description": "Zero-dependency JSONC parsing, editing and formatting as Effect schemas.",
 	"keywords": ["jsonc", "json", "comments", "parser", "effect", "schema", "ast", "effected"],
@@ -33,7 +33,7 @@
 	},
 	"devDependencies": {
 		"@effect/vitest": "catalog:effect",
-		"@savvy-web/bundler": "^2.4.3",
+		"@savvy-web/bundler": "^2.4.7",
 		"@types/node": "catalog:build",
 		"effect": "catalog:effect",
 		"typescript": "catalog:build"

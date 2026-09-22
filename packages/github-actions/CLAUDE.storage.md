@@ -36,6 +36,10 @@ discriminated union on `source` (`AmbientPackageManager` | `CachedPackageManager
 every tool-cache answer carries an `addPath`-able `binDir` — shims written into
 the **staged** entry for the npm-registry managers (never a post-swap mutation;
 regenerated best-effort on a foreign cache hit), bun's own directory for bun.
+The shims name the final cached path by asking `installer.cachePath(name,
+version)` — `ToolInstallerShape.cachePath` (2026-09-21, #763) is the same
+closure `cacheDir` lands at, so there is no second root/arch derivation here
+and the post-swap "diverged" guard it used to need is gone.
 
 **A shim's body follows its target, not its manager** (2026-09-17): a
 `.js`/`.mjs`/`.cjs` target runs under `node`, anything else is exec'd directly.
@@ -69,10 +73,15 @@ workspace-relative entries). The engine is `@effected/glob`, never
 `descend` (files only, per-include roots, `prune: []` so nothing is skipped
 implicitly — the runner's `hashFiles()` does not prune either); `ActionCache`'s
 own resolution stays hand-rolled because cache paths are usually directories,
-which `descend` never matches. Knowing divergence from the runner's
-`hashFiles()`: `descend` never enters a symlinked directory, `@actions/glob`
-does — probed 2026-09-17 (Node's recursive `readdir`, which the old walk
-used, followed them).
+which `descend` never matches. Symlinked directories are followed
+(`followSymlinks: true`, walker issue #761) for `hashFiles()` parity with
+`@actions/glob`'s default `followSymbolicLinks: true`; `descend`'s
+per-branch `traversalChain` cycle guard keeps link loops finite (Node's
+recursive `readdir`, which the old walk used, followed them too — probed
+2026-09-17). Note the walk is not workspace-bounded under links: a
+symlinked directory targeting outside the workspace IS descended and its
+files DO enter the key, parity with `@actions/glob` following links out of
+the tree.
 
 `CacheKey.withRestoreDepths` (2026-08-02) lets a key carry an explicit
 restore-key ladder — each depth is the number of leading segments a rung keeps,

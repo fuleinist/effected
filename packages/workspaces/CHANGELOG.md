@@ -1,5 +1,101 @@
 # @effected/workspaces
 
+## 0.24.0
+
+### Features
+
+- `WorkspaceSnapshots.at(ref)` now replays that ref's `pnpm-workspace.yaml` `configDependencies` hooks at the version the ref itself declares, instead of always reading the live worktree's config. A hook-only catalog — one contributed entirely by a config-dependency's `pnpmfile.cjs`, such as `effect:peers` — now diffs correctly across a config-dependency bump between two refs; previously it could not change at all because `at(ref)` never re-ran hook replay for older refs.
+
+- Resolution walks a fail-closed ladder — `node_modules/.pnpm-config/<name>` when it holds the ref's declared version, else the pnpm store's `links/` tree — and a version installed nowhere now fails typed with a `CatalogAssemblyError` (`source: "hooks"`) naming the package, the declared version, and the remediation (`pnpm add --config <name>@<version>` in a throwaway workspace) instead of silently answering from whatever happens to be on disk. `WorkspaceSnapshots.layer` and `WorkspaceSnapshots.make`'s `R` gains `ConfigDependencyHooks` as a result.
+
+- New public surface supporting this:
+
+```ts
+import { ConfigDependencyHooks, Workspaces } from "@effected/workspaces";
+
+// Hermetic seam: replay caller-supplied pnpmfiles with no resolution at all.
+const hooks = ConfigDependencyHooks.layerFrom({
+	"@scope/plugin@1.0.0": "/fixtures/plugin-1/pnpmfile.mjs",
+	"@scope/plugin@2.0.0": "/fixtures/plugin-2/pnpmfile.mjs",
+});
+
+// Hand the SAME hooks reference to both WorkspaceCatalogs and WorkspaceSnapshots.
+const KitLayer = Workspaces.layerWithGitAndHooks(hooks);
+```
+
+- `ConfigDependencyHooks.layerFrom(entries)` — the hermetic test seam above.
+- `WorkspaceCatalogs.layerWithHooks(hooks, options)` and `Workspaces.layerWithGitAndHooks(hooks, options)` — build the catalogs/snapshots graph over a caller-chosen `ConfigDependencyHooks` layer instead of one of the fixed `layerNoop` / `layerLive` / `layerSubprocess` policies.
+- `WorkspaceCatalogs.hookReplays()` — which version each declared config dependency was actually replayed from, off the same memoized assemble pass as `set()`.
+- An optional `hookReplays` field (`name → declared version`) on `WorkspaceStateSnapshot`, set on every fresh read (`{}` under the no-op layer) and absent only when decoding a snapshot serialized before the field existed.
+- `HookReplay` and `HookReplaySource` (`"installed" | "store" | "supplied"`) — the types recording which resolution rung answered, exported alongside the new `HookInjection.replays` field. `replays` is a **required** field of `HookInjection`, so a consumer implementing the `ConfigDependencyHooks` contract itself (a hand-rolled `Layer.succeed`) must now return it — `{}` when nothing was replayed.
+
+### Bug Fixes
+
+- `PeerCheck` now applies both `ignoreMissing` and `allowAny` from `peerDependencyRules` — pnpm `@pnpm/matcher` peer-name patterns, not `parent>peer` keys — replicating pnpm's post-hoc suppression for a required peer that resolved to nothing (`ignoreMissing`) and a peer that resolved outside its wanted range (`allowAny`). Previously only `allowedVersions` was applied, so a workspace relying on either axis saw `unverified: ["peerRulesNotApplied"]` findings that `pnpm peers check` considers clean. [#797][#797]
+
+### Thanks
+
+Thanks to [@spencerbeggs](https://github.com/spencerbeggs) for their contributions!
+
+[#797]: https://github.com/spencerbeggs/effected/pull/797
+
+## 0.23.0
+
+### Breaking Changes
+
+#### The whole kit tracks Effect `4.0.0-rc.116`
+
+- Every package's `effect` peer moves from `4.0.0-rc.115` to `4.0.0-rc.116`. The kit uses exact prerelease pins rather than a caret, so a consumer must move with it. No `@effected` API changes shape on this advance; the kit itself needed one edit (`Stream.scan` now takes a lazy initial state, met once in `@effected/jsonl`'s `Journal.projection`). A consumer that upgrades meets the rc.116 renames on its own code:
+
+- `SchemaTransformation.make` is `makeTransformation`, and `Transformation#compose` is the dual standalone `SchemaTransformation.composeTransformation`.
+
+- `SchemaGetter.Getter` is a tagged union exposing only `pipe`: `new SchemaGetter.Getter`, `onSome` and `onNone` are gone in favour of `SchemaGetter.map` / `compose` / `run` and `transformEffect` / `transformOptionalEffect`.
+
+- `Stream.scan` and `Stream.scanEffect` take `() => initial`; `Stream.partition` returns `[passes, fails]`; `Stream.mapBoth` takes `onElement` / `onError`.
+
+- `Effect.orElseSucceed` passes the error to its fallback and `Effect.isEffect` narrows to `Effect<unknown, unknown, unknown>`.
+
+- `ByteSize.Input` string literals are checked at compile time; parse external strings with `ByteSize.fromString`.
+
+- Arbitrary shrinking changed, so property-test replay tokens recorded at rc.115 no longer reproduce.
+
+### Documentation
+
+#### The Claude Code and Copilot plugins teach the rc.116 surface
+
+- The `effect-v4-schema` transformation reference composes transformations with `SchemaTransformation.composeTransformation` and describes the `Getter` surface rc.116 left behind; the source-lookup and testing skills report rc.116 as the kit's pin and the two-copy lockfile shape the bridge now produces (`rc.115` for the toolchain, `rc.116` for the kit); the session-start briefing reports rc.116.
+
+### Dependencies
+
+| Dependency | Type | Action | From | To |
+| --- | --- | --- | --- | --- |
+| @effected/commands | dependency | updated | 0.7.2 | 0.8.0 |
+| @effected/git | dependency | updated | 0.15.2 | 0.16.0 |
+| @effected/glob | dependency | updated | 0.6.1 | 0.7.0 |
+| @effected/jsonc | dependency | updated | 0.11.1 | 0.12.0 |
+| @effected/lockfiles | dependency | updated | 0.9.1 | 0.10.0 |
+| @effected/npm | dependency | updated | 0.14.2 | 0.15.0 |
+| @effected/package-json | dependency | updated | 0.15.1 | 0.16.0 |
+| @effected/semver | dependency | updated | 0.7.1 | 0.8.0 |
+| @effected/walker | dependency | updated | 0.9.1 | 0.10.0 |
+| @effected/yaml | dependency | updated | 0.15.2 | 0.16.0 |
+| @effect/platform-node | devDependency | updated | 4.0.0-rc.115 | 4.0.0-rc.116 |
+| @effect/vitest | devDependency | updated | 4.0.0-rc.115 | 4.0.0-rc.116 |
+| effect | devDependency | updated | 4.0.0-rc.115 | 4.0.0-rc.116 |
+| effect | peerDependency | updated | 4.0.0-rc.115 | 4.0.0-rc.116 |
+
+### Maintenance
+
+#### The rc.115 `packageExtensions` bridge is retired
+
+- The toolchain (`@savvy-web/tsdown-plugins`, `rolldown-pnpm-config`, `@vitest-agent/*`) has republished declaring `effect` and its `@effected/*` inputs as regular dependencies, so the workspace no longer needs the `packageExtensions` block that pinned them by hand. Its ten keys named versions no longer installed and the lockfile diff on removal was the checksum line alone. Nothing published changes; this is the workspace's own install shape. [#792][#792]
+
+### Thanks
+
+Thanks to [@spencerbeggs](https://github.com/spencerbeggs) for their contributions!
+
+[#792]: https://github.com/spencerbeggs/effected/pull/792
+
 ## 0.22.1
 
 ### Bug Fixes

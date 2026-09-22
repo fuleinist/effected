@@ -1,9 +1,11 @@
-import type { Duration } from "effect";
+import type { Duration, PlatformError } from "effect";
 import { Context, Effect, FileSystem, Layer, Option, Path, Schedule, Schema, Stream } from "effect";
 import { HttpClient } from "effect/unstable/http";
-import { ChildProcess, ChildProcessSpawner } from "effect/unstable/process";
+import type { ChildProcess } from "effect/unstable/process";
+import { ChildProcessSpawner } from "effect/unstable/process";
 import { ActionEnvironment } from "./ActionEnvironment.js";
-import { typeAt } from "./internal/fsProbe.js";
+import { tarExtractCommand, unzipCommand } from "./internal/archiveCommands.js";
+import { isErrno, typeAt } from "./internal/fsProbe.js";
 import { isWindowsRunner, toolCacheRoot } from "./internal/runner.js";
 import { spawnOnce } from "./internal/spawn.js";
 import { unstubbed } from "./internal/unstubbed.js";
@@ -167,13 +169,38 @@ export interface ToolInstallerShape {
 	 * say) to a foreign entry is a real shipped bug.
 	 */
 	readonly find: (tool: string, version: string) => Effect.Effect<Option.Option<string>>;
+	/**
+	 * Where this installer's `cacheDir` / `cacheFile` will land `tool@version`:
+	 * the final `<root>/<tool>/<version>/<arch>`, over the root this layer
+	 * resolved at construction.
+	 *
+	 * @remarks
+	 * Pure — no IO, nothing is created — and exposed so a caller that must
+	 * write the final path INTO the staged tree before the swap (a shim that
+	 * names its own cached entry) reads the one answer `cacheDir` is about to
+	 * use, instead of deriving root and arch a second time and guarding the
+	 * two against drifting apart. {@link ToolInstaller.cachePath} is the same
+	 * layout as a static function of an explicit root.
+	 */
+	readonly cachePath: (tool: string, version: string) => string;
 	/** Download a url to a temporary file, retrying what is worth retrying. */
 	readonly download: (url: string, options?: ToolDownloadOptions) => Effect.Effect<string, ToolInstallerError>;
 	/** Extract a tarball. Returns the directory its contents landed in. */
 	readonly extractTar: (archive: string, options?: ExtractOptions) => Effect.Effect<string, ToolInstallerError>;
 	/** Extract a zip. Returns the directory its contents landed in. */
 	readonly extractZip: (archive: string, options?: ExtractOptions) => Effect.Effect<string, ToolInstallerError>;
-	/** Install a directory into the tool cache. Returns its cached path. */
+	/**
+	 * Install a directory into the tool cache. Returns its cached path.
+	 *
+	 * @remarks
+	 * **`source` is consumed.** On success it no longer exists at its original
+	 * path: the tree is renamed into the cache when the two share a filesystem
+	 * (`RUNNER_TEMP` and `RUNNER_TOOL_CACHE` do on hosted runners, making the
+	 * install O(1) rather than a recursive copy of the whole toolchain), and
+	 * otherwise copied and then removed. Write everything the cached entry must
+	 * contain — shims, overlaid binaries — into `source` *before* this call,
+	 * and read nothing from it afterwards.
+	 */
 	readonly cacheDir: (source: string, tool: string, version: string) => Effect.Effect<string, ToolInstallerError>;
 	/** Install a single file into the tool cache under `name`. Returns the cached directory. */
 	readonly cacheFile: (
@@ -286,6 +313,34 @@ const make = Effect.gen(function* () {
 			return destination;
 		}).pipe(Effect.mapError((cause) => new ToolInstallerError({ reason: "cacheFailed", subject: tool, cause })));
 
+	/**
+	 * Move a source tree into the staging directory, consuming the source.
+	 *
+	 * @remarks
+	 * A rename first: on the same filesystem it is O(1) however large the
+	 * toolchain is, where a recursive copy of a hundreds-of-MB tree is the
+	 * dominant cost of an install. The staging directory is removed before the
+	 * rename because Windows refuses to rename onto an existing directory; its
+	 * mktemp name stays reserved in practice. The copy fallback is taken ONLY
+	 * for `EXDEV` — a cross-filesystem move, the one case a rename cannot do —
+	 * and every other rename failure is reported as-is: a copy after a
+	 * permission error would turn a real failure into a slow success. The
+	 * fallback removes the source afterwards so the contract is the same on
+	 * both paths; that removal is best-effort, since the entry is already
+	 * complete and a leftover temp directory is not worth failing the install.
+	 */
+	const moveIntoStaging = (source: string, staging: string): Effect.Effect<void, PlatformError.PlatformError> =>
+		fs.remove(staging, { recursive: true, force: true }).pipe(
+			Effect.flatMap(() => fs.rename(source, staging)),
+			Effect.catchIf(
+				(error) => isErrno(error.cause, "EXDEV"),
+				() =>
+					fs
+						.copy(source, staging, { overwrite: true })
+						.pipe(Effect.andThen(Effect.ignore(fs.remove(source, { recursive: true, force: true })))),
+			),
+		);
+
 	/** A staging directory beside the cache, so the swap is a rename and not a copy. */
 	const staged = <A>(
 		tool: string,
@@ -370,12 +425,13 @@ const make = Effect.gen(function* () {
 	return {
 		find,
 
+		cachePath,
+
 		download,
 
 		extractTar: Effect.fn("ToolInstaller.extractTar")(function* (archive: string, options?: ExtractOptions) {
 			const destination = yield* destinationFor(options);
-			const flags = options?.flags === undefined || options.flags.length === 0 ? ["xzf"] : [...options.flags];
-			yield* extractWith(ChildProcess.make("tar", [...flags, archive, "-C", destination]), archive);
+			yield* extractWith(tarExtractCommand({ archive, destination, flags: options?.flags }), archive);
 			return destination;
 		}),
 
@@ -383,30 +439,16 @@ const make = Effect.gen(function* () {
 			const destination = yield* destinationFor(options);
 			// The platform comes from `RUNNER_OS` rather than `process.platform`,
 			// which is both the runner's own answer and the only version of this
-			// branch that a test on any host can reach.
-			// The pwsh branch is deliberately belt-and-braces: the THREE-argument
-			// `ExtractToDirectory(src, dest, $true)` overload overwrites existing
-			// files (the two-argument one refuses, which is what turned a repeated
-			// extraction into a hard failure), and the try/catch writes the actual
-			// .NET exception text plainly to stderr and exits 1 — pwsh's own error
-			// rendering does not reliably reach a captured stream, and an empty
-			// complaint costs a source dive to even hypothesize about.
-			const command = windows
-				? ChildProcess.make("pwsh", [
-						"-NoProfile",
-						"-NonInteractive",
-						"-Command",
-						`$ErrorActionPreference = 'Stop'; try { Add-Type -AssemblyName System.IO.Compression.FileSystem; [System.IO.Compression.ZipFile]::ExtractToDirectory('${archive.replaceAll("'", "''")}', '${destination.replaceAll("'", "''")}', $true) } catch { [Console]::Error.WriteLine($_.Exception.ToString()); exit 1 }`,
-					])
-				: ChildProcess.make("unzip", ["-oq", archive, "-d", destination]);
-			yield* extractWith(command, archive);
+			// branch that a test on any host can reach. The command text — and why
+			// the Windows half is belt-and-braces — lives in `internal/archiveCommands.ts`.
+			yield* extractWith(unzipCommand({ windows, source: archive, destination }), archive);
 			return destination;
 		}),
 
 		cacheDir: Effect.fn("ToolInstaller.cacheDir")(function* (source: string, tool: string, version: string) {
 			yield* Effect.annotateCurrentSpan({ tool, version });
 			return yield* staged(tool, (staging) =>
-				fs.copy(source, staging, { overwrite: true }).pipe(
+				moveIntoStaging(source, staging).pipe(
 					Effect.mapError((cause) => new ToolInstallerError({ reason: "cacheFailed", subject: tool, cause })),
 					Effect.flatMap(() => swapIntoCache(staging, tool, version)),
 				),
@@ -445,6 +487,16 @@ const make = Effect.gen(function* () {
 });
 
 const dies = unstubbed("ToolInstaller.makeTest");
+
+/**
+ * The root {@link ToolInstaller.makeTest}'s `cachePath` answers under: the
+ * same resolution as `make`'s (`internal/runner.ts`), read from the ambient
+ * environment because a double has no `ActionEnvironment` to ask. The literal
+ * `/tmp/runner-tool-cache` is what `make`'s `path.join("/tmp", "runner-tool-cache")`
+ * spells on POSIX, which is the only place a test double runs. Test-double
+ * only; allowlisted as such in `__test__/ambientReads.test.ts`.
+ */
+const testRoot = (): string => process.env.RUNNER_TOOL_CACHE ?? "/tmp/runner-tool-cache";
 
 /**
  * Download, extract and cache a toolchain in the runner's tool cache.
@@ -509,9 +561,23 @@ export class ToolInstaller extends Context.Service<ToolInstaller, ToolInstallerS
 		readonly arch: string;
 	}): string => `${options.root}/${options.tool}/${options.version}/${options.arch}`;
 
-	/** A test double. Unstubbed members die rather than reporting a tool that is not there. */
+	/**
+	 * A test double. Unstubbed members die rather than reporting a tool that is
+	 * not there.
+	 *
+	 * @remarks
+	 * `cachePath` is the one member with a default rather than a death: it is
+	 * pure and total, and a caller composing it into shim contents would
+	 * otherwise have to stub it in every test. The default is the static layout
+	 * over `RUNNER_TOOL_CACHE`, or the same off-runner root `make` resolves
+	 * (`internal/runner.ts`). **That is a read of the ambient environment**,
+	 * sanctioned here only because a double has no `ActionEnvironment` to ask —
+	 * test-double-only, and listed as such in the package's ambient-read
+	 * allowlist (`__test__/ambientReads.test.ts`).
+	 */
 	static readonly makeTest = (overrides: Partial<ToolInstallerShape> = {}): ToolInstallerShape => ({
 		find: () => dies("find"),
+		cachePath: (tool, version) => ToolInstaller.cachePath({ root: testRoot(), tool, version, arch: process.arch }),
 		download: () => dies("download"),
 		extractTar: () => dies("extractTar"),
 		extractZip: () => dies("extractZip"),

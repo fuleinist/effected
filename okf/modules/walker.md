@@ -15,8 +15,8 @@ sources:
     resource: ../../packages/walker/CLAUDE.md
 generated:
   by: "okfit/claude-code"
-  at: 2026-09-13T05:33:04Z
-  body_sha256: a25312c24708f7a64cd5d3cba8b95ea1766ca03baf4ec0402b897d4264d9fff3
+  at: 2026-09-22T00:31:17Z
+  body_sha256: fbe3acecce0870225dc64cf670243e267beaf8eb918bd6e689258ed6c6124126
 ---
 
 # walker
@@ -117,13 +117,25 @@ pattern's metadata:
   enumeration prefix is computed from the inner pattern, but matching
   inverts, so its matches can land arbitrarily deep and outside the
   prefix.
-- Patterns never escape `cwd`: a pattern that lexically climbs above the
+- Patterns never escape `cwd` lexically: a pattern that climbs above the
   root via `..` segments is zero matches, refused before any filesystem
-  access.
+  access. Physically the walk stays under `cwd` only while `followSymlinks`
+  is off — under it a link targeting outside `cwd` is descended, as
+  `@actions/glob` follows links out of the tree.
 
 Zero matches is a normal glob answer, not an error. Only files match — a
 symlink counts when it stat-resolves to a file, a dangling symlink does
-not, and a symlinked directory is never descended for cycle safety.
+not, and a symlinked directory is never descended by default (cycle
+safety). `followSymlinks: true` enters links under `@actions/glob`'s
+per-branch `traversalChain` guard: each worklist frame carries its
+branch's ancestor real paths, a directory whose real path is already an
+ancestor of its own branch is a cycle and is skipped, and two sibling
+links to one target both enumerate — the guard is never walk-global. Only
+the base and each link pay a `realPath` (a plain directory's is its
+parent's plus its name); a link whose `realPath` fails is never entered,
+and that failure follows `onUnreadable` like a failed `readDirectory`, with
+`NotFound` the silent benign race. `CacheKey.matchingFiles` in
+`github-actions` opts in for runner `hashFiles()` parity.
 Output is sorted by cwd-relative POSIX path, since an unsorted
 enumeration is a reproducibility hazard for every downstream consumer
 that hashes or diffs it.
