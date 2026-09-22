@@ -17,8 +17,8 @@ sources:
     resource: ../../CLAUDE.md
 generated:
   by: "okfit/claude-code"
-  at: 2026-09-13T05:33:04Z
-  body_sha256: 213657676e9db3ea20f5dc4215455dc6811acc2a17d922e583e07a512b49f039
+  at: 2026-09-22T01:21:07Z
+  body_sha256: 019163cf912635f73d8a7f8409d96a460df42c7a8916ffba49f7fd6020004cdb
 ---
 
 # Testing standards
@@ -32,6 +32,12 @@ generated:
   for nested isolation. The anti-pattern is repeating
   `Effect.provide(Layer)` inside each test body — provisioning belongs at
   the boundary, not per test.
+- An integration suite over a shared, expensive real-world fixture — a
+  temp-dir git repository driven by a real spawner, for instance — may
+  use plain `beforeAll`/`afterAll` with `Effect.runPromise` to build and
+  tear the fixture down once per file; `@effected/git`'s integration
+  suites are the sanctioned example. The per-test `Effect.ensuring`
+  pattern remains the default for cheap per-test fixtures.
 - `TestClock.adjust` for time control with forked fibers.
 - Property-based tests use `it.effect.prop` with FastCheck arbitraries;
   Schema inputs go through `Schema.toArbitrary`, since top-level `it.prop`

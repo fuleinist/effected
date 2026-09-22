@@ -1,73 +1,33 @@
 # @effected/workspaces
 
-Monorepo workspace tooling as Effect services: workspace root discovery, package enumeration, the dependency graph, package-manager detection, pnpm catalog resolution, lockfile IO and git-based change detection.
+Monorepo workspace tooling as Effect services: workspace root discovery, package enumeration, the dependency graph, package-manager detection, pnpm catalog resolution, lockfile IO, peer and duplicate checks, and git-based snapshots and change detection. **Integrated tier** — the `@pnpm/catalogs.*` quartet is why.
 
-**Design doc:** `@./okf/modules/workspaces.md` — Load when: changing the error model, a composite layer, or any service contract. Its seven children carry the per-area depth:
+Durable knowledge about this package lives in the OKF bundle, not here. Start at `okf/modules/workspaces.md`, then load the concept a task needs:
 
-- `@./okf/interfaces/workspaces-discovery.md` — Load when: touching enumeration, traversal, `WorkspacePackage` or `PackageManagerDetector`.
-- `@./okf/interfaces/workspaces-graph.md` — Load when: touching `DependencyGraph`, cycle detection, `levels` or the Mermaid rendering.
-- `@./okf/interfaces/workspaces-catalogs.md` — Load when: touching catalog assembly, `ConfigDependencyHooks` or `peerDependencyRules` seeding.
-- `@./okf/interfaces/workspaces-peer-check.md` — Load when: touching `PeerCheck`, the `unverified` reasons or the suppression axes.
-- `@./okf/interfaces/workspaces-duplicate-check.md` — Load when: touching `DuplicateCheck`, the two-version rule, or the shared `internal/roots.ts` join.
-- `@./okf/interfaces/workspaces-snapshots.md` — Load when: touching at-ref reads, `WorkspaceStateSnapshot` or `ChangeDetector`.
-- `@./okf/interfaces/workspaces-release.md` — Load when: working on `PublishabilityDetector`, `VersioningStrategy` or `ReleaseTag`.
+- Module (tier and dependency posture, the two inverted contracts `CatalogResolver`/`WorkspaceResolver` and `LocalExec`, module layout, composites, the `WorkspacesSync` escape hatch, lazy init, hardening, testing, build) → `okf/modules/workspaces.md` — Load when: changing the error model, a composite layer, a dependency edge, or any service contract.
+- Discovery (root finding and its `stopAt`/`maxDepth` bounds, the `packages:` enumerator, the shared traversal, `WorkspacePackage`, per-root `listPackagesIn`/`infoIn`, `PackageManagerDetector`, the doubles) → `okf/interfaces/workspaces-discovery.md` — Load when: touching enumeration, traversal, the root ascent, `WorkspacePackage` or the detector.
+- Dependency graph (`DependencyGraph`, cycle payload, `levels`, Mermaid, where core's `Graph` is and is not used) → `okf/interfaces/workspaces-graph.md` — Load when: touching `DependencyGraph`, cycle detection, `levels` or the rendering.
+- Catalogs and hook replay (PM-aware assembly, the release-age gate, `ConfigDependencyHooks`, the declared-version ladder, `layerSubprocess`, `peerDependencyRules` seeding) → `okf/interfaces/workspaces-catalogs.md` — Load when: touching catalog assembly, `ConfigDependencyHooks` or `peerDependencyRules`.
+- Peer checking (`PeerCheck`, the three surfaced limits, the two `unverified` reasons, the three suppression axes, the committed oracle) → `okf/interfaces/workspaces-peer-check.md`, `okf/limitations/workspaces-peer-check-yarn-and-suppression-axes.md`, `okf/gotchas/peer-check-link-parent-reports-verified.md` — Load when: touching `PeerCheck`, the `unverified` reasons, the suppression axes or the peer fixtures. Every clause there is a defect someone already paid for; read it **before** touching any of it.
+- Duplicate checking (`DuplicateCheck`, the two-version rule, the shared `internal/roots.ts` join) → `okf/interfaces/workspaces-duplicate-check.md` — Load when: touching `DuplicateCheck` or `internal/roots.ts`.
+- Snapshots and change detection (`WorkspaceSnapshots.at(ref)`/`worktree()`, hook replay at a ref, `WorkspaceStateSnapshot`, seeded catalogs, importer versions, `ChangeDetector`) → `okf/interfaces/workspaces-snapshots.md`, `okf/limitations/workspaces-snapshot-hook-catalog-bump-between-refs.md` — Load when: touching at-ref reads, `WorkspaceStateSnapshot` or `ChangeDetector`.
+- Release surface (`PublishabilityDetector`, `VersioningStrategy`, `ReleaseTag`, `TrackingTag`, `classifyTag`) → `okf/interfaces/workspaces-release.md`, `okf/gotchas/publishability-detector-diagnoses-late.md`, `okf/gotchas/releasetag-strict-semver-default.md` — Load when: working on publishability, versioning strategy or tag derivation.
+- Why the sync facade and the `./node-sync` entry exist → `okf/decisions/workspaces-sync-facade-escape-hatch.md`, `okf/decisions/second-published-entrypoint.md` — Load when: adding or reshaping any `*Sync` function or a second entry point.
+- The `LocalExec` direction and the contract-inversion rule → `okf/decisions/contract-inversion-default.md` — Load when: tempted to import this package from `commands`, `npm`, `lockfiles` or `package-json`.
 
-## Child context files
+## Operating rules
 
-Reasoning behind the rules below. Load on demand:
-
-- Public surface → `@./CLAUDE.surface.md` — Load when: locating a type, wiring a composite, or touching an entry point.
-- Discovery → `@./CLAUDE.discovery.md` — Load when: touching enumeration, traversal, the root ascent, `WorkspacePackage` or the detector.
-- Catalogs → `@./CLAUDE.catalogs.md` — Load when: touching catalog assembly, the release-age gate, `ConfigDependencyHooks` or `peerDependencyRules` seeding.
-- Peers → `@./CLAUDE.peers.md` — Load when: touching `PeerCheck`, the `unverified` reasons, the suppression axes or the peer fixtures.
-- Snapshots → `@./CLAUDE.snapshots.md` — Load when: touching at-ref reads, `WorkspaceStateSnapshot` or `ChangeDetector`.
-
-## Tier: integrated
-
-The `@pnpm/catalogs.*` quartet is why: those packages *are* pnpm's catalog semantics, versioned to pnpm majors. They are confined to `src/internal/catalogs.ts` — **the only module that may import them** — so the tier-3 blast radius is one file.
-
-Kit edges are `workspace:^`: `commands`, `git`, `glob`, `lockfiles`, `walker`, `yaml`, `package-json`, `npm`, and `semver` (a peer `@effected/lockfiles` requires). `effect` is a peer.
-
-**The `@effected/commands` edge points at a CONTRACT plus `Run` combinators, and its direction is load-bearing.** `commands` declares `LocalExec` and we implement it (`Workspaces.localExecLayer`) — the `@effected/npm` `CatalogResolver` precedent. **Never invert it**: an import of this package from `commands` makes `commands` integrated and drags `npm`, `lockfiles` (**pure**) and `package-json` up a tier.
-
-**`minimatch` is not a dependency and must not become one.** Both call sites — `WorkspacePackage.matchesDependency` and the `packages:` enumerator — run on `@effected/glob`'s vendored engine.
-
-**Nothing new may build a local subprocess seam.** Git work goes through `@effected/git`; any other child process goes through core's `ChildProcessSpawner` required in `R` (via `@effected/commands`' `Run`). No `node:child_process` import exists in `src/`.
-
-`src/index.ts` is the only re-exporting module, and it **must never re-export** the second entry, `@effected/workspaces/node-sync`, or `node:` imports leak into every consumer.
-
-## Publishability has no ambient default
-
-**No composite provides `PublishabilityDetector` — and none requires it either**, so `Workspaces.layer`, `layerWithGit` and `layerWithConfigDependencies` all keep an `R` of `FileSystem | Path`. The requirement surfaces in the `R` of each **operation** asking a publishability question (`VersioningStrategy.detect`), so unwired programs fail to compile far from the wiring site. Provide it as one explicit merge, NOT `Layer.provide` onto the composite (`provide` discards what the composite never required, so it never reaches the program's `R`):
-
-```ts
-const WorkspacesLayer = Layer.mergeAll(Workspaces.layer(), PublishabilityDetector.layerNpm);
-```
-
-That is a correctness fix, not ergonomics: when the composite supplied npm semantics itself, `Layer.mergeAll`'s **last-wins** rule made the natural spelling of an override silently resolve to the public-npm *default*, with no type error. **Never re-bake a detector into `compose`**; the "the order that used to silently lose" test in `__test__/Workspaces.test.ts` fails if you do.
-
-## The other things that will bite you
-
-- **Never `Effect.cached`.** Every lazy init uses `Effect.cachedInvalidateWithTTL` + `Effect.onExit`-invalidate-on-non-success. `Effect.cached` memoizes the first `Exit` *including an interrupt*, so an init interrupted by an unrelated timeout permanently poisons the layer with a cause outside its error channel. Success is memoized; failures and interrupts retry.
-- **Core's `Graph` is borrowed at two `DependencyGraph` call sites, never as the substrate.** `CyclicDependencyError.cycle` (the SCC union, never Kahn's stalled set — that blames downstream packages) and `toMermaid` build transient graphs; `levels` cannot follow, as core's `topo` exposes no wave boundaries.
-- **One traversal, two entry points.** `internal/traverse.ts` owns the dequeue order, the depth rule, the visit budget and the prune list; neither the Effect enumerator nor `WorkspacesSync` may re-decide any.
-- **Lockfile framing is not this package's job.** `@effected/lockfiles` owns pnpm's multi-document `pnpm-lock.yaml`; `LockfileReader` just calls `Lockfile.parse`. Do not reintroduce the deleted richest-document-wins workaround (`internal/documents.ts`, `parseLockfileText`).
-- **`PackageManagerDetector` refuses to guess — do not give it a default.** Nothing matching its three tiers is `PackageManagerDetectionError`, and an unstubbed `detect` on the double **dies** rather than fabricating or failing typed. A consumer wanting a default writes `Effect.orElseSucceed` at its own call site.
-- **`localExecLayer`: `None` is success, and only a BROKEN manifest is an error.** No workspace root and `PackageManagerDetectionError` → `Option.none()`; `WorkspaceManifestError` → `LocalExecError`. Mutation-pinned both directions in `__test__/LocalExec.test.ts`. `directory` is the resolved **workspace root**, not the caller's cwd, and all three argv prefixes come from `LocalExec.prefixes(name)` — **never hard-code an exec, dlx or script-runner prefix here.**
-- **Tracking tags never float onto a prerelease.** `TrackingTag.forVersion("1.0.0-beta.3")` returns `[]`. Two related traps: `+build` is NOT a prerelease (strip build metadata *before* the `-` test), and derivation is **total** (junk yields `[]`, never a throw). `classifyTag` tells the families apart by **segment count, not the `v`**. The grammar deliberately avoids `@effected/semver`; route there only for real semver *comparison*.
-- **`PeerCheck` answers from the resolved graph, never from a subprocess.** It is a pure value over a parsed `@effected/lockfiles` `Lockfile` (`instanceId` / `resolved` / `peerDependencies`), so **no per-format branch exists** and none may be added. `PeerCheck.run(lockfile, options?)` **fails closed** through a two-reason `unverified` (`"peerRulesNotApplied"`, `"unresolvedEdge"`), surfaces its three unanswerable limits in the value rather than swallowing them, and applies all three `peerDependencyRules` axes — `allowedVersions` in all three key spellings pnpm accepts (the bare parentless one included), and `ignoreMissing` / `allowAny` as `@pnpm/matcher` peer-name patterns that never cross (missing-only vs. wrong-version-only), each measured against a committed oracle. Read [peers](./CLAUDE.peers.md) **before touching any of it**; every clause there is a defect someone already paid for.
-- **`DuplicateCheck` is `PeerCheck`'s sibling on the same posture** — a pure value over a parsed `Lockfile`, format-free, `instanceId` opaque. Both walks join importers to instances through ONE implementation, `src/internal/roots.ts` (`indexInstances`, `rootInstances`), so they cannot disagree about which importers are answerable; `unresolvedImporters` is the same npm/bun root limitation measured by the same code. A duplicate is a name reached at **two or more distinct versions** — peer-suffix instances of one version are listed under it but never make it a duplicate (mutation-pinned). `names` narrows the REPORT, never the walk: the filtered-out package is exactly the culprit that must still appear as a dependent. An edge leaving a workspace row is attributed to the importer by path, never as a `package` named after a directory with a `"0.0.0"` placeholder.
-- **The `pnpm peers check` oracle is committed, never shelled out to.** `__test__/fixtures/peers/*/peers-check.json` is pnpm's verbatim output captured at fixture-generation time (provenance in that directory's `README.md`); a test needing a live pnpm on PATH would breach the no-new-subprocess-seam rule and would not be reproducible in CI.
-- **Catalog assembly hard-fails on the live path** — a malformed inline block, or a default catalog declared twice, fails typed, because a silently-empty catalog is the "every dependency looks newly added" bug. The at-ref readers are deliberately tolerant of the same shapes.
-- **The default composite runs no config-dependency code — on the worktree side AND the ref side.** `Workspaces.layer` / `WorkspaceCatalogs.layer` wire `layerNoop`; replay is opt-in (`layerWithConfigDependencies`, `layerWithGitAndConfigDependencies`, or either `…Subprocess`), and a replaying composite hands ONE hooks reference to both `WorkspaceCatalogs` and `WorkspaceSnapshots`, so `at(ref)` replays the ref's `configDependencies` at the versions THAT ref declares (resolved via `.pnpm-config` or the pnpm store, fail-closed, never a fetch). Under `layerNoop` the at-ref fallback reads that ref's own lockfile importer entry, and a caller-supplied `seededCatalogs` supplies the declared range at strictly lower precedence than the ref's own. `ConfigDependencyHooks.layerFrom` is the hermetic test seam.
-- **`WorkspacePackage.version` is optional, and a version-less manifest is a MEMBER on both surfaces** — root or not, pnpm accepts it, so discovery carries the field as the manifest has it: absent when absent, verbatim when a string, `invalidShape` when present but not a string — or present but empty (`""` was never a legitimate pnpm shape and would reach a `workspace:` resolution as a bare `^`). There is no `missingVersion` kind and no `"0.0.0"` placeholder; `WorkspaceResolver.versionOf` fails typed (`DependencyResolutionError`) for a member with no version, because `none` means non-member. The sync facade reports every manifest it leaves out through `onSkip` (`WorkspaceDiscoverySkip`, same `kind` vocabulary as `WorkspaceDiscoveryError`) — a silent skip is the bug #605 paid for; do not reintroduce one.
-- **Layers memoize by reference**, so bind a parameterized factory to a `const`. `Workspaces.resolverLayer` is the exception: fresh and unmemoized per call is the feature.
+- `src/index.ts` is the only re-exporting module and **must never re-export** `./node-sync`; `src/internal/catalogs.ts` is the only module that may import `@pnpm/catalogs.*`; nothing new may build a local subprocess seam (git goes through `@effected/git`, anything else through core's `ChildProcessSpawner` via `@effected/commands`' `Run`); `minimatch` must not become a dependency.
+- Never `Effect.cached` for a lazy init — the memo is `Effect.cachedInvalidateWithTTL` plus invalidate-on-non-success (Module, "Lazy init").
+- `PeerCheck` and `DuplicateCheck` join importers to instances through ONE implementation, `src/internal/roots.ts`, so they cannot disagree about which importers are answerable; do not fork the join.
+- Bind parameterized layer factories to a `const` (layers memoize by reference). `Workspaces.resolverLayer` is the deliberate exception.
 
 ## Testing and building
 
-625 tests, on core's `Path.layer` + `@effected/memfs` (a devDependency) — a real virtual filesystem, no platform package (`__test__/fixtures.ts` seeds one from a `Tree` record and injects its three misbehaviors as faults).
+Tests run on core's `Path.layer` + `@effected/memfs` (a devDependency), no platform package; `__test__/fixtures.ts` seeds a volume from a `Tree` record and injects misbehaviour as faults.
 
 - A suite-boundary `layer(...)` cannot vary per test, so **each distinct tree gets its own `layer(...)` block**.
-- `__test__/integration/self.int.test.ts` is the one exception: it discovers **this repository** through `@effect/platform-node` (a devDependency), the only proof the stack composes against a real pnpm workspace.
-- `savvy.build.ts` carries the **narrow** `_base` suppression for the synthesized error/schema-class bases. **Never widen it** — it caught a genuine `ae-forgotten-export` when `VersioningStrategy.tagsFor` named a module-private interface on a `@public` signature (fixed by exporting `PackageRelease`).
+- `__test__/integration/self.int.test.ts` is the one exception: it discovers **this repository** through `@effect/platform-node` (a devDependency).
+- The `pnpm peers check` oracle under `__test__/fixtures/peers/*/peers-check.json` is committed pnpm output (provenance in that directory's `README.md`) — never shell out to a live pnpm from a test.
+- `savvy.build.ts` carries the **narrow** `_base` suppression for synthesized class-factory bases. Never widen it — the narrow pattern once caught a genuine `ae-forgotten-export`.
 - Never run `node savvy.build.ts --target prod` directly — build through `pnpm build --filter @effected/workspaces`.

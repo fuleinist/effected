@@ -19,8 +19,8 @@ sources:
     resource: ../../packages/workspaces/src/internal/configDependencyResolution.ts
 generated:
   by: "okfit/claude-code"
-  at: 2026-09-21T17:17:14Z
-  body_sha256: a6157bdfb58b7bd2f723aa553cb2e562e9346a3021ede26c8b479094daaa2057
+  at: 2026-09-22T01:21:07Z
+  body_sha256: 80211e0b6b29805ec189d3d3eb2de166d92285881303b848c63731048efda9c9
 ---
 
 # @effected/workspaces catalogs and the config-dependency seam
@@ -50,11 +50,18 @@ declared twice is rejected, checked structurally so an explicitly-declared
 empty catalog still counts as a declaration. This is a deliberate contrast
 with [package-manager detection](workspaces-discovery.md#package-manager-detection),
 which degrades gracefully on malformed hints because it is a heuristic with
-a fallback chain, while the catalog readers' output is load-bearing.
+a fallback chain, while the catalog readers' output is load-bearing. The
+two live inline readers share one validator, so they fail typed on exactly
+the same conditions rather than one hard-failing and the other normalizing
+to `{}`; the at-ref readers a snapshot uses are deliberately tolerant of
+the same shapes. The presence probe that picks the reader also
+distinguishes genuine absence from a probe failure: a non-`NotFound`
+`PlatformError` from the existence check fails typed rather than collapsing
+to "absent" and selecting the wrong reader.[^workspace-catalogs-ts]
 
 The workspace's effective pnpm release-age gate folds the inline config
-keys and the hook contributions through `@effected/npm`'s combining
-vocabulary, reusing the single memoized assembly pass so config-dependency
+keys and the hook contributions strictest-wins through `@effected/npm`'s
+combining vocabulary, reusing the single memoized assembly pass so config-dependency
 code runs exactly once. Present-but-malformed inline values hard-fail, the
 same posture as a malformed inline catalog block. There is deliberately no
 top-level convenience wrapper for it — the service method is the surface.
@@ -65,7 +72,15 @@ the hook replay — which is the input
 [`PeerCheck`](workspaces-peer-check.md) needs to reproduce pnpm's
 suppression. It is a sibling method rather than a second assembly pass,
 which is what keeps config-dependency code running exactly once; an absent
-block yields `NoPeerDependencyRules`, an assertion rather than a gap.
+block yields `NoPeerDependencyRules`, an assertion rather than a gap. That
+call-site read is pinned by an integration test rather than a seam unit
+test, because computing the rules inside the replay and then dropping them
+at the call site would compile, pass every seam test, and return an empty
+set indistinguishable from "this workspace declares none" — the
+discard-by-projection defect the seam itself once had. Every
+`WorkspaceCatalogs.layer*` static delegates to one builder,
+`layerWithHooks(hooks, options)`, which is also how a test reaches
+`layerFrom` through the real graph.
 
 `src/internal/catalogs.ts` is the only module in the package that imports
 `@pnpm/catalogs.*`.[^internal-catalogs-ts]
@@ -154,7 +169,9 @@ out — a hook that overwrites overwrites for pnpm too, and this must never
 be "fixed" into a kit-owned merger, which would be a second, divergent
 implementation of a rule pnpm already owns. See
 [peer-dependency rules](workspaces-peer-check.md#peer-dependency-rules-pnpms-suppression-policy-seeded-not-merged)
-for the full rationale.
+for the full rationale. Each rules axis threads independently, so a hook
+that rewrites `allowedVersions` and leaves `ignoreMissing` alone — or
+returns one axis malformed — cannot blank the others.[^config-dependency-hooks-ts]
 
 ### layerSubprocess
 

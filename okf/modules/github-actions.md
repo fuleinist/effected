@@ -10,8 +10,8 @@ tags:
   - bundle
 generated:
   by: "okfit/claude-code"
-  at: 2026-09-17T05:27:44Z
-  body_sha256: b1dbbccafe0c6a6b6ba99d3049c19b4168c2e6e11ab542dfd6a3a005ed61b9d3
+  at: 2026-09-22T01:21:07Z
+  body_sha256: 973daa3e98f6199aea5d54bf43f8b53e17a2e74916c02a5ef9a98cbffe9ebe04
 ---
 
 # github-actions
@@ -41,15 +41,24 @@ A GitHub Action always compiles into a Node process on a GitHub-provided
 runner, so there is no second platform to abstract over.
 
 Two consequences follow from that tier that the rest of the kit does not
-get: a direct `node:` import is sanctioned here (SHA-256/HMAC digests, the
-bare-pid guard, the fd-level detached spawn, the compression and stream
-codecs used by the cache and artifact paths — core's `Crypto` exposes
-random primitives, UUIDs and SHA digests but no HMAC or key derivation),
-and the platform layer is composed here rather than left to the consumer,
-which is the point of `Action.run`. No `@actions/*` package is a
+get: a direct `node:` import is sanctioned here, and the platform layer is
+composed here rather than left to the consumer, which is the point of
+`Action.run`. **Sanctioned is not unlimited** — the list is closed and
+small. `node:crypto` in `internal/digest.ts` (every `createHash`, spelled
+once, including the streamed file digest a multi-gigabyte archive needs)
+and `internal/sigv4.ts` (the HMAC core's `Crypto` does not offer — core
+exposes random primitives, UUIDs and SHA digests, no HMAC or key
+derivation); `node:child_process` and `node:fs` in `DetachedProcess.ts`
+for the fd-level detached spawn, plus `process.kill` for reaping a bare
+pid. Everything else goes through a core contract: `ToolInstaller`
+downloads over `HttpClient` and extracts over `ChildProcessSpawner` in
+`R`, the cache and artifact archives are `tar`/`zip` commands spelled in
+`internal/archiveCommands.ts` and run through the same spawner, and
+`CacheKey` reads over `FileSystem`. No `@actions/*` package is a
 dependency: the cache, artifact and tool-cache protocols are implemented
 directly against their HTTP APIs, because the official cache client alone
-drags a dependency tree larger than this package.
+drags a dependency tree larger than this package; globbing is
+[`glob`](glob.md), never `@actions/glob`.
 
 Kit edges: [`github`](github.md), [`glob`](glob.md), [`markdown`](markdown.md),
 [`npm`](npm.md), [`sbom`](sbom.md), [`templates`](templates.md) and
@@ -96,11 +105,20 @@ in the bundle of every action that merely sets an output.
 ## Module topology
 
 Module-per-concept, no barrels; `src/index.ts` re-exports only. `internal/`
-holds the request signer, the Twirp client and the results-backend reader,
-and is import-restricted by the reachability rule above. The blob
-envelope, cache-key derivation, the secret declassification seam, the
-detached-process lifecycle and the whole reporting suite each absorb a
-consumer-side hand-roll found in real actions rather than a new invention.
+holds the request signer, the Twirp client, the results-backend reader,
+the archive commands and the digests, and is import-restricted by the
+reachability rule above. The blob envelope, cache-key derivation, the
+secret declassification seam, the detached-process lifecycle and the
+whole reporting suite each absorb a consumer-side hand-roll found in real
+actions rather than a new invention.
+
+Two properties of the source tree are pinned structurally rather than
+followed by convention: `ActionEnvironment` is the only reader of ambient
+process state ([invariant](../invariants/ambient-process-state-read-once.md)),
+and `Secret.ts` is the only module that unwraps a `Redacted`
+([invariant](../invariants/redacted-value-only-in-secret.md)). A new
+default that must read `process.env` goes on the first test's allowlist
+with its reason; a new reason to hold plaintext is a new `Secret` member.
 
 ## Errors
 
@@ -152,9 +170,54 @@ themselves; three doubles carry an honest-default exception because dying
 would make them useless (the environment double seeds the standard
 context variables, the logger double defaults to silent, the dry-run
 double defaults to on). Real IO is used where the claim is about the
-filesystem, and the two network protocols get opt-in integration tests,
-skipped rather than green without credentials. The runner-file doubles
-are a real in-memory volume from [`memfs`](memfs.md).
+filesystem (`ToolInstaller` runs under `NodeServices.layer` against real
+`tar`), HTTP is tested through `FetchHttpClient.Fetch` so request
+construction, status mapping and body decoding all execute, and the two
+network protocols get opt-in integration tests, skipped rather than green
+without credentials.
+
+The doubles worth knowing before writing a test:
+
+- `ActionEnvironment.makeTest(overrides?, payload?)` / `layerTest` take
+  the webhook payload as a **second argument** and serve it directly.
+  `layerTest` hard-provides `FileSystem.layerNoop({})` and `make`
+  captures the filesystem at construction, so seeding `GITHUB_EVENT_PATH`
+  through `overrides` sends the read to a noop filesystem; `undefined`
+  means *not served*, so an unarranged payload still fails typed naming
+  the variable.
+- The runner-file doubles are a real in-memory volume from
+  [`memfs`](memfs.md) (a devDependency). `ActionOutputs` and
+  `ActionState` both append (`flag: "a"`), and the `Map` stubs they
+  replaced were re-implementing append by concatenation — filesystem
+  behaviour hand-modelled inside the test of something else. Build the
+  pair eagerly (`makeInspectableWith` + `Layer.succeed`, never the
+  re-seeding `layer*` form, per memfs's isolation contract) so the
+  assertions read the volume the run wrote to, and seed the runner-file
+  directory, since a write needs its parent.
+- `OidcTokenIssuer.layerFor(claims)` answers a **real, decodable**
+  unsigned JWT built from the same claims `claims()` reports, which is
+  what makes the provenance path reachable under test.
+- `BlobStore.layerMemory` runs the real envelope framing, so a round trip
+  through it proves metadata survives storage rather than asserting the
+  double.
+
+Disciplines the suite holds itself to: a concurrency test over
+`withEnv` needs **two** latches minimum, because a single-latch
+interleaving passed against a deliberately wrong save/restore (nested
+overrides are LIFO-correct by accident) — the order must force one fiber
+to read while the other's override is applied and unrestored; a spy on a
+process global is released with `acquireUseRelease`, never
+`try`/`finally` inside `Effect.gen`, since a failing assertion leaves
+through the error channel and leaks the spy into the next test; the pid
+guard, the envelope magic, the `INPUT_` mangling, the `withEnv` scoping,
+the hex-vs-binary digest and the tool-cache swap all carry recorded,
+discriminating mutants. Two structural suites — the ambient-read
+allowlist and the `Redacted.value` scan — are described under module
+topology; the reachability suite additionally asserts exact edge sets
+for the light modules (`CheckState.ts` reaches `effect` alone and in
+particular not `github`, `ManagedDocument.ts` and `CheckDocument.ts` reach
+`templates` and `effect` only, `ChildEnv.ts` reaches nothing, `Action.ts`
+reaches `@effect/platform-node`, `effect` and `effect/unstable/http`).
 
 ## The class of feedback this package absorbs
 

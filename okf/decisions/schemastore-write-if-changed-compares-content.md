@@ -4,8 +4,8 @@ title: SchemaFile's write-if-changed compares parsed content, not bytes
 description: Content comparison is the default for write-if-changed, with byte-exact comparison an opt-out, because a repo that formats its JSON makes byte comparison never converge.
 status: draft
 sources:
-  - id: claude-modules
-    resource: ../../packages/schemastore/CLAUDE.md
+  - id: schema-file
+    resource: ../../packages/schemastore/src/SchemaFile.ts
 generated:
   by: "okfit/claude-code"
   at: 2026-09-13T05:33:04Z

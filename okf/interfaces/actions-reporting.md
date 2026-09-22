@@ -10,8 +10,8 @@ tags:
   - dx
 generated:
   by: "okfit/claude-code"
-  at: 2026-09-13T05:33:04Z
-  body_sha256: 51273235499cd8a6f654e3de3a0334e7083b22d963d64453e7865153f67f55a7
+  at: 2026-09-22T01:21:07Z
+  body_sha256: ccef981ebe664a6beecefcbbfc4a6a6ce7e37a38f62e3dd6dab98dba7187c2c6
 ---
 
 # actions-reporting
@@ -103,9 +103,26 @@ is load-bearing: `Number("")` is a finite `0`, so a blank runId (the
 ordinary case when `GITHUB_RUN_ID` is unset) would otherwise compare equal
 to `"0"` and outrank `"-1"`. The stamp is a per-run constant, minted once
 at startup, never per pass, which is what preserves the
-byte-identical-render suppression. `flush` answers
-`written | unchanged | stale`, and a drop announces itself once, at the
-transition, not on every repeat.
+byte-identical-render suppression; the accepted corner is that a
+content-identical pass does not refresh the document's stamp, which is
+sound because only a *strictly* older stamp drops. Unstamped regions are
+ignored — evidence of a run that never opted in, not of a newer one.
+`flush` answers `written | unchanged | stale`, and a drop announces
+itself once, at the transition (INFO, then debug on repeats): the stamp
+is constant, so a stale run stays stale, and a per-report line would bury
+the one fact in the log a person reads when the report looks wrong.
+
+The sink `read` carries the **same timeout bound as the write**, for the
+same non-defensive reason: the pass holds the single permit and the
+finalizer's last flush waits on it, so an unbounded read stalls scope
+teardown. A failed read is `kind: "read"` — "GitHub would not tell us
+the current comment" is a different problem from "the state could not be
+rendered" (`render`) or "the write failed" (`sink`).
+
+The guard narrows the window; it does not make the write atomic. A
+read-then-write still races inside one pass, and nothing on GitHub's
+comment API offers a conditional write to build a compare-and-swap on.
+Never restate it as the stronger claim.
 
 ## Stability
 

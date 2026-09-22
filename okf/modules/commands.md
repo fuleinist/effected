@@ -6,10 +6,15 @@ status: stable
 kind: package
 resource: ../../packages/commands
 tags: [bundle, dx]
+sources:
+  - id: scripted-spawner
+    resource: ../../packages/commands/src/ScriptedSpawner.ts
+  - id: scripted-spawner-test
+    resource: ../../packages/commands/__test__/ScriptedSpawner.test.ts
 generated:
   by: "okfit/claude-code"
-  at: 2026-09-13T05:33:04Z
-  body_sha256: cccc307648d0c187820200d37d108398f8132d7b296ba4c15136d3c83bcaa94e
+  at: 2026-09-22T01:21:07Z
+  body_sha256: e6b573957f8c78a64354eb7d4b6b617c2105a0f35946bbce4b18f5ee4ba925d0
 ---
 
 # @effected/commands
@@ -166,9 +171,10 @@ while a class's `static readonly` declarations keep it.
   sequential collection deadlocks the moment either OS pipe buffer fills,
   because the child blocks writing to a full pipe while the reader that
   would drain it waits on the other stream. A mock spawner over
-  in-memory streams cannot reproduce it, which is why the e2e
-  backpressure test in `packages/commands/__test__/e2e/Run.e2e.test.ts`
-  is not optional.
+  in-memory streams cannot reproduce it, and pressure on one stream
+  alone does not discriminate, which is why the e2e backpressure test in
+  `packages/commands/__test__/e2e/Run.e2e.test.ts` is not optional — see
+  [`Run.collect` drains both pipes concurrently](../invariants/collect-drains-both-pipes-concurrently.md).
 - **Teeing is a separate combinator, not an option.** Only `collectTee`
   requires core `Stdio` in `R`, and an option cannot vary the `R`
   channel — a boolean would tax every plain `collect` caller with a
@@ -311,10 +317,14 @@ not an exception to the one rule: it implements nothing for production, it
 *provides* core's own contract from a caller's script, the test-side
 analogue of `makeTest` on a service. The spawn log records whether `unref`
 actually ran, which is what lets a consumer test pin `Run.detach`'s
-ordering. Standard commands only — a piped command reaching it dies loudly
-naming the workaround, because scripting a pipeline honestly means
-modeling core's `PipeOptions` routing and dying beats a silently wrong
-answer.
+ordering. Every recorder is `Effect.suspend` / `Effect.sync`-wrapped, so
+a spawn is logged when the effect *runs*, never when it is merely
+constructed — an eager recorder would report calls that never happened,
+and the double's own suite pins the distinction along with the `unref`
+flag.[^scripted-spawner][^scripted-spawner-test] Standard commands only —
+a piped command reaching it dies loudly naming the workaround, because
+scripting a pipeline honestly means modeling core's `PipeOptions` routing
+and dying beats a silently wrong answer.
 
 ## What this package deliberately does not do
 
@@ -393,3 +403,10 @@ in backticks.
 - **`@effected/github-actions`** — the general-purpose runner behind
   action work, plus the owner of the two lifecycle halves this package
   declines.
+
+[^scripted-spawner]: `packages/commands/src/ScriptedSpawner.ts` — the
+    module comment on lazy recorders, and the `unref: Effect.sync(...)`
+    that flips the record's `unrefed` flag only when it runs.
+[^scripted-spawner-test]: `packages/commands/__test__/ScriptedSpawner.test.ts`
+    — "records spawns in call order, only when the effect actually runs"
+    and "unrefed flips only when the handle's unref actually RUNS".

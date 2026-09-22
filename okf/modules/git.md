@@ -10,8 +10,8 @@ tags:
   - security
 generated:
   by: "okfit/claude-code"
-  at: 2026-09-13T05:33:04Z
-  body_sha256: b6f8b5c3aae12d9588c8b37ac5deb82bcc76f319960610d09960700bed9db1f0
+  at: 2026-09-22T01:21:07Z
+  body_sha256: d8b9965b6004300a307f566b74039505674edbd754f5a72a89e8fafdff6ac944
 ---
 
 # git
@@ -72,30 +72,40 @@ See `src/GitCommand.ts` and `src/Git.ts`; the index re-exports only.
 One git-flavored constructor per operation, producing core
 `ChildProcess.StandardCommand` values wrapped in `GitInvocation` (see
 [the redaction policy](../conventions/git-redaction-policy.md)), covering
-both tiers. Constructors know the `git` executable and each operation's
-argument conventions; they do **not** know the environment — a
-constructor sets `extendEnv: true` and nothing else, returning a value
-with neither `cwd` nor `env`, so a test can assert the exact
-`command`/`args`/`options` an operation runs without spawning. `Git`
-applies both `cwd` and `env` per call via `ChildProcess.setCwd` and
-`ChildProcess.setEnv`. The environment pins (`LC_ALL=C`,
-`GIT_TERMINAL_PROMPT=0`, `GIT_ASKPASS=""`, `SSH_ASKPASS_REQUIRE=never`,
-and the seven-network-member-scoped `GIT_SSH_COMMAND` resolution) live on
-the `Git` **service**, not on `GitCommand`, because they serve `classify`
-and the timeout, which live there, and because `GIT_SSH_COMMAND`'s
-resolution must read the caller's own environment and `core.sshCommand`
-at the call's `cwd`, neither of which a pure constructor may read.
+both tiers. `GitCommand` and `Git` are static classes with private
+constructors, not `as const` namespace objects, per [the grouped-statics
+rule](../conventions/no-barrel-re-exports.md). Constructors know the `git`
+executable and each operation's argument conventions; they do **not**
+know the environment — a constructor sets `extendEnv: true` and nothing
+else, returning a value with neither `cwd` nor `env`, so a test can
+assert the exact `command`/`args`/`options` an operation runs without
+spawning ([the invariant](../invariants/git-command-constructors-carry-no-cwd-or-env.md)
+pins this for every constructor). `Git` applies both `cwd` and `env` per
+call via `ChildProcess.setCwd` and `ChildProcess.setEnv` at its single
+spawn choke point. The environment pins live on the `Git` **service**
+because they serve `classify` and the timeout, which live there, and the
+ambient environment is read once in `Git.layer` through `ConfigProvider`,
+never `process.env`. Each pin exists for a named failure:
 
-`GIT_SSH_COMMAND` is **appended to**, never substituted for, what git
-would have used: it outranks `core.sshCommand`, which outranks
-`GIT_SSH`, so a substituted bare `ssh` would silently discard a
-configured deploy key or transport. Where appending is not meaningful —
-`GIT_SSH` names a program and takes no arguments, and a non-OpenSSH
-`ssh.variant` changes the argument grammar — resolution declines to pin
-at all rather than displace a working setup. This pin is scoped to the
-seven network-touching members only (`lsRemote`, `fetch`,
-`fetchUnshallow`, `push`, `pull`, `submoduleAdd`, `submoduleUpdate`), so a
-member that never invokes `ssh` pays neither the pin nor its config read.
+- `LC_ALL=C` — classification depends on untranslated stderr text; a
+  localized message silently misclassifies a typed domain error into
+  `GitCommandError`.
+- `GIT_TERMINAL_PROMPT=0` — git's own credential prompt, which otherwise
+  blocks until the timeout.
+- `GIT_ASKPASS=""` — the askpass chain, which `GIT_TERMINAL_PROMPT=0` does
+  not close; an empty value is a hard stop (probed against git 2.55) that
+  also suppresses a configured `core.askPass` and `SSH_ASKPASS`.
+- `SSH_ASKPASS_REQUIRE=never` — defense in depth for a caller-supplied ssh
+  wrapper that swallows the appended `BatchMode` option.
+- `GIT_SSH_COMMAND` — the one conditional pin, scoped to the seven
+  network-touching members (`lsRemote`, `fetch`, `fetchUnshallow`,
+  `push`, `pull`, `submoduleAdd`, `submoduleUpdate`). `ssh` reads from
+  `/dev/tty` directly, so `-o BatchMode=yes` is the only lever that makes
+  it fail instead of hang; it is appended to what git would have used and
+  declines rather than substitutes — see [the ssh pin
+  decision](../decisions/git-ssh-pin-appends-and-declines.md), and [the
+  latency limitation](../limitations/git-network-member-latency-multiple-of-timeout.md)
+  it implies.
 
 Three invariants ride on the argv: **the `-z` rule** — every
 path-emitting constructor emits NUL-terminated output and splits on
@@ -104,12 +114,30 @@ while ref-emitting constructors split on newlines safely, since refname
 grammar forbids one (two parsers, `lsRemote` and `submoduleStatus`, are
 line-based with no choice at all because git offers no `-z` mode for
 them; only `submoduleStatus` is unsafe, a recorded git-imposed
-limitation); **`checkIgnore` bakes stdin into the pure command value**
-(`check-ignore -z --stdin`), the only constructor that does, because git
-rejects `-z` without `--stdin`; and **an explicit relative flag** —
-`changedFiles`, `nameStatus` and the working-tree diff constructors pass
-`--relative` or `--no-relative` explicitly, never omitted, because git
-honors a configured `diff.relative=true` on an omitted flag.
+limitation). `log`'s `-z` does double duty — NUL-terminating the
+`--format` output and disabling git's C-style path quoting — which is why
+no `core.quotePath` handling exists anywhere in the package.
+**`checkIgnore` bakes stdin into the pure command value** (`check-ignore
+-z --stdin`), the only constructor that does, because git rejects `-z`
+without `--stdin`. And **an explicit relative flag** — `changedFiles`,
+`nameStatus` and the working-tree diff constructors pass `--relative` or
+`--no-relative` explicitly, never omitted, because git honors a configured
+`diff.relative=true` on an omitted flag; `untrackedFiles` inverts it,
+adding `--full-name` when `relative` is false, so its `ls-files` output
+shares the `--no-relative` diffs' repo-root base and `workingChanges`'
+`Set` actually dedups from a nested `cwd`.
+
+Two argv decisions ride on the service's pre-spawn guards. **Every
+ref/range positional beginning with `-` is refused typed** as a
+`GitCommandError` of `kind: "refused"` — git would parse it as a flag, and
+`checkout("-b")` would create a branch. A blanket `--` separator is
+deliberately not used because it flips `checkout` into pathspec mode;
+`restore` puts its paths behind a literal `--` and guards only its
+`source` ref, which is why it is a separate member. **The stash index
+constructors render `stash@{n}` from an integer the service validates**
+through `rejectNonNaturalNumber`, because every relational guard admits
+`NaN`. `GitCommand`'s pure constructors never validate; the `Git` service
+is the guards' home, pinned with never-spawn mocks.
 
 ### `Git` — the read tier
 
@@ -131,11 +159,20 @@ committed-range primitives `ChangeDetector` runs on; `revParse`
 normalizes refs for snapshot cache keys. Working-tree primitives
 (`unstagedChanges`, `stagedChanges`, `untrackedFiles`) are public service
 methods in their own right, with `workingChanges` composing them as a
-deduplicated union. `nameStatus` is the semantically-typed diff, with a
-typed status vocabulary and `oldPath` on renames/copies. Four
-introspection probes degrade "not there" to `Option.none`:
+deduplicated union that takes no ref, so `UnknownRefError` cannot arise
+from it. `nameStatus` is the semantically-typed diff, with a typed status
+vocabulary and `oldPath` on renames/copies. `lsRemote` reads over the
+network and `lsFiles` reads the index — the only read that sees a
+staged-but-uncommitted `160000` gitlink — and both are still reads.
+`log` is the history walk, the one member whose parser can fail typed
+(see [classification](../decisions/git-classification-happens-once.md)).
+Introspection probes degrade "not there" to `Option.none`:
 `defaultBranch`, `currentBranch` (git's literal `"HEAD"` for detached HEAD
-maps to none), `configGet` and `remoteUrl`.
+maps to none — a fake branch name would be worse than an honest absence),
+`configGet`, `remoteUrl` and `mergeBaseOption`. Config reads are
+scopeable and config writes are not; [the merged-read
+gotcha](../gotchas/git-config-read-without-scope-is-merged.md) explains
+the asymmetry.
 
 ### `Git` — the mutating tier
 
@@ -150,10 +187,48 @@ forceless clean is a guaranteed no-op. `restore` is a separate member
 from `checkout`, so `checkout`'s option-like-ref refusal is never
 weakened to admit pathspecs. `branchCreate` is one member with two argvs
 (`branch [-f]` or `checkout (-b|-B)`), because the delete-then-create
-longhand swallows a real edge. `fetchAny` composes a tag-then-branch
-fallback as a method, routing on the caught error's `kind` rather than
-its stderr text — every consumer of "fetch this ref, I don't know which
-kind it is" would otherwise rebuild the same fallback on stderr strings.
+longhand swallows a real edge: `branch -D` refuses the currently
+checked-out branch while `checkout -B` resets it fine. `isShallow` is a
+dedicated predicate rather than a `revParse` mode, so that member's
+contract stays "resolve this ref". `fetchUnshallow` is a distinct mode
+and **the caller guards**: git rejects `--unshallow` in a non-shallow
+repository and the method does not tolerate that (tolerating would
+swallow every other fetch failure shape), so probe with `isShallow`
+first; `fetch`'s `unshallow: true` follows the same rule and is refused
+typed pre-spawn when combined with `depth`, exactly as git rejects the
+pair. `fetch`'s `ref` accepts a full refspec passed through verbatim
+(`src:dst`, optionally `+`-prefixed; the guard refuses only a leading
+`-`) — never guess-transform a bare ref into a refspec, because under a
+single-branch clone a bare-ref fetch updates only `FETCH_HEAD`, and the
+`+refs/heads/<b>:refs/remotes/origin/<b>` form is the caller's own
+decision. `fetchAny` composes a tag-then-branch fallback as a method,
+routing on the caught error's `kind` rather than its stderr text — every
+consumer of "fetch this ref, I don't know which kind it is" would
+otherwise rebuild the same fallback on stderr strings; a
+`kind: "refused"` error re-fails immediately since the plain form would
+reject it identically, `NotARepositoryError` propagates from the tag
+attempt, and when both attempts fail the plain fetch's error surfaces.
+`configSet` writes repository-local, always, and offers no scope; its
+guard on `key`, `value` and `file` is [a recorded
+limitation](../limitations/git-config-set-refuses-dash-leading-values.md).
+
+### The parsed models
+
+`Git.ts` defines its parsed results as `Schema.Class` models, one per
+list parser. Three carry rules a refactor would silently break.
+`NameStatusEntry` (`diff --name-status -z`) and `StatusEntry` (`status
+--porcelain -z`) order their rename token **opposite** each other — git
+emits old-path-then-new-path for the former and new-path-then-old-path
+for the latter — so `parseNameStatus` and `parseStatus` must never be
+conflated into one implementation. `CommitInfo.message` is the raw `%B`,
+deliberately untrimmed including git's trailing format newline, because
+this package does not decide what "the message" means for a consumer that
+cares about trailing whitespace. `StashEntry`'s array position is the
+current stash index. `LsRemoteEntry` carries the near-miss suggestion
+policy (`shortName`, `nearMatches`) on the entry value, not in the
+service. `ConfigListEntry` splits `--list -z` output on the first newline
+so multi-line values survive, and a valueless boolean-shorthand key
+surfaces as `""`.
 
 ## Rendering status back to text
 
@@ -178,11 +253,19 @@ not INI. `GitConfig` is text-first and lossless: the document holds its
 source text plus a structural index, `stringify` returns byte-for-byte
 identity on unmodified documents, and every edit compiles to a minimal
 text splice and re-parses, so comments, ordering and whitespace outside
-the edited span survive. `Gitmodules` is the typed view on top: a
+the edited span survive. The semantics are git-config's, not generic INI:
+case-insensitive section and key names, case-sensitive quoted
+subsections, the deprecated `[a.b]` dotted form (whose subsection compares
+case-insensitively), multi-valued keys, the bare-`key` boolean shorthand,
+quoting, escapes and continuations, and `include`/`includeIf` surfaced by
+`includes()` but never resolved. Malformed input fails typed
+(`GitConfigParseError`), while a hand-built `GitConfig.make` over
+unparseable text dies as a defect — bad wiring, not bad input. `Gitmodules` is the typed view on top: a
 `GitmodulesEntry` per submodule section, with entry-level mutations
 (`setUrl`/`setPath`/`setBranch`/`setShallow`/`add`/`remove`/`rename`)
 compiling into `GitConfig`'s surgical editor so git's own formatting
-survives.
+survives. Its `update` field stays a raw string deliberately, since git
+accepts `!command` values there.
 
 ## The redaction policy
 
@@ -196,9 +279,11 @@ live layer and test double, the error taxonomy, `classify`/`runClassified`
 and the parsed-result models), `GitConfig.ts` (the lossless document
 model and surgical editor), `Gitmodules.ts` (the typed `.gitmodules`
 view), `internal/run.ts` (the collected-run and `available` helpers over
-`ChildProcessSpawner`, not exported) and `internal/config.ts` (the
-git-config engine: raw scanner records and splice/serialize primitives
-behind the cycle firewall).
+`ChildProcessSpawner`, not exported — `available` has no production
+consumer and is kept deliberately with its tests) and `internal/config.ts`
+(the git-config engine: raw scanner records and splice/serialize
+primitives behind the cycle firewall; it never imports the public
+classes, and it recurses nowhere, so no depth cap is needed).
 
 ## Observability
 
@@ -220,7 +305,14 @@ mask, with no spawning. `GitConfig`'s conformance corpus is count-guarded
 and asserts both lookups and byte-for-byte round-trip. Integration tests
 drive fixture repositories through `@effect/platform-node`'s real
 `ChildProcessSpawner` layer, with the mutating tier isolated in its own
-temp-dir fixtures. A new typed error ships with a control: a test asserts
+temp-dir fixtures, using the shared-fixture `beforeAll`/`afterAll`
+lifecycle [testing standards](../conventions/testing-standards.md)
+sanction for expensive real-world fixtures. Two traps in those suites are
+recorded: [`protocol.file.allow` does not reach a submodule
+clone](../gotchas/git-protocol-file-allow-does-not-reach-submodule-clone.md),
+and [`--follow` drops merge
+commits](../gotchas/git-log-follow-drops-merge-commits.md), which is why
+`log` has its own history fixture. A new typed error ships with a control: a test asserts
 the error fires on its own members, and a control asserts another member
 fed the same stderr still fails as the generic `GitCommandError`, so kind
 gating is a guarantee rather than an intention. The dual-stream
@@ -241,3 +333,15 @@ subprocess helpers, and the mutating tier backs release-automation flows
 such as the restore trio for pre-retry cleanup, `branchCreate`/`push`/`commit`
 for a release branch, the stash family and porcelain rendering for job
 summaries.
+
+A consumer needing a git read `Git` does not have is pointed at
+[`commands`](commands.md)' `Run.collect`, never at the private
+`internal/run.ts`: `Run.collect` is the public, bounded (16 MiB per
+stream), redaction-capable version of the identical discipline, and the
+package README's "Need a git command this package does not have?" section
+is the sanctioned recipe, including the pins the caller re-applies by
+hand. `Git` itself does not take that edge — the package has no
+`@effected` edges by design, and consolidating would swap unbounded
+capture for a ceiling and add a child span under every member — so the
+parallel implementations are deliberate; amend this concept before
+changing that.

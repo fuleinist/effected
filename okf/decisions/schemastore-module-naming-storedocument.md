@@ -4,8 +4,8 @@ title: "The assembly module is named StoreDocument, not SchemaDocument"
 description: Naming the assembly module StoreDocument rather than SchemaDocument, to avoid a name that reads like the banned general-JSON-Schema scope.
 status: draft
 sources:
-  - id: claude-modules
-    resource: ../../packages/schemastore/CLAUDE.modules.md
+  - id: store-document
+    resource: ../../packages/schemastore/src/StoreDocument.ts
 generated:
   by: "okfit/claude-code"
   at: 2026-09-13T05:33:04Z

@@ -4,8 +4,10 @@ title: No layerDefault on SchemaValidator or SchemaFile
 description: Every service-shaped module ships a real layer and a test layer; a third layerDefault would only be a name for one of the two that already exist.
 status: draft
 sources:
-  - id: claude-modules
-    resource: ../../packages/schemastore/CLAUDE.modules.md
+  - id: schema-validator
+    resource: ../../packages/schemastore/src/SchemaValidator.ts
+  - id: schema-file
+    resource: ../../packages/schemastore/src/SchemaFile.ts
 generated:
   by: "okfit/claude-code"
   at: 2026-09-15T15:38:20Z

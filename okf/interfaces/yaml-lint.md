@@ -8,8 +8,8 @@ resource: ../../packages/yaml/src/YamlLint.ts
 tags: [architecture]
 generated:
   by: "okfit/claude-code"
-  at: 2026-09-13T05:33:04Z
-  body_sha256: e3b2364265a5301e81f67f1af984eff9cd60fffdadb3da7ab285ff22578f830f
+  at: 2026-09-22T01:21:07Z
+  body_sha256: f298a2970a4ea1c98f34d302b78a0afa8473b27b836bbcd3326f22aecb923454
 ---
 
 # @effected/yaml lint system
@@ -323,6 +323,11 @@ Rulings that hold across the catalog:
   presets.** Whether a file leads with `---` is a house convention, not a
   defect, and a preset that flagged every unmarked file by default would
   train users to disable presets.
+- **`quoted-strings` defaults to `"double"`**, and its fix delegates to
+  the shared `src/internal/requote.ts` helper in `"conservative"` mode —
+  byte-exact, bailing whenever escapes are in play — while the format
+  path's `requoteScalars` uses the same helper in `"escaping"` mode; see
+  [the stringify options](yaml-stringify-options.md).
 - **`key-duplicates` owns duplicate policy outright**, which is why
   [`LintContext`](#lintcontext) composes with `uniqueKeys: false`.
 - **`indentation` checks indent style only** — a consistent unit per

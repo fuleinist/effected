@@ -1,5 +1,52 @@
 # Log
 
+## 2026-09-22
+
+* Updated walker
+* Updated @effected/commands
+* Updated @effected/github
+* Updated @effected/markdown
+* Updated @effected/schemastore
+* Updated @effected/schemastore-cli
+* Updated @effected/workspaces catalogs and the config-dependency seam
+* Updated @effected/workspaces discovery and detection
+* Updated @effected/workspaces peer-dependency checking
+* Updated @effected/workspaces snapshots
+* Updated @effected/workspaces: monorepo tooling
+* Updated @effected/yaml lint system
+* Added A Git config read with no scope is the merged view, not the checkout's own
+* Added A GitCommand constructor carries no cwd and no environment
+* Added A declared-family key must be a name ajv can register, and its payload cannot carry an $id
+* Added A mechanically repaired fixture set goes green while describing a state GitHub cannot produce
+* Added A network-touching Git member's worst-case latency is a multiple of GIT_TIMEOUT
+* Added A red markdown tripwire test may mean you fixed something, not broke it
+* Added A repo-local protocol.file.allow does not reach a submodule add's internal clone
+* Added A yarn Berry lockfile has no devDependencies section
+* Added ActionEnvironment is the only reader of ambient process state
+* Added Calling ajv-formats' default import is a TS2349, and the one-hop `.default` is not a bug
+* Added CorepackIntegrityHash is consumed by identity, and only a runtime identity assertion can see a re-fork
+* Updated Git failure classification happens once, in one private function
+* Added Git.configSet cannot write a value that begins with a dash
+* Added PackageManager's version and integrity fields ARE the schemas their owning packages export
+* Added PeerCheck never joins the peers of a link:-resolved parent and still reports verified
+* Added Run.collect drains stdout, stderr and the exit code concurrently
+* Added Secret.ts is the only place a Redacted becomes a string
+* Updated Testing standards
+* Added The git ssh BatchMode pin is appended to what git would have used, and declines rather than substitutes
+* Added The markdown canonical form is a published commitment — a row that moves is a breaking change
+* Added The npm and bun resolution walk is deepest-first
+* Added The package-json entry-point resolver
+* Updated actions-reporting
+* Updated actions-runtime
+* Updated actions-storage
+* Updated git
+* Added git log --follow is not the unfollowed walk plus more
+* Updated github-actions
+* Updated lockfiles
+* Updated npm
+* Added npm and bun rows never populate unresolvedEdges
+* Updated package-json
+
 ## 2026-09-20
 
 * Updated @effected/workspaces catalogs and the config-dependency seam

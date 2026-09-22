@@ -10,8 +10,8 @@ tags:
   - bundle
 generated:
   by: "okfit/claude-code"
-  at: 2026-09-17T21:24:06Z
-  body_sha256: f0b5926d037ed3a24c2059769f31ea6416d176515bef2188bd3deaf51d75d745
+  at: 2026-09-22T01:21:07Z
+  body_sha256: ed60c4061e877b2b4e82ba020015da5c2da61b241598c5b9d5ef78b40f6e7730
 ---
 
 # actions-storage
@@ -83,7 +83,11 @@ variables are injected into action execution contexts, not shell steps —
 and all three services report that as a misconfiguration naming the
 absent variable. The runtime token from that backend is never
 declassified: it is wrapped immediately at the read and leaves only
-through the HTTP client's bearer-token helper.
+through the HTTP client's bearer-token helper, which accepts a `Redacted`
+directly (see
+[the declassification invariant](../invariants/redacted-value-only-in-secret.md)).
+Artifact backend ids come from that token's own `scp` claim, decoded
+from the plaintext before it is wrapped.
 
 Artifact facts worth not re-deriving: the create call's protocol version
 is unrelated to the marketplace action's version; finalization hashes the
@@ -108,13 +112,48 @@ entries. A caller who wants an in-namespace ladder follows with
 `withRestoreDepths`. `CacheKeyError` is a per-reason union whose members
 each carry their own required field.
 
+The restore policy is a three-point space carried on the typed key, and
+`ActionCache.restore` picks it up through that key alone. Absence means
+the default every-prefix ladder. `withRestoreDepths([4, 3])` carries an
+explicit ladder — each depth is the number of leading segments a rung
+keeps, emitted in the order given — because the default ladder drops
+digest segments a five-segment key must never lose; a depth outside
+`1..segments.length - 1` is refused at construction. `withoutRestoreKeys()`
+is the same field carrying **zero** rungs: an exact-match-only restore
+sends an empty `restore_keys` and never falls back. `CacheKey.digest(input,
+length = 8)` is the segment-safe short digest for **non-file** segments (a
+version list, a branch name): sha256, lowercase hex, truncated to satisfy
+the segment grammar so it drops into `CacheKey.of` unchecked; a length
+outside `1..64` is wiring, not data, and throws a `RangeError`. File
+content stays with `hashFiles`.
+
+`ActionCache.save` resolves its `paths` as glob **patterns** before `tar`
+sees them, with `actions/cache` parity: a matched directory archives
+recursively, a pattern matching nothing (including an absent literal)
+drops silently, and a list resolving to nothing fails typed rather than
+reserving an entry no archive backs. The entry **version** is a digest of
+the *literal* pattern list on both sides — resolution feeds `tar`, never
+the version — so `restore`, which resolves nothing, derives the same
+version for free and `paths` must be the same literal list the save used.
+One knowing divergence: matches stay **absolute** and archive under
+`tar -P`, so a restore puts every file back where it came from regardless
+of the restoring step's working directory. The engine is
+[`glob`](../modules/glob.md), never `@actions/glob`.
+
 File hashing is byte-compatible with the official glob action: sorted,
 de-duplicated, each file's digest fed into the accumulator as binary, not
-hex. Discovery and matching are two deliberate halves — [`glob`](../modules/glob.md)
-is a matcher, not a walker, so the walk is core's recursive directory
-read, which is what makes the pairing testable through a noop filesystem.
-Candidates are matched by their path relative to the workspace, and
-directories are excluded by an explicit stat.
+hex. Discovery and matching are two deliberate halves — `glob` is a
+matcher, not a walker — and `CacheKey.matchingFiles` walks through
+[`walker`](../modules/walker.md)'s `descend` (files only, one root per
+include, `prune: []` so nothing is skipped implicitly, because the
+runner's own `hashFiles()` prunes nothing either). Symlinked directories
+are followed (`followSymlinks: true`) for parity with `@actions/glob`'s
+default, `descend`'s real-path cycle guard keeping link loops finite;
+note the walk is therefore **not** workspace-bounded under links — a
+symlinked directory targeting outside the workspace is descended and its
+files enter the key, as `@actions/glob` does. `ActionCache`'s own path
+resolution stays hand-rolled, because cache paths are usually directories,
+which `descend` never matches.
 
 ### Tool and package-manager installation
 
@@ -129,9 +168,29 @@ atomic. Tool installation takes no edge to [`runtimes`](../modules/runtimes.md):
 that package resolves versions and answers with a download URL, this one
 takes a URL and installs files.
 
+`ToolInstaller.provisionFile` packages the one composition with no
+per-tool variation — a single bare binary (biome, and every Rust or Go
+tool shipped as one executable): `find` → `download` → chmod `0o755`
+(skipped on Windows, and done **before** caching, so the cache never
+holds a non-executable tool) → `cacheFile`, answering `{ directory,
+binDir }` where `binDir` *is* the cached directory. A hit **missing the
+named binary** is a foreign or partial entry and is reinstalled over, not
+answered. `ToolInstaller.cachePath(tool, version)` is the location
+contract — the same closure `cacheDir` lands at — so a caller that must
+write the final path *into* a staged tree before the swap (a shim naming
+its target) asks the installer rather than re-deriving root and arch.
+
 `PackageManagerInstaller` provisions the majors
 [the support policy](../conventions/package-manager-support-policy.md)
-names, and decides how by **artifact layout**, never by major. pnpm 12's
+names, answering a union discriminated on `source`
+(`AmbientPackageManager` | `CachedPackageManager`), every tool-cache
+answer carrying an `addPath`-able `binDir`. Shims for the npm-registry
+managers are written into the **staged** entry, never as a post-swap
+mutation, naming their target through `cachePath`; bun's own directory is
+its `binDir`, and the bun path deliberately does not route through
+`provisionFile` because integrity verification and zip extraction sit
+between its download and chmod. The installer decides how to provision by
+**artifact layout**, never by major. pnpm 12's
 registry package is a wrapper whose `pnpm` bin is a shebang-less
 placeholder that pnpm's own install script would overwrite with a native
 binary shipped as an `@pnpm/exe.<os>-<arch>[-musl]` optional dependency;

@@ -10,8 +10,8 @@ tags:
   - architecture
 generated:
   by: "okfit/claude-code"
-  at: 2026-09-13T13:33:37Z
-  body_sha256: b5b0f0b39a4a673190e37fde9c42b7c85bbf199bbc54dd8547641977a76c4acb
+  at: 2026-09-22T01:21:07Z
+  body_sha256: b4b98ccbb1a2b7395c889d73dca8f0b4a3325d88c7101e49db9c637b64313599
 ---
 
 # `@effected/markdown`
@@ -116,8 +116,11 @@ node shape, not the formation rule.
 ## Dialects: a closed set, no public extension API
 
 See [the closed-dialect-set decision](../decisions/markdown-dialects-closed-set.md)
-for the full rationale. In brief: a dialect option defaults to GFM, plus a
-frontmatter toggle. GFM means tables, strikethrough, autolink literals,
+for the full rationale. In brief: a dialect option defaults to GFM at the
+facade (`Markdown.parse*`), plus a frontmatter toggle; the engine's
+`parseBlocks` substrate defaults to `commonmark`, which is not an
+inconsistency — the substrate default is the registry-composition base the
+conformance harnesses and the differential oracle drive directly. GFM means tables, strikethrough, autolink literals,
 task-list items and tagfilter, plus footnotes — a cmark-gfm/GitHub extension
 rather than GFM spec text, included as table stakes. Footnote handling and
 image-vs-footnote-marker disambiguation are expressed as parameterized
@@ -163,10 +166,12 @@ the four format packages still document three different filters, and
 `markdown` follows `toml`'s.
 
 Canonical stringify serializes fidelity-first with a recorded canonical-form
-table (`packages/markdown/src/MarkdownFormat.ts`, mirrored in
+table (on `Markdown.stringifyResult`'s TSDoc, mirrored in
 `packages/markdown/README.md` and asserted row-by-row by
 `packages/markdown/__test__/stringify.test.ts`'s "documented canonical form"
-suite), and its escaping is an always-escape set (backslash, backtick, `*`,
+suite). That table is a published stability commitment — changing a row is
+a breaking change, per [the canonical-form
+convention](../conventions/markdown-canonical-form-is-a-published-commitment.md) — and its escaping is an always-escape set (backslash, backtick, `*`,
 `[`, `]`, `<`, `~`, `|`) plus line-start and raw-source-autolink defenses,
 with the corpus-wide re-parse equivalence property as the authority. Four
 characters — `_`, `&`, `>` and `#` — escape only where CommonMark could
@@ -244,8 +249,14 @@ text-visitor convention, possible because parse and walk are separable
 surfaces here. The stream is lazy per subscription, and a foreign-tree depth
 trip yields exactly one terminal error event. Navigation accessors are
 derived getters using a plain sync walk whose depth guard is a thrown
-defect, since getters have no error channel. Headings list in document
-order; sections are delimited by root-level headings only, with ranges
+defect, since getters have no error channel, and every one of them
+recomputes per access — a caller checking repeatedly binds the result
+once. `find`/`findAll` take a node-type tag (narrowing the result through
+`MarkdownNodeOfType`, so `find("heading")` is `Heading | undefined`), a
+type-guard, or a plain predicate; they walk in pre-order — the same order
+the visitor enters nodes, starting at the root — and return matches by
+identity, so a match feeds `MarkdownFormat.modify` directly. Headings list
+in document order; sections are delimited by root-level headings only, with ranges
 spanning their subsections so the edit layer can splice whole sections;
 links pass URL strings through unmodified, with reference forms resolved
 through the definition index and an unresolvable foreign reference leaving
@@ -280,7 +291,11 @@ pathological suite pins the linear-time guarantee against Markdown's
 quadratic emphasis and link-blowup DoS vector, calibrated against a
 same-code-path baseline rather than raw milliseconds so v8 coverage
 instrumentation overhead cannot mask an algorithmic regression; the suite is
-recalibrated after any performance fix. The bare link-destination scan is
+recalibrated after any performance fix. Three of its cases nest past the
+depth cap by construction and are *refused* rather than parsed — a named
+`GUARD_REFUSED` set pins that they trip fast and with the right reason, so
+a case newly falling into that branch fails the suite; they are the
+hardening posture working, not failures. The bare link-destination scan is
 capped at a fixed open-paren count — an inherited-not-introduced defect,
 since upstream commonmark.js carries the identical uncapped loop, fixed here
 via cmark's own cap and pinned by unit tests plus a growth-ratio guard immune
@@ -324,17 +339,26 @@ a pin file recording upstream repo, ref and license:
 4. The `cmark-gfm` pathological cases — the linear-time hardening proof.
 5. `mdast-util-from-markdown` fixtures — markdown/JSON pairs with full
    positions, proving direct AST-plus-position equality through the `Mdast`
-   projection, which proves interop rather than just rendering.
+   projection, which proves interop rather than just rendering. Three
+   engine-lineage divergences between this commonmark.js port and
+   micromark's fixtures — all whitespace-shaped stored values, none
+   reachable from mdast's field contracts — are masked symmetrically on
+   both trees and each pinned by a tripwire.
 
 The standing goal is an empty skip map, matching the `toml` precedent: the
 dialect matrix runs the whole CommonMark corpus under both dialects with an
-explicitly asserted bidirectional divergence list, so a divergence that
-appears or disappears fails the suite. The differential oracle is the
-`commonmark` npm package, an exact-pinned devDependency imported only by a
-property test, following the `smol-toml` pattern; it is pinned to the
-CommonMark dialect because it knows no GFM, and has surfaced a genuine
-upstream defect handled by a narrow oracle-side correction plus a tripwire
-test that fails if upstream fixes it. Property tests assert parse never
+explicitly asserted bidirectional divergence list (eleven examples: six
+tagfilter, five autolink-literal), so a divergence that appears or
+disappears fails the suite. The differential oracle is the `commonmark` npm
+package, an exact-pinned devDependency imported only by a property test,
+following the `smol-toml` pattern; it is pinned to the CommonMark dialect
+because it knows no GFM, and has surfaced a genuine upstream defect handled
+by a narrow oracle-side correction plus a tripwire test that fails if
+upstream fixes it. Known limitations of the stringifier are pinned the same
+way, so a red tripwire can mean a limitation was fixed rather than a
+regression — see
+[markdown-red-tripwire-may-mean-a-limitation-moved](../gotchas/markdown-red-tripwire-may-mean-a-limitation-moved.md).
+Property tests assert parse never
 throws, node positions span valid offsets, splice idempotence, stringify∘parse
 re-parse equivalence, and frontmatter round-trip through all three real
 codecs.

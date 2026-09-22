@@ -25,8 +25,8 @@ sources:
     resource: ../../packages/workspaces/src/Workspaces.ts
 generated:
   by: "okfit/claude-code"
-  at: 2026-09-20T05:21:37Z
-  body_sha256: 3772c51b4cd06d49a921e6254847eeb5809b9ece8f39211a99389cabe90e9661
+  at: 2026-09-22T01:21:07Z
+  body_sha256: 34aa5261467ef89b1e438bf6f5daad61c6f9a63c0543608cfa5fc16f6c4e058e
 ---
 
 # @effected/workspaces: monorepo tooling
@@ -137,6 +137,10 @@ mechanics:
   first.
 - `CatalogAssemblyError` is not this package's module; it lives in
   `@effected/npm` beside the contract that names it.
+- Lockfile framing is not this package's job. `@effected/lockfiles` owns
+  pnpm's multi-document `pnpm-lock.yaml`, and `LockfileReader` only calls
+  `Lockfile.parse` and resolves pnpm importer paths to names; no
+  richest-document-wins or other framing workaround belongs here.
 - Sorting and file-to-package lookup are not services: sorting is methods on
   the `DependencyGraph` value class (see
   [the graph interface](../interfaces/workspaces-graph.md)), and file
@@ -158,7 +162,11 @@ concepts: [discovery and detection](../interfaces/workspaces-discovery.md),
 `layerWithConfigDependenciesSubprocess`, `layerWithGit`,
 `layerWithGitAndConfigDependencies`,
 `layerWithGitAndConfigDependenciesSubprocess`, and `layerWithGitAndHooks` over a caller-supplied hooks layer), the one-call manifest path
-(`resolverLayer`, `resolveManifest`), and `localExecLayer`. `Workspaces` is a
+(`resolverLayer`, `resolveManifest`), and `localExecLayer`. The git
+composites take `WorkspacesGitOptions` — `WorkspacesOptions` plus
+`WorkspaceSnapshotsOptions` — which is how a layer-level `seedCatalogs`
+reaches `at(ref)` without hand-composing the graph.[^workspaces-ts]
+`Workspaces` is a
 static class with a private constructor rather than an `as const` namespace
 object, because an `as const` object's member types are inferred in the
 built `.d.ts` and lose their TSDoc, while `static readonly` members keep it
@@ -268,11 +276,18 @@ still an untrusted, potentially cyclic input, and the package parses text:
 ## Testing
 
 Suites use suite-boundary `layer(...)` blocks, never a per-test
-`Effect.provide`. The whole package tests without a platform package: core's
-path layer and a real in-memory volume from `@effected/memfs` (a
-devDependency) drive discovery, enumeration, and detection, and
-git-dependent tests use `@effected/git`'s own shipped double, so nothing
-needs a repository on disk. One integration test discovers this repository
+`Effect.provide`; a suite-boundary layer cannot vary per test, so each
+distinct fixture tree gets its own `layer(...)` block. The whole package
+tests without a platform package: core's path layer and a real in-memory
+volume from `@effected/memfs` (a devDependency) drive discovery,
+enumeration, and detection — the fixture helper seeds a volume from a
+`Tree` record and injects its misbehaviours as faults — and git-dependent
+tests use `@effected/git`'s own shipped double, so nothing needs a
+repository on disk. Fixtures are chosen to discriminate: the per-root
+discovery tests stand up two workspaces that disagree on membership and
+versions, because roots that agree cannot tell a re-read from a re-root,
+and the `pnpm peers check` oracle is committed output, never a live
+subprocess (see [peer-dependency checking](../interfaces/workspaces-peer-check.md#the-differential-oracle)). One integration test discovers this repository
 for real, which is the proof the stack composes against a real pnpm
 workspace and is what originally surfaced the config-dependencies
 lockfile-framing shape now owned by `@effected/lockfiles`.
@@ -311,6 +326,7 @@ suppressed.
 - [The second-published-entrypoint decision](../decisions/second-published-entrypoint.md)
 - [Gotcha: ReleaseTag's strict-SemVer default](../gotchas/releasetag-strict-semver-default.md)
 - [Gotcha: the publishability detector diagnoses late](../gotchas/publishability-detector-diagnoses-late.md)
+- [Gotcha: PeerCheck never joins a link:-resolved parent's peers and still reports verified](../gotchas/peer-check-link-parent-reports-verified.md)
 - [Limitation: PeerCheck cannot answer yarn](../limitations/workspaces-peer-check-yarn-and-suppression-axes.md)
 - [Limitation: under the no-op hooks layer, a hook-injected catalog bump between refs is invisible to a snapshot diff](../limitations/workspaces-snapshot-hook-catalog-bump-between-refs.md)
 
@@ -328,5 +344,5 @@ suppressed.
     `suppressWarnings` entry naming `ae-forgotten-export` and the `_base`
     pattern.
 [^workspaces-ts]: `packages/workspaces/src/Workspaces.ts` —
-    `resolverLayer` and `resolveManifest` (`static readonly` members near the
-    end of the file).
+    `WorkspacesGitOptions`, and `resolverLayer` and `resolveManifest`
+    (`static readonly` members near the end of the file).

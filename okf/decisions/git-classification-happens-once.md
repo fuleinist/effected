@@ -8,8 +8,8 @@ tags:
   - security
 generated:
   by: "okfit/claude-code"
-  at: 2026-09-13T05:33:04Z
-  body_sha256: 3a86c17b2866aecec121b5f882513b33998ec30dda12775162d0ba77cde7c1cf
+  at: 2026-09-22T01:21:07Z
+  body_sha256: 8e9b17588c6e738162490101484e51aa2488a6aa92f4cb1eec6e382c5bada4c1
 ---
 
 # Git failure classification happens once, in one private function
@@ -54,13 +54,42 @@ kind-gated, so adding them changed no other member's error union —
 `GitCommandError`, pinned by a regression test rather than by intent.
 
 `classify` is gated by a `ClassifyKind` selecting which method-specific
-rows apply on top of the shared taxonomy — the absent-at-ref degrade for
-`show`, the exit-1-is-false degrade for `refExists`, a silent-exit-1
-degrade to absence for `defaultBranch`/`configGet`/`configGetAll`/`checkIgnore`,
-and the `"push"`/`"merge"` kinds above. Both `PlatformError` and
-`Cause.TimeoutError` are absorbed inside `runClassified`, so a `Git`
-method's error channel only ever sees this package's own typed errors,
-never core's raw plumbing.
+rows apply on top of the shared taxonomy (`exitCode === 0` is success,
+`"not a git repository"` is `NotARepositoryError`, an unknown-revision
+phrase is `UnknownRefError`, anything else non-zero is `GitCommandError`
+with `exitCode` and `stderr`). What each kind buys, and which members ride
+it:
+
+| kind | members | the row it enables |
+| --- | --- | --- |
+| `"show"` | `show` | an absent-at-ref phrase degrades to `Option.none()` |
+| `"refExists"` | `refExists` | exit 1 is `false`, and so is `unknownRef` — the contract is "does this resolve", so an unrecognized ref syntax must not throw |
+| `"quiet"` | `defaultBranch`, `configGet`, `configGetAll`, `checkIgnore`, `mergeBaseOption` | a **silent** exit 1 is absence (`Option.none()` or `[]`); exit 1 with any stderr text stays a real failure |
+| `"noSuchRemote"` | `remoteUrl` | `"No such remote"` degrades to `Option.none()` |
+| `"push"` | `push` | `[rejected]` together with `non-fast-forward`, `fetch first` or `stale info` is `NonFastForwardError`; git 2.54's remote-moved wording is `fetch first`, not the classic phrase, and the `--force-with-lease` lease failure is `stale info` |
+| `"merge"` | `pull`, `stashPop`, `stashApply` | `would be overwritten by` on stderr is `DirtyWorktreeError`; `CONFLICT (`, `Automatic merge failed` or `could not apply` is `MergeConflictError` — the one place `classify` reads **stdout**, because git's merge machinery reports conflicts there while a rebase-mode pull's `could not apply` lands on stderr |
+| `"log"` | `log` | an unborn HEAD (`does not have any commits yet`) is the empty listing — scoped to `log` because for every other member an unborn HEAD is a real failure |
+| `"generic"` | everything else | none |
+
+`mergeBase` deliberately stays `"generic"` while `mergeBaseOption` is
+`"quiet"`: disjoint histories exit 1 silently, and the loud failure is the
+contract `mergeBase`'s existing consumers depend on, so the one argv backs
+both members. `"couldn't find remote ref"` sits in the unknown-ref
+patterns for every member, though only `fetch`, `submoduleUpdate` and
+`submoduleAdd` produce it. The two-ref members, `mergeBase` and
+`changedFiles`, report `UnknownRefError` with `ref` set to the `"a...b"`
+range label rather than either ref alone.
+
+Both `PlatformError` and `Cause.TimeoutError` are absorbed inside
+`runClassified` — a spawn-level failure becomes a `GitCommandError` with
+`detail` set and no `exitCode`, and the 30-second `GIT_TIMEOUT` becomes
+one with `detail: "timed out after 30s"` — so a `Git` method's error
+channel only ever sees this package's own typed errors, never core's raw
+plumbing. `log` is the one member whose parser can fail: every other
+parser is total, but two ISO dates must decode and a record short of its
+declared fields cannot be answered plausibly, so `parseLog` returns a
+`Result` and both shapes surface as a `GitCommandError` with `detail`,
+never a defect.
 
 The stderr matching itself is unanchored substring matching against
 `LC_ALL=C`-pinned phrases, an accepted, recorded tradeoff — a path or ref

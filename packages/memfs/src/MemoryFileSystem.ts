@@ -1141,7 +1141,16 @@ export class MemoryFileSystem {
 	 * the same discipline: a parameterized factory (bind to a `const`),
 	 * per-build memoization (each provide re-seeds), and a contradictory seed
 	 * **dies** as a wiring bug — use
-	 * {@link MemoryFileSystem.makeInspectableWith} for the error channel. To
+	 * {@link MemoryFileSystem.makeInspectableWith} for the error channel.
+	 *
+	 * Re-seeding per provide has a consequence for write assertions: resolving
+	 * {@link MemoryFileSystem.Volume} under a SECOND `Effect.provide` of the
+	 * same layer value — even the same bound `const` — observes a fresh volume
+	 * holding only the seed, so every post-run "nothing was written" assertion
+	 * passes vacuously. Resolve `Volume` inside the program the layer is
+	 * provided to, or pin the identity with
+	 * {@link MemoryFileSystem.makeInspectableWith} and
+	 * `Layer.succeed(FileSystem.FileSystem, pair.fileSystem)`. To
 	 * inspect a volume UNDER fault injection, compose with `Layer.provideMerge`
 	 * so the decorated `FileSystem` wins while `Volume` survives:
 	 * `MemoryFileSystem.layerFaulty(faults).pipe(Layer.provideMerge(Inspectable))`.

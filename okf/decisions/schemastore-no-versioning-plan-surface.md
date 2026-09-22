@@ -4,8 +4,8 @@ title: No SchemaVersioning.plan surface
 description: SchemaVersioning ships no separate planning function, because catalogUrls already sorts and dedupes the version set a plan would compute.
 status: draft
 sources:
-  - id: claude-modules
-    resource: ../../packages/schemastore/CLAUDE.modules.md
+  - id: versioning
+    resource: ../../packages/schemastore/src/SchemaVersioning.ts
 generated:
   by: "okfit/claude-code"
   at: 2026-09-13T05:33:04Z

@@ -33,8 +33,8 @@ sources:
     resource: ../../packages/schemastore-cli/package.json
 generated:
   by: "okfit/claude-code"
-  at: 2026-09-16T18:59:18Z
-  body_sha256: 56b8c7a7e1cd3ef4e704d57a17130fe4f661f45e46e6758ee82e8472d4d3f114
+  at: 2026-09-22T01:21:07Z
+  body_sha256: 89418d7e6c6d39c0afadb3a92c93762a61489974aa64d720670fafec025ede93
 ---
 
 # @effected/schemastore-cli
@@ -90,7 +90,11 @@ allows — one predicate, two verdicts), the standard `ajv-formats`
 vocabulary and only the vocabulary (`addFormats(ajv, { keywords: false })`),
 a fresh instance per call so shared `$id`s never collide, findings as
 `ValidationFinding` values and mechanism failures as
-`SchemaValidatorError`.[^ajv-validator] `cli/execute.ts` composes it
+`SchemaValidatorError`.[^ajv-validator] The plugin is bound with one
+hop, `ajvFormats.default`, which is correct in both module worlds and
+not a workaround — see
+[ajv-formats' default import is not callable](../gotchas/ajv-formats-default-import-is-not-callable.md).
+`cli/execute.ts` composes it
 where it composed the library's layer, and the CLI's own tests own the
 engine suite (`__test__/ajv-validator.test.ts`).
 

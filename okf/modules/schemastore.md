@@ -12,10 +12,14 @@ tags:
 sources:
   - id: package-json
     resource: ../../packages/schemastore/package.json
-  - id: claude-md
-    resource: ../../packages/schemastore/CLAUDE.md
-  - id: claude-modules
-    resource: ../../packages/schemastore/CLAUDE.modules.md
+  - id: entrypoint
+    resource: ../../packages/schemastore/src/index.ts
+  - id: keyword-families
+    resource: ../../packages/schemastore/src/KeywordFamilies.ts
+  - id: annotation-tests
+    resource: ../../packages/schemastore/__test__/annotation-carrying.test.ts
+  - id: pipeline-tests
+    resource: ../../packages/schemastore/__test__/schema-pipeline.test.ts
   - id: limits
     resource: ../../packages/schemastore/src/internal/limits.ts
   - id: hosted-schema
@@ -24,8 +28,8 @@ sources:
     resource: ../../packages/schemastore/src/StoreDocument.ts
 generated:
   by: "okfit/claude-code"
-  at: 2026-09-15T15:38:20Z
-  body_sha256: 07cea1b3f77a697bfded284c3edbc0fb2ce964a6503c4fe5598c428b80f25591
+  at: 2026-09-22T01:21:07Z
+  body_sha256: 78ed1f3350a3ad8acc958d5609a85cd25f2a562ffd6fb521eab4a080460544f3
 ---
 
 # @effected/schemastore
@@ -106,7 +110,7 @@ constraints in view:
 ## Module surface
 
 Module-per-concept, no barrel re-exports below the
-entrypoint.[^claude-md][^claude-modules] The load-bearing division:
+entrypoint.[^entrypoint] The load-bearing division:
 
 - **`StoreDocument`** — the assembly. Owns the `#/definitions` →
   `#/$defs` `$ref` rewrite the Draft-07 lowering makes necessary, the
@@ -144,7 +148,16 @@ entrypoint.[^claude-md][^claude-modules] The load-bearing division:
   keyword registry, in two groups: the upstream language-server families
   and the house `x-ai-` machine-annotation namespace. The assembly, the
   lint and the validator all consume its single predicate, so they
-  cannot drift on what counts as declared.
+  cannot drift on what counts as declared. The upstream group is the
+  vscode five by exact name plus the `x-taplo`, `x-tombi-` and
+  `x-intellij-` prefixes, mirrored from SchemaStore's CONTRIBUTING;
+  `x-ai-` (with the dash — bare `x-ai` and a look-alike like `x-aida-foo`
+  stay undeclared) is owned here, a namespace rather than a vocabulary
+  whose one recommended, non-binding key is `x-ai-hint`. No upstream
+  sanctions it: it is for self-hosted publication, not schemastore.org
+  submission without that repo's own config entry.[^keyword-families]
+  What a namespace cannot promise is bounded by the engine — see
+  [declared-family keys are bounded by ajv](../limitations/schemastore-declared-family-keys-are-bounded-by-ajv.md).
 - **`SchemaValidator`** — the validation contract and its doubles; the
   engine is the CLI's `AjvValidator`. See
   [the validation gate](#the-validation-gate-ajv-ships-closed).
@@ -245,7 +258,9 @@ emitted root after assembly, override keys winning over generated ones
 and `undefined` values skipped rather than written. Admission is gated
 up front, before anything is generated: a key must be one of the
 standard annotation keywords (`title`, `description`, `$comment`,
-`default`, `examples`, `readOnly`, `writeOnly`) or fall in a declared
+`default`, `examples`, `readOnly`, `writeOnly`, `contentMediaType`,
+`contentEncoding` — the last two are Draft-07 §8 content vocabulary,
+annotations ajv does not assert) or fall in a declared
 keyword family, and anything else fails `UndeclaredAnnotationKeyError`
 naming the override keys — so when both this gate and the
 `includeAnnotationKey` gate would fire, the override's keys are the ones
@@ -253,11 +268,20 @@ reported, and the override can never smuggle in an assertion keyword.
 Placement follows Draft-07's rule that validators ignore `$ref`
 siblings: when the assembled root is exactly a bare local `$ref`
 (`{ "$ref": "#/$defs/X" }`, the shape a `Schema.Class` root produces),
-the merge lands on the `$defs` entry the pointer names — decoded through
-core's `JsonPointer.parseUriFragment`, so a pointer-escaped or
-percent-encoded name resolves — rather than on a root that would carry
-the keys nowhere. Override values are shared by reference exactly like
-`.annotate()` payloads, and the `$ref` rewrite never walks them.
+AND the root is that entry's only referent, the merge lands on the
+`$defs` entry the pointer names — decoded through core's
+`JsonPointer.parseUriFragment`, so a pointer-escaped or percent-encoded
+name resolves — rather than on a root that would carry the keys nowhere.
+When the entry has other referents (a recursive class, or one another
+definition reaches — counted over `root` and every `defs` entry, never
+inside a declared-family payload) the root becomes
+`{ ...overrides, allOf: [{ $ref }] }`, the Draft-07 shape that annotates
+a root without titling every occurrence of the type. `DocumentLint`'s
+`DescriptionWithoutUrl` reads the description from wherever assembly
+put it (the entry, at `/$defs/<name>/description`, for a bare `$ref`
+root), so the advisory and the override agree on placement. Override
+values are shared by reference exactly like `.annotate()` payloads, and
+the `$ref` rewrite never walks them.
 
 ## Generated objects are closed by default
 
@@ -518,7 +542,12 @@ is deliberately looser than the structural depth cap
 bug, since the structural walk stopped classifying at the cap and
 handed the remainder to a comparison that then ran out of frames before
 reaching the leaves, comparing a deeply-nested but identical document as
-different.
+different. The structural cap guards four recursive surfaces, each in
+its own channel: the `$ref` rewrite fails typed `SchemaConversionError`,
+the canonical emitter fails typed `JsonDepthExceededError` (which also
+intercepts cycles), the lint degrades to a `DepthExceeded` finding so it
+stays total, and the diff stops classifying and reads any difference
+below the cap as `"contract"` — the safe direction.
 
 ## The pipeline: orchestration as a shipped surface
 
@@ -533,7 +562,11 @@ requirements compose through `R` for free, and a service would add a
 layer to wire for no capability the consumer lacks. Gating is policy and
 must be overridable: the default treats warnings as blocking, which is
 right, but a hardcoded policy would send anyone who disagrees back to
-hand-rolling the whole loop. Findings are values, never logs.
+hand-rolling the whole loop. Findings are values, never logs: both
+gates' findings normalize into one `PipelineFinding` shape (engine
+findings always `"warning"`) so a single `blocking` predicate judges
+lint and engine alike, and `runOne`/`checkOne` take one target so a
+one-target caller need not prove element zero exists.
 
 Know which gate actually blocks: a pipeline document is always built
 through the generation path, and `StoreDocument.fromSchema` refuses an
@@ -576,7 +609,36 @@ Tests live in `__test__/` (`@effect/vitest`, `assert.*` — never
 integration test.[^package-json] The version-label grammar is pinned by
 property tests (`it.prop` over generated one-to-three-component labels):
 every label parses and round-trips verbatim, and `Order` is invariant
-under zero-padding to three components. `savvy.build.ts` carries the narrow
+under zero-padding to three components.
+
+Which filesystem double a suite uses follows what it must observe.
+`SchemaFile`'s unit tests stub single members of `FileSystem.layerNoop`
+under `Path.layer`, because each case exercises one call. The
+contract-gate suite is the exception: classifying a real predecessor
+needs **pre-existing content** on disk, so it runs over `@effected/memfs`'s
+`MemoryFileSystem.layerInspectableWith` seeded with the predecessor
+text — a deny-by-default `layerNoop` would have to fabricate the very
+read path the suite exists to exercise.[^pipeline-tests] That layer
+re-seeds a fresh volume on every build ([memfs's isolation
+rule](memfs.md)), so the suite resolves `MemoryFileSystem.Volume`
+*inside* the program the layer is provided to, never through a second
+`Effect.provide` of the same layer value: the second provide observes a
+fresh volume holding only the seed, and a "nothing was written"
+read-back passes vacuously. The corrupted-file repair case is the one
+assertion a fresh volume cannot satisfy, which is how the hazard was
+caught.
+
+Two facts about core that the suite leans on rather than re-probes:
+core's generator is total over `Schema.declare` (a bare declaration
+emits `{ "type": "null" }` rather than throwing), so
+`SchemaConversionError`'s only fireable path in tests is the package's
+own rewrite depth cap; and `Schema.Annotations.Annotations` carries an
+index signature (`readonly [x: string]: unknown`), so
+`Schema.String.annotate({ "x-taplo": {…} })` type-checks with no module
+augmentation. The lowering's per-attachment-site behaviour is not a
+recorded probe but a permanent test.[^annotation-tests]
+
+`savvy.build.ts` carries the narrow
 `{ messageId: "ae-forgotten-export", pattern: "_base" }` suppression for
 the heritage symbols, and `SchemaTarget`'s class/interface merge carries
 a house `biome-ignore lint/suspicious/noUnsafeDeclarationMerging` under
@@ -586,10 +648,16 @@ the statics-only justification recorded in
 [^package-json]: `packages/schemastore/package.json` —
     `@effected/semver` as the only regular dependency, `effect` as the
     peer; `@effect/platform-node` as a devDependency.
-[^claude-md]: `packages/schemastore/CLAUDE.md` — tier, scope fence, and
-    the rules index.
-[^claude-modules]: `packages/schemastore/CLAUDE.modules.md` — per-module
-    surface listing.
+[^entrypoint]: `packages/schemastore/src/index.ts` — the entrypoint's
+    one-module-per-concept export list; nothing below it re-exports.
+[^keyword-families]: `packages/schemastore/src/KeywordFamilies.ts` — the
+    two groups, `isDeclared`, and the `x-ai-` namespace doc block.
+[^annotation-tests]: `packages/schemastore/__test__/annotation-carrying.test.ts`
+    — asserts on raw `JsonSchema.toDocumentDraft07` output per attachment
+    site, with no package code in the assertion path.
+[^pipeline-tests]: `packages/schemastore/__test__/schema-pipeline.test.ts`
+    — the contract-gate suite over `MemoryFileSystem.layerInspectableWith`,
+    and the header comment on resolving `Volume` inside the provided program.
 [^limits]: `packages/schemastore/src/internal/limits.ts:11` —
     `MAX_NESTING_DEPTH = 256`.
 [^hosted-schema]: `packages/schemastore/src/HostedSchema.ts` — the class,

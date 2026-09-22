@@ -8,8 +8,8 @@ resource: ../../packages/github
 tags: [bundle, architecture]
 generated:
   by: "okfit/claude-code"
-  at: 2026-09-13T05:33:04Z
-  body_sha256: 1aa2d64781cb63e6006267fdf7fc046eabe209a04d524cf62683b3d44cd018e3
+  at: 2026-09-22T01:21:07Z
+  body_sha256: acf1afc161d550b734b64ea4682399759e0b4fb9282f314d05725a19294c03b6
 ---
 
 # @effected/github
@@ -241,9 +241,23 @@ runnable anywhere.
   pagination engine the live layer uses and records the page requests it
   issued (`RecordedCall`, carrying `kind` and params), which is what makes
   truncation testable and what makes normalising writes testable.
-- An unstubbed fixture route dies naming the route; a recorded `GitHubError`
-  is a stubbed failure. A missing fixture is test wiring, not a domain
-  outcome.
+- An unstubbed fixture route dies naming the route (`unstubbed: "die"`, the
+  default); a recorded `GitHubError` value is how a suite stubs a 404, a 422
+  or a rate limit deliberately. A missing fixture is test wiring, not a
+  domain outcome, and a typed failure is only loud in code that does not
+  catch — a consumer catching `GitHubError` per resource turns a missing
+  stub into a different execution path whose failures name no fixture.
+  `"fail"` restores the typed not-found and `"empty"` serves an empty value
+  for a suite whose subject is decisions rather than endpoints; `graphql`
+  ignores the setting and always dies, since no empty payload decodes
+  against a document's schema. `fixtures.requested` records every call as a
+  `RecordedCall` — `kind`, `route` (the document name for `graphql`), the
+  params it was made with, and `perPage` for a paginated read — so a suite
+  can assert what a method *sent*, which is the question a normalising
+  write turns on.
+- Repairing fixtures after a route moves is where a false green gets
+  manufactured — see
+  [repaired fixtures go green on an impossible state](../gotchas/repaired-fixtures-go-green-on-impossible-state.md).
 - Pure classes get pure tests, with no layer at all; the byte budgeter gets
   a property test over multi-byte and four-byte code points.
 - A pagination-forwarding test exists per paginating method.
@@ -279,5 +293,7 @@ error at import time while typechecking clean
 - [why `github` owns the octokit runtime](../decisions/github-owns-octokit-runtime.md)
 - [the GraphQL schema is not owned here](../limitations/github-graphql-schema-not-owned.md)
 - [branch reset closes an open pull request](../gotchas/branch-reset-closes-pull-request.md)
+- [repaired fixtures go green on an impossible state](../gotchas/repaired-fixtures-go-green-on-impossible-state.md)
+- [the compat re-export is droppable](../decisions/github-compat-re-export-droppable.md)
 - [the github-split program](../glossary/github-split.md)
 - [the tier taxonomy](../glossary/library-tier.md)

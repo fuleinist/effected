@@ -1,0 +1,71 @@
+---
+type: Convention
+title: The markdown canonical form is a published commitment — a row that moves is a breaking change
+description: "Markdown.stringify takes no options and its output is documented as stable; change a canonical choice only as a breaking change, updating the TSDoc table, the README table and the byte-level suite together."
+status: stable
+stale_after: "2027-03-21T00:00:00Z"
+tags:
+  - release
+  - compat
+sources:
+  - id: stringify-tsdoc
+    resource: ../../packages/markdown/src/Markdown.ts
+  - id: readme-canonical
+    resource: ../../packages/markdown/README.md
+  - id: stringify-suite
+    resource: ../../packages/markdown/__test__/stringify.test.ts
+generated:
+  by: "okfit/claude-code"
+  at: 2026-09-22T01:21:07Z
+  body_sha256: a6c0d5a1f61986a8fac71d28c5cad33e7621185a0f325669984a866c0e6ee926
+---
+
+# The markdown canonical form is a published commitment — a row that moves is a breaking change
+
+`Markdown.stringify` in the [markdown module](../modules/markdown.md) takes
+no options, and its output is documented as stable on the TSDoc of
+`Markdown.stringifyResult`[^stringify-tsdoc] and in the package README's
+"The canonical form is stable" section[^readme-canonical]: a consumer is
+told they may assert on these bytes, and that a pipeline needing stable
+rendered markdown should serialize through here rather than through a
+third-party stringifier whose defaults are free to move. The "documented
+canonical form" suite asserts every row of that published table
+byte-for-byte[^stringify-suite].
+
+## The rule
+
+- **Treat any change to a canonical choice as a breaking change**, never a
+  patch, and bump accordingly. A row that moves silently breaks a promise
+  consumers were invited to depend on.
+- **Update the three copies together**: the table on
+  `Markdown.stringifyResult`'s TSDoc, the README table, and the
+  "documented canonical form" suite. A row present in one and absent from
+  another is a drifted promise.
+- **Never add a `stringify` option.** The configurable surface is
+  `MarkdownFormat` + `MarkdownFormattingOptions`; the canonical stringifier
+  is deliberately option-free so the corpora stay byte-stable. In
+  particular the MDX `{` escape stays presence-keyed rather than becoming an
+  option — see [the presence-keyed escape
+  decision](../decisions/markdown-mdx-escape-presence-keyed.md).
+
+## The two escapes the table itself states
+
+Both were found by a consumer rather than by the package, and both are
+documented on the same surfaces rather than left to be rediscovered:
+
+- **Representability outranks a row.** The canonical form never emits text
+  that would re-parse as something else, so a row yields where the two
+  conflict. The case that reaches consumers is a language-less `Code` node
+  directly after a list: indenting there is absorbed as list content, so it
+  emits fenced in that position and indented everywhere else — a byte
+  assertion over synthesized code blocks therefore depends on the
+  preceding sibling. See
+  [languageless-code-node-indents](../gotchas/languageless-code-node-indents.md).
+- **`Mdast.fromMdast` strips fidelity fields**, being a spec-mdast admission
+  boundary, so fidelity fields are settable only on the decoded tree; the
+  drop is correct and silent, which is why both the boundary and the
+  emitter document it.
+
+[^stringify-tsdoc]: `packages/markdown/src/Markdown.ts` — the "canonical form is a stability commitment" TSDoc on `stringifyResult` and `stringify`.
+[^readme-canonical]: `packages/markdown/README.md` — "The canonical form is stable", including "Representability wins over the table".
+[^stringify-suite]: `packages/markdown/__test__/stringify.test.ts` — "Markdown.stringify — the documented canonical form".

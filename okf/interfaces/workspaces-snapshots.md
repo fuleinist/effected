@@ -16,8 +16,8 @@ sources:
     resource: ../../packages/workspaces/src/ChangeDetector.ts
 generated:
   by: "okfit/claude-code"
-  at: 2026-09-20T05:41:00Z
-  body_sha256: 6eddd73a06883839c4b2bcb2477294abe7a93e1565da082e2c0296f55d79b870
+  at: 2026-09-22T01:21:07Z
+  body_sha256: 381b34d786cede51177ac591c84248979ac415258b256f609babb3e9612fa44a
 ---
 
 # @effected/workspaces snapshots
@@ -132,6 +132,27 @@ a consumer diffs directly (see
 [the cross-ref bump limitation](../limitations/workspaces-snapshot-hook-catalog-bump-between-refs.md)).
 Both cases are pinned by tests.
 
+## WorkspaceStateSnapshot
+
+The snapshot is a serializable value — `packages`, `catalogs`,
+`importerVersions`, `hookReplays`, and the seed — with lazily built private
+indexes behind `versions`, `package(name)`, `resolve`, and `resolveIn`. A
+specifier is classified through `@effected/npm`'s `DependencySpecifier`,
+never prefix-sniffed. The value also exposes snapshot-scoped
+`catalogResolver`, `workspaceResolver`, and `resolvers` layers answering
+`@effected/npm`'s contracts as of that moment, so a consumer can resolve a
+manifest against a past ref with the same code it uses against the
+worktree.[^workspace-state-snapshot-ts] `PackageStateSnapshot` is the
+narrower per-member slice; a version-less member records `""` on both the
+ref and worktree reads, because a diff's two sides must agree on the shape.
+
+The two failure unions are `WorkspaceSnapshotAtFailure` — git's typed
+errors, `CatalogAssemblyError` from the inline source, and
+`WorkspaceRootNotFoundError` — and `WorkspaceSnapshotWorktreeFailure`,
+which never touches git. A malformed lockfile at the ref is a broken
+record rather than a broken source of truth and degrades to no catalogs;
+only the inline source hard-fails.[^workspace-snapshots-ts]
+
 ## Importer versions
 
 The join is by dependency name across every field, because pnpm writes a
@@ -139,7 +160,8 @@ peer into the importer block only when it is also installed, so a peer's
 concrete version can sit on a different row than expected. Recorded
 versions must be normalized, because `@effected/lockfiles` stores the
 importer version verbatim including pnpm's peer suffix, which unstripped
-renders the whole parenthesized chain as a version.
+renders the whole parenthesized chain as a version. `link:` and `file:`
+entries are skipped — a filesystem edge is not a version.
 
 Workspace-wide resolution answers only when every importer recording that
 dependency agrees — divergence is `Option.none()`, never a guess. The
@@ -149,8 +171,12 @@ relative path.
 ## Change detection
 
 `ChangeDetector` computes a committed range and optionally folds in
-working-tree changes, with a non-repository surfacing as git's own typed
-error alongside this package's own error union. A test provides
+working-tree changes, unioned and sorted, with a non-repository surfacing
+as git's own typed error alongside this package's own error union. Every
+query runs in git's relative mode, so paths come back relative to the
+workspace root rather than the repository top level — correct when the
+workspace is nested inside a larger repository, the same nesting the
+`./`-prefixed snapshot reads guard against.[^change-detector-ts] A test provides
 `@effected/git`'s own shipped double, whose unstubbed members die named,
 and needs no repository on disk.
 

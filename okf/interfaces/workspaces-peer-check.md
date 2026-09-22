@@ -15,8 +15,8 @@ sources:
     resource: ../../packages/workspaces/__test__/fixtures/peers/README.md
 generated:
   by: "okfit/claude-code"
-  at: 2026-09-20T05:41:00Z
-  body_sha256: 9cb33f48086d7faa8e638d013d228d36cb9ed4cd78f970423d9b280e4d07470b
+  at: 2026-09-22T01:21:07Z
+  body_sha256: 33b6fe038d8922d8b7ad5535d8ad1aad0267932301641a0fc5edbe23322c7312
 ---
 
 # @effected/workspaces peer-dependency checking
@@ -177,7 +177,10 @@ in it at all. `react-dom>react` is a literal name nothing declares, so it
 matches nothing on either axis, versioned or not — the parent-version quirk
 above has nothing to attach to. The patterns are `@pnpm/matcher`'s
 (restated in `src/internal/peerPatterns.ts` so the `@pnpm/*` edge stays
-confined to the catalogs module): a lone `*` matches everything; otherwise
+confined to the catalogs module, with `@effected/npm`'s
+`ReleaseAgeGate.matchesExclude` — the same `@pnpm/matcher` grammar, already
+owned there for `minimumReleaseAgeExclude` — as the single-pattern
+primitive): a lone `*` matches everything; otherwise
 `*` is a wildcard within the name and a pattern without one is plain
 equality; a leading `!` negates. Composition over a list is order-sensitive
 when includes and negations mix — `["*", "!redux"]` is everything but
@@ -225,6 +228,11 @@ package from ever being handed a wrong edge, but that means an absent key
 carries two different meanings, "nothing resolved" and "something resolved
 that could not be named", and this package treats the first as a positive
 finding.
+
+One known hole in the fail-closed posture is open: a parent reached through
+a `link:` edge has no package row, so its peers are never joined and the
+report still says verified. See
+[the link-parent gotcha](../gotchas/peer-check-link-parent-reports-verified.md).
 
 ## The differential oracle
 
