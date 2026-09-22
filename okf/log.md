@@ -1,5 +1,20 @@
 # Log
 
+## 2026-09-20
+
+* Updated @effected/workspaces catalogs and the config-dependency seam
+* Updated @effected/workspaces peer-dependency checking
+* Updated @effected/workspaces snapshots
+* Updated @effected/workspaces: monorepo tooling
+* Updated PeerCheck cannot answer yarn
+* Updated Under the no-op hooks layer, a hook-injected catalog's range bump between two refs is invisible to a snapshot diff
+
+## 2026-09-19
+
+* Updated Support the current major and one back of every package manager
+* Updated Vendored Effect is pinned to the catalog tag, not main
+* Added npm 12's pack --json is an object keyed by name, not an array
+
 ## 2026-09-17
 
 * Updated "Wait for the kit" leaves raw spawns and duplicated regex behind
@@ -11,6 +26,8 @@
 * Updated app
 * Updated store
 * Updated github-actions
+* Updated actions-storage
+* Added pnpm 12's placeholder bin dies as a SyntaxError when shimmed under node
 
 ## 2026-09-16
 

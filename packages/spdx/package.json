@@ -1,6 +1,6 @@
 {
 	"name": "@effected/spdx",
-	"version": "0.7.1",
+	"version": "0.8.0",
 	"private": true,
 	"description": "SPDX license expressions as Effect Schema classes",
 	"homepage": "https://github.com/spencerbeggs/effected/tree/main/packages/spdx#readme",
@@ -24,7 +24,7 @@
 	},
 	"devDependencies": {
 		"@effect/vitest": "catalog:effect",
-		"@savvy-web/bundler": "^2.4.2",
+		"@savvy-web/bundler": "^2.4.7",
 		"@types/node": "catalog:build",
 		"effect": "catalog:effect",
 		"oxc-parser": "^0.150.0",

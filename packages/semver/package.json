@@ -1,6 +1,6 @@
 {
 	"name": "@effected/semver",
-	"version": "0.7.1",
+	"version": "0.8.0",
 	"private": true,
 	"description": "Strict SemVer 2.0.0 versions, ranges and comparators as Effect schemas.",
 	"keywords": ["semver", "semantic-versioning", "effect", "schema", "range", "version", "effected"],
@@ -33,7 +33,7 @@
 	},
 	"devDependencies": {
 		"@effect/vitest": "catalog:effect",
-		"@savvy-web/bundler": "^2.4.2",
+		"@savvy-web/bundler": "^2.4.7",
 		"@types/node": "catalog:build",
 		"effect": "catalog:effect",
 		"typescript": "catalog:build"

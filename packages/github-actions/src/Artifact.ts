@@ -1,12 +1,14 @@
 import { BlobClient, BlockBlobClient } from "@azure/storage-blob";
 import { Context, Effect, FileSystem, Layer, Option, Path, Result, Schema } from "effect";
 import { HttpClient } from "effect/unstable/http";
-import { ChildProcess, ChildProcessSpawner } from "effect/unstable/process";
+import type { ChildProcess } from "effect/unstable/process";
+import { ChildProcessSpawner } from "effect/unstable/process";
 import { ActionEnvironment } from "./ActionEnvironment.js";
 import type { FileBlobTransfer } from "./BlobTransfer.js";
 import { BlobTransferError } from "./BlobTransfer.js";
 import type { BackendIds } from "./internal/actionsResults.js";
 import { misconfiguredDetail, resultsBackend } from "./internal/actionsResults.js";
+import { unzipCommand, zipCommand, zipManifest } from "./internal/archiveCommands.js";
 import { digestFileHex } from "./internal/digest.js";
 import { isWindowsRunner } from "./internal/runner.js";
 import { spawnOnce } from "./internal/spawn.js";
@@ -106,8 +108,9 @@ export interface UploadOptions {
 	 * The zlib level, 0–9, defaulting to 6 as `@actions/artifact` does.
 	 *
 	 * @remarks
-	 * Out-of-range values are clamped. No effect on Windows, where
-	 * `Compress-Archive` has no numeric equivalent.
+	 * Out-of-range values are clamped. On Windows the level maps onto .NET's
+	 * `CompressionLevel`: `0` is `NoCompression`, `1..3` `Fastest`, `4..8`
+	 * `Optimal`, `9` `SmallestSize`.
 	 */
 	readonly compressionLevel?: number | undefined;
 }
@@ -345,49 +348,46 @@ const make = (
 		const moved = (artifact: string) =>
 			Effect.mapError((cause: BlobTransferError) => new ArtifactError({ reason: "transferFailed", artifact, cause }));
 
-		const zip = (files: ReadonlyArray<string>, root: string, destination: string, level: number, artifact: string) => {
-			// Stored relative to `rootDirectory`: `zip` and `Compress-Archive` both
-			// record the paths exactly as given, so absolute inputs would extract
-			// into a tree named after the runner that produced them.
-			const relative = files.map((file) => path.relative(root, file));
-			return windows
-				? archive(
-						ChildProcess.make(
-							"pwsh",
-							[
-								"-NoProfile",
-								"-NonInteractive",
-								"-Command",
-								`Compress-Archive -Path ${relative.map((file) => `'${file.replaceAll("'", "''")}'`).join(",")} -DestinationPath '${destination.replaceAll("'", "''")}' -Force`,
-							],
-							{ cwd: root },
-						),
-						artifact,
-					)
-				: archive(
-						ChildProcess.make(
-							"zip",
-							[`-${Math.min(9, Math.max(0, Math.trunc(level)))}`, "-qr", destination, ...relative],
-							{
-								cwd: root,
-							},
-						),
-						artifact,
+		const zip = (files: ReadonlyArray<string>, root: string, destination: string, level: number, artifact: string) =>
+			// Stored relative to `rootDirectory`: `zip` records the paths exactly
+			// as given, and the Windows script states each entry name explicitly
+			// from the same relative path, so the two archives have one structure
+			// — and absolute inputs would extract into a tree named after the
+			// runner that produced them.
+			Effect.gen(function* () {
+				const relative = files.map((file) => path.relative(root, file));
+				// The Windows list travels one path per line (`internal/archiveCommands.ts`
+				// says why), so a path holding a line break cannot be represented.
+				// Rejected on every platform: the same upload must not succeed on one
+				// runner and fail on another.
+				const unrepresentable = relative.find((file) => file.includes("\n") || file.includes("\r"));
+				if (unrepresentable !== undefined) {
+					return yield* Effect.fail(
+						new ArtifactError({
+							reason: "invalidOptions",
+							artifact,
+							detail: `a file path may not contain a line break: ${JSON.stringify(unrepresentable)}`,
+						}),
 					);
-		};
+				}
+				// Beside the archive inside the scratch directory, so `scratch`'s
+				// release removes it with the zip. `writeFileString` is UTF-8 with no
+				// BOM, which is what `File.ReadAllLines` needs to read the first path
+				// intact.
+				const manifest = path.join(path.dirname(destination), "artifact.manifest");
+				if (windows) {
+					yield* fs
+						.writeFileString(manifest, zipManifest(relative))
+						.pipe(Effect.mapError((cause) => new ArtifactError({ reason: "archiveFailed", artifact, cause })));
+				}
+				yield* archive(zipCommand({ windows, root, files: relative, manifest, destination, level }), artifact);
+			});
 
+		// One spelling with ToolInstaller.extractZip (`internal/archiveCommands.ts`):
+		// the Windows half must use the overwrite overload, or a download into a
+		// non-empty path fails with an empty stderr.
 		const unzip = (source: string, destination: string, artifact: string) =>
-			windows
-				? archive(
-						ChildProcess.make("pwsh", [
-							"-NoProfile",
-							"-NonInteractive",
-							"-Command",
-							`Add-Type -AssemblyName System.IO.Compression.FileSystem; [System.IO.Compression.ZipFile]::ExtractToDirectory('${source.replaceAll("'", "''")}', '${destination.replaceAll("'", "''")}')`,
-						]),
-						artifact,
-					)
-				: archive(ChildProcess.make("unzip", ["-oq", source, "-d", destination]), artifact);
+			archive(unzipCommand({ windows, source, destination }), artifact);
 
 		return {
 			upload: Effect.fn("Artifact.upload")(function* (

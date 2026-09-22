@@ -1,6 +1,6 @@
 {
 	"name": "@effected/git",
-	"version": "0.15.2",
+	"version": "0.16.0",
 	"private": true,
 	"description": "Typed git introspection over Effect's ChildProcessSpawner: read a repository's state at any ref without checking it out, plus a marked mutating tier.",
 	"keywords": ["git", "ls-tree", "merge-base", "ref", "effect", "effected"],
@@ -34,7 +34,7 @@
 	"devDependencies": {
 		"@effect/platform-node": "catalog:effect",
 		"@effect/vitest": "catalog:effect",
-		"@savvy-web/bundler": "^2.4.2",
+		"@savvy-web/bundler": "^2.4.7",
 		"@types/node": "catalog:build",
 		"effect": "catalog:effect",
 		"typescript": "catalog:build"

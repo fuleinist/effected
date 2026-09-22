@@ -1,6 +1,6 @@
 {
 	"name": "@effected/github",
-	"version": "0.10.2",
+	"version": "0.11.0",
 	"private": true,
 	"description": "Typed GitHub REST and GraphQL services over the octokit core request surface, with app auth and resource helpers.",
 	"keywords": ["github", "octokit", "rest", "graphql", "app-auth", "effect", "effected"],
@@ -44,7 +44,7 @@
 	"devDependencies": {
 		"@effect/platform-node": "catalog:effect",
 		"@effect/vitest": "catalog:effect",
-		"@savvy-web/bundler": "^2.4.2",
+		"@savvy-web/bundler": "^2.4.7",
 		"@types/node": "catalog:build",
 		"effect": "catalog:effect",
 		"typescript": "catalog:build"

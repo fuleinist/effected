@@ -4,7 +4,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { NodeServices } from "@effect/platform-node";
 import { assert, describe, it } from "@effect/vitest";
-import { Effect, FileSystem, Layer, Option, Sink, Stream } from "effect";
+import { Effect, FileSystem, Layer, Option, PlatformError, Sink, Stream } from "effect";
 import { badArgument } from "effect/PlatformError";
 import { TestClock } from "effect/testing";
 import { FetchHttpClient } from "effect/unstable/http";
@@ -136,6 +136,23 @@ const liveWithFileSystem = (
 		),
 	);
 
+/**
+ * What the Node platform hands back for a cross-device rename: the errno maps
+ * to no named tag, so it is `Unknown` with the `EXDEV` exception as the cause.
+ */
+const exdev = (from: string, to: string) =>
+	PlatformError.systemError({
+		_tag: "Unknown",
+		module: "FileSystem",
+		method: "rename",
+		pathOrDescriptor: from,
+		syscall: "rename",
+		cause: Object.assign(new Error(`EXDEV: cross-device link not permitted, rename '${from}' -> '${to}'`), {
+			code: "EXDEV",
+			syscall: "rename",
+		}),
+	});
+
 /** A fetch that counts its calls — the observable for "did it download?". */
 const countingFetch = (respond: () => Response) => {
 	let count = 0;
@@ -171,6 +188,34 @@ describe("ToolInstaller", () => {
 				"/opt/hostedtoolcache/node/22.11.0/x64",
 			);
 		});
+
+		it.live("the service's cachePath is the static layout over the resolved root — pure, no IO", () =>
+			withRoot((root) =>
+				Effect.gen(function* () {
+					// What PackageManagerInstaller writes into its shims BEFORE the
+					// swap: the same answer `cacheDir` lands at, from the same closure,
+					// so the two can no longer be derived twice and diverge.
+					const installer = yield* ToolInstaller;
+					assert.strictEqual(
+						installer.cachePath("node", "22.11.0"),
+						ToolInstaller.cachePath({ root, tool: "node", version: "22.11.0", arch: process.arch }),
+					);
+					assert.isFalse(existsSync(installer.cachePath("node", "22.11.0")), "cachePath must not create anything");
+				}),
+			),
+		);
+
+		it.live("cacheDir lands exactly where cachePath said it would", () =>
+			withRoot((root) =>
+				Effect.gen(function* () {
+					const installer = yield* ToolInstaller;
+					const source = join(root, "staged");
+					mkdirSync(source, { recursive: true });
+					writeFileSync(join(source, "tool.txt"), "x");
+					assert.strictEqual(yield* installer.cacheDir(source, "node", "1.2.3"), installer.cachePath("node", "1.2.3"));
+				}),
+			),
+		);
 	});
 
 	describe("find", () => {
@@ -222,9 +267,93 @@ describe("ToolInstaller", () => {
 					);
 					assert.strictEqual(readFileSync(join(cached, "bin"), "utf8"), "#!/bin/sh\n");
 					assert.deepStrictEqual(yield* installer.find("node", "22.11.0"), Option.some(cached));
+					// The contract: `cacheDir` CONSUMES its source. On one filesystem the
+					// tree is renamed into the cache, so nothing is left at the source path.
+					assert.isFalse(existsSync(source), "cacheDir must consume its source");
 				}),
 			),
 		);
+
+		it.live("falls back to a copy when the source is on another filesystem, and still consumes it", () => {
+			const root = scratch();
+			const source = join(root, "src");
+			let refused = 0;
+			return Effect.gen(function* () {
+				mkdirSync(join(source, "nested"), { recursive: true });
+				writeFileSync(join(source, "bin"), "#!/bin/sh\n");
+				writeFileSync(join(source, "nested", "lib.js"), "module.exports = 1;\n");
+
+				const installer = yield* ToolInstaller;
+				const cached = yield* installer.cacheDir(source, "node", "22.11.0");
+				assert.strictEqual(refused, 1, "exactly the source rename is refused; the swap into the cache stays real");
+				assert.strictEqual(readFileSync(join(cached, "bin"), "utf8"), "#!/bin/sh\n");
+				assert.strictEqual(readFileSync(join(cached, "nested", "lib.js"), "utf8"), "module.exports = 1;\n");
+				assert.deepStrictEqual(yield* installer.find("node", "22.11.0"), Option.some(cached));
+				assert.isFalse(existsSync(source), "the copy path must consume the source too");
+			}).pipe(
+				Effect.provide(
+					liveWithFileSystem(
+						root,
+						(fs) => ({
+							...fs,
+							// A cross-device rename: Node reports EXDEV, which the platform
+							// maps to an `Unknown` SystemError with the errno as its cause.
+							rename: (from, to) =>
+								from === source
+									? Effect.sync(() => {
+											refused += 1;
+										}).pipe(Effect.flatMap(() => Effect.fail(exdev(from, to))))
+									: fs.rename(from, to),
+						}),
+						alwaysFails,
+					),
+				),
+				Effect.ensuring(Effect.sync(() => rmSync(root, { recursive: true, force: true }))),
+			);
+		});
+
+		it.live("does not fall back to a copy for a rename failure that is not EXDEV", () => {
+			const root = scratch();
+			const source = join(root, "src");
+			return Effect.gen(function* () {
+				mkdirSync(source, { recursive: true });
+				writeFileSync(join(source, "bin"), "#!/bin/sh\n");
+
+				const installer = yield* ToolInstaller;
+				const error = yield* Effect.flip(installer.cacheDir(source, "node", "22.11.0"));
+				assert.instanceOf(error, ToolInstallerError);
+				assert.strictEqual(error.reason, "cacheFailed");
+				// A copy fallback here would mask a real failure (a permission
+				// problem, say) as a slow success — and would have consumed the source.
+				assert.isTrue(existsSync(join(source, "bin")), "a non-EXDEV failure must leave the source untouched");
+				assert.isTrue(Option.isNone(yield* installer.find("node", "22.11.0")));
+			}).pipe(
+				Effect.provide(
+					liveWithFileSystem(
+						root,
+						(fs) => ({
+							...fs,
+							rename: (from, to) =>
+								from === source
+									? Effect.fail(
+											PlatformError.systemError({
+												_tag: "PermissionDenied",
+												module: "FileSystem",
+												method: "rename",
+												pathOrDescriptor: from,
+												cause: Object.assign(new Error(`EACCES: permission denied, rename '${from}' -> '${to}'`), {
+													code: "EACCES",
+												}),
+											}),
+										)
+									: fs.rename(from, to),
+						}),
+						alwaysFails,
+					),
+				),
+				Effect.ensuring(Effect.sync(() => rmSync(root, { recursive: true, force: true }))),
+			);
+		});
 
 		it.live("leaves NOTHING at the cache path when the install fails", () =>
 			withRoot((root) =>
@@ -607,5 +736,21 @@ describe("ToolInstaller", () => {
 				assert.deepStrictEqual(found, Option.some("/cached"));
 			}).pipe(Effect.provide(ToolInstaller.layerTest({ find: () => Effect.succeed(Option.some("/cached")) }))),
 		);
+
+		it("cachePath is the one member with a default: the static layout over RUNNER_TOOL_CACHE or the off-runner root", () => {
+			// Pure and total, so dying would only punish every test that reads it
+			// through PackageManagerInstaller. The default mirrors `make`'s own
+			// resolution (`internal/runner.ts`), read from the ambient environment
+			// because a double has no ActionEnvironment to ask.
+			const root = process.env.RUNNER_TOOL_CACHE ?? "/tmp/runner-tool-cache";
+			assert.strictEqual(
+				ToolInstaller.makeTest().cachePath("node", "22.11.0"),
+				ToolInstaller.cachePath({ root, tool: "node", version: "22.11.0", arch: process.arch }),
+			);
+			assert.strictEqual(
+				ToolInstaller.makeTest({ cachePath: () => "/elsewhere" }).cachePath("node", "1"),
+				"/elsewhere",
+			);
+		});
 	});
 });

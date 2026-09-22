@@ -1,6 +1,6 @@
 {
 	"name": "@effected/cli",
-	"version": "0.5.2",
+	"version": "0.6.0",
 	"private": true,
 	"description": "The boundary layer of an effect/unstable/cli program: plain CLI output, failure reporting, and schema-issue rendering",
 	"keywords": ["effect", "cli", "logger", "terminal"],
@@ -39,7 +39,7 @@
 		"@effected/toml": "workspace:*",
 		"@effected/walker": "workspace:*",
 		"@effected/yaml": "workspace:*",
-		"@savvy-web/bundler": "^2.4.2",
+		"@savvy-web/bundler": "^2.4.7",
 		"@types/node": "catalog:build",
 		"effect": "catalog:effect",
 		"typescript": "catalog:build"
