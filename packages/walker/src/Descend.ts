@@ -41,16 +41,20 @@ export interface DescendOptions {
 	 * symlinked directory is never entered (cycle safety). Under `true` links
 	 * are followed with the cycle guard kept underneath, in `@actions/glob`'s
 	 * `traversalChain` semantics: each descended directory records its real
-	 * path (`FileSystem.realPath`) on its own branch's ancestor chain, and a
-	 * directory whose real path is already an ancestor of the current branch
-	 * closes a cycle and is skipped — so link loops terminate while two
-	 * sibling links resolving to the same target both enumerate. A link whose
-	 * real path cannot be resolved is skipped: the guard cannot reason about
-	 * it. Following links matches `@actions/glob`'s default
-	 * `followSymbolicLinks: true` and Node's `fs.promises.readdir(path,
-	 * { recursive: true })` — but the cycle guard is `@actions/glob`'s alone:
-	 * Node's recursive `readdir` keeps no traversal chain and recurses without
-	 * bound on a link loop.
+	 * path on its own branch's ancestor chain (only the base and each link pay
+	 * a `FileSystem.realPath`; a plain directory's is derived from its
+	 * parent's), and a directory whose real path is already an ancestor of the
+	 * current branch closes a cycle and is skipped — so link loops terminate
+	 * while two sibling links resolving to the same target both enumerate. A
+	 * link whose real path cannot be resolved is never entered, and the
+	 * failure follows `onUnreadable` exactly as an unreadable directory does:
+	 * `NotFound` is a benign race and stays silent, anything else fails typed
+	 * by default, is recorded under `"record"`, and is forgotten under
+	 * `"skip"`. Following links matches `@actions/glob`'s default
+	 * `followSymbolicLinks: true` and Node's recursive
+	 * `fs.promises.readdir` — but the cycle guard is `@actions/glob`'s
+	 * alone: Node's recursive `readdir` keeps no traversal chain and recurses
+	 * without bound on a link loop.
 	 */
 	readonly followSymlinks?: boolean;
 }
@@ -79,7 +83,8 @@ export interface DescendRecordOptions extends Omit<DescendOptions, "onUnreadable
 
 /**
  * One directory `descend` could not read under `onUnreadable: "record"`: its
- * `cwd`-relative path and the `PlatformError` that `readDirectory` failed
+ * `cwd`-relative path and the `PlatformError` that `readDirectory` — or,
+ * for a symlinked directory under `followSymlinks`, `realPath` — failed
  * with. The cause is the very failure the walk absorbed, so a caller that
  * must report WHY a directory was unreadable never re-reads it.
  *
@@ -96,15 +101,16 @@ export interface UnreadableDirectory {
 	 * these entries as ordinary paths will not expect that; special-case it.
 	 */
 	readonly path: string;
-	/** The `readDirectory` failure, never `NotFound` (a vanished directory is a benign race and is not recorded). */
+	/** The `readDirectory` (or, for a link under `followSymlinks`, `realPath`) failure, never `NotFound` (a vanished directory is a benign race and is not recorded). */
 	readonly cause: PlatformError.PlatformError;
 }
 
 /**
  * `descend`'s success value under `onUnreadable: "record"`: the matched
  * FILE paths plus an {@link UnreadableDirectory} for every mid-walk
- * directory whose `readDirectory` failed for a reason other than `NotFound`
- * (a vanished directory stays a benign race in every mode and is never
+ * directory whose `readDirectory` (or, under `followSymlinks`, a symlinked
+ * directory whose `realPath`) failed for a reason other than `NotFound` (a
+ * vanished directory stays a benign race in every mode and is never
  * recorded).
  *
  * @public
@@ -227,28 +233,34 @@ const descendImpl: (
 		);
 
 	/**
-	 * The real path of a non-link directory, falling back to `absolute` itself
-	 * when resolution fails — a directory that stat-resolved moments ago can
-	 * still vanish before the resolve, and a benign race must not fail the
-	 * walk. Only for entries that are NOT links: a link whose real path fails
-	 * to resolve goes through {@link realOfLink} and is skipped instead.
+	 * The real path of a directory the cycle guard must identify — the walk
+	 * base, or a symlinked directory — or `undefined` when the walk must not
+	 * enter it. A link the resolver cannot resolve is one the guard cannot
+	 * reason about: recording a stand-in (the link's own path) would make
+	 * every hop around a loop look unseen, so the subtree is never queued.
+	 * Whether the caller HEARS about it follows `onUnreadable` exactly as a
+	 * failed `readDirectory` does: a `NotFound` is the benign vanished-target
+	 * race (the subtree would have read as empty anyway) and stays silent in
+	 * every mode; anything else — `EACCES` on a path component, above all —
+	 * is a subtree this walk was asked to enumerate and cannot, so the
+	 * default fails typed, `"record"` keeps the path and the cause, and
+	 * `"skip"` forgets it. A silent skip here would hand a caller a smaller
+	 * answer with nothing reporting it, which is the failure `"fail"` exists
+	 * to prevent.
 	 */
-	const realOf = (absolute: string): Effect.Effect<string> =>
-		fs.realPath(absolute).pipe(Effect.orElseSucceed(() => absolute));
-
-	/**
-	 * The real path of a symlink, or `undefined` when resolution fails. A link
-	 * the resolver cannot resolve is one the cycle guard cannot reason about —
-	 * recording a stand-in (the link's own path) would make every hop around a
-	 * loop look unseen, so the walk skips the link instead. A target that
-	 * vanished between the listing and the resolve would have read as empty
-	 * anyway, and `EACCES` on a path component means a subtree this walk has
-	 * no business enumerating through a link.
-	 */
-	const realOfLink = (absolute: string): Effect.Effect<string | undefined> =>
+	const realPathOf = (absolute: string, relative: string): Effect.Effect<string | undefined, DescendError> =>
 		fs.realPath(absolute).pipe(
 			Effect.map((real): string | undefined => real),
-			Effect.orElseSucceed(() => undefined),
+			Effect.catch((error) => {
+				if (error.reason._tag === "NotFound") return Effect.succeed(undefined);
+				if (onUnreadable === "fail") {
+					return Effect.fail(
+						new DescendError({ pattern: pattern.source, reason: "unreadableDirectory", path: relative }),
+					);
+				}
+				if (onUnreadable === "record") unreadable.push({ path: relative, cause: error });
+				return Effect.succeed(undefined);
+			}),
 		);
 
 	/** Wrap the walk's success value per `onUnreadable`: a plain array unless "record" asked for the pair. */
@@ -276,7 +288,12 @@ const descendImpl: (
 	// Under followSymlinks the base's real path seeds the root frame's ancestor
 	// chain — the `@actions/glob` traversalChain position for the search path —
 	// so a link resolving back to the base is the cycle it is, on every branch.
-	const baseAncestors: ReadonlyArray<string> = followSymlinks ? [yield* realOf(absoluteBase)] : NO_ANCESTORS;
+	let baseAncestors: ReadonlyArray<string> = NO_ANCESTORS;
+	if (followSymlinks) {
+		const real = yield* realPathOf(absoluteBase, base);
+		if (real === undefined) return finish([]);
+		baseAncestors = [real];
+	}
 
 	// Only a pattern that can match below one level earns a descent; a negated
 	// pattern matches everything its inner pattern does NOT, so it can match
@@ -334,13 +351,20 @@ const descendImpl: (
 			// branch closes a cycle and is skipped. Sibling links resolving to
 			// one target sit on separate branches, so both enumerate — the
 			// parity the runner's globber has, which a walk-global visited set
-			// would break. A link whose real path cannot be resolved is
-			// skipped: the guard cannot reason about it, and recording a
-			// stand-in (the link's own path) would make every hop around a
-			// loop look unseen and never terminate.
+			// would break. Only a LINK pays a `realPath`: a plain directory's
+			// real path is its parent's real path (the chain's last entry —
+			// the base was resolved up front, and every link since was) plus
+			// its own name, derived with no syscall and no failure mode. A
+			// link whose real path cannot be resolved is never queued — the
+			// guard cannot reason about it, and a stand-in (the link's own
+			// path) would make every hop around a loop look unseen — and
+			// `realPathOf` reports or fails that per `onUnreadable`.
 			let ancestors = frame.ancestors;
 			if (followSymlinks) {
-				const real = (yield* isSymbolicLink(absolute)) ? yield* realOfLink(absolute) : yield* realOf(absolute);
+				const parentReal = frame.ancestors[frame.ancestors.length - 1] ?? frame.absolute;
+				const real = (yield* isSymbolicLink(absolute))
+					? yield* realPathOf(absolute, relative)
+					: path.join(parentReal, entry);
 				if (real === undefined || frame.ancestors.includes(real)) continue;
 				ancestors = [...frame.ancestors, real];
 			} else if (yield* isSymbolicLink(absolute)) {
@@ -368,7 +392,8 @@ const descendImpl: (
  * `onUnreadable: "record"`, resolving to a {@link DescendResult} — the
  * matched FILE paths relative to `cwd` (POSIX separators, sorted) plus an
  * {@link UnreadableDirectory} — path and cause — for every mid-walk
- * directory whose `readDirectory` failed for a reason other than `NotFound`.
+ * directory whose `readDirectory` (or, under `followSymlinks`, a symlinked
+ * directory whose `realPath`) failed for a reason other than `NotFound`.
  * The walk continues past each such directory exactly as `"skip"` does; it
  * never aborts and it never discards the offending path or its cause.
  *
@@ -405,7 +430,9 @@ export function descend(
  * `@actions/glob`'s `traversalChain` cycle guard: a directory is a cycle only
  * when its real path is already an ancestor of the current branch, so sibling
  * links resolving to the same target both enumerate. A link whose real path
- * cannot be resolved is skipped. A dangling symlink is not a match. A
+ * cannot be resolved is never entered, and a resolution failure other than
+ * `NotFound` is an unreadable directory under `onUnreadable`. A dangling
+ * symlink is not a match. A
  * directory that vanishes between its parent's listing and its own read is a
  * benign race and reads as empty. A pattern that cannot match below one level
  * (no globstar, no mid-pattern magic segment) reads a single level and never

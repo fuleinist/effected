@@ -316,6 +316,78 @@ layer(platform(mutualCycleTree, mutualCycleOptions))("descend, followSymlinks mu
 	);
 });
 
+// A symlinked directory whose real path cannot be resolved. The walk never
+// enters it (the guard cannot reason about a link it cannot identify), and
+// the failure is VISIBLE under onUnreadable exactly as a failed readDirectory
+// is — a silent skip would hand back a smaller answer with nothing reporting
+// it, the failure "fail" exists to prevent. NotFound stays the benign race.
+const unresolvableTree = {
+	"/proj/real/dir/inner.ts": "",
+	"/proj/src/a.ts": "",
+};
+const unresolvableOptions = {
+	symlinks: { "/proj/src/linkdir": "/proj/real/dir" },
+	unresolvable: { "/proj/src/linkdir": "PermissionDenied" as const },
+};
+
+layer(platform(unresolvableTree, unresolvableOptions))("descend, followSymlinks unresolvable link", (it) => {
+	it.effect("fails typed by default, naming the link as the unreadable directory", () =>
+		Effect.gen(function* () {
+			const pattern = yield* GlobPattern.compile("src/**/*.ts");
+			const error = yield* Effect.flip(descend(pattern, { cwd: "/proj", followSymlinks: true }));
+			assert.strictEqual(error._tag, "DescendError");
+			assert.strictEqual(error.reason, "unreadableDirectory");
+			assert.strictEqual(error.path, "src/linkdir");
+		}),
+	);
+
+	it.effect("records the link with the realPath failure under onUnreadable: record", () =>
+		Effect.gen(function* () {
+			const pattern = yield* GlobPattern.compile("src/**/*.ts");
+			const result = yield* descend(pattern, { cwd: "/proj", followSymlinks: true, onUnreadable: "record" });
+			assert.deepStrictEqual(result.matches, ["src/a.ts"]);
+			assert.strictEqual(result.unreadable.length, 1);
+			const [entry] = result.unreadable;
+			assert.strictEqual(entry?.path, "src/linkdir");
+			assert.strictEqual(entry?.cause.reason._tag, "PermissionDenied");
+			assert.strictEqual(entry?.cause.reason.method, "realPath");
+		}),
+	);
+
+	it.effect("skips the link and forgets it under onUnreadable: skip", () =>
+		Effect.gen(function* () {
+			const pattern = yield* GlobPattern.compile("src/**/*.ts");
+			const found = yield* descend(pattern, { cwd: "/proj", followSymlinks: true, onUnreadable: "skip" });
+			assert.deepStrictEqual(found, ["src/a.ts"]);
+		}),
+	);
+
+	it.effect("the resolve never happens under followSymlinks: false, so the fault is unreachable", () =>
+		Effect.gen(function* () {
+			const pattern = yield* GlobPattern.compile("src/**/*.ts");
+			assert.deepStrictEqual(yield* descend(pattern, { cwd: "/proj" }), ["src/a.ts"]);
+		}),
+	);
+});
+
+// The same link, vanishing between the listing and the resolve.
+const vanishedLinkOptions = {
+	symlinks: { "/proj/src/linkdir": "/proj/real/dir" },
+	unresolvable: { "/proj/src/linkdir": "NotFound" as const },
+};
+
+layer(platform(unresolvableTree, vanishedLinkOptions))("descend, followSymlinks vanished link", (it) => {
+	it.effect("a NotFound on the resolve is a benign race: silent under fail, never recorded", () =>
+		Effect.gen(function* () {
+			const pattern = yield* GlobPattern.compile("src/**/*.ts");
+			assert.deepStrictEqual(yield* descend(pattern, { cwd: "/proj", followSymlinks: true }), ["src/a.ts"]);
+			const result = yield* descend(pattern, { cwd: "/proj", followSymlinks: true, onUnreadable: "record" });
+			assert.deepStrictEqual(result.matches, ["src/a.ts"]);
+			assert.deepStrictEqual(result.unreadable, []);
+		}),
+	);
+});
+
 // An unreadable directory inside the walked subtree.
 const unreadableTree = {
 	"/proj/src/a.ts": "",
