@@ -326,7 +326,6 @@ suppressed.
 - [The second-published-entrypoint decision](../decisions/second-published-entrypoint.md)
 - [Gotcha: ReleaseTag's strict-SemVer default](../gotchas/releasetag-strict-semver-default.md)
 - [Gotcha: the publishability detector diagnoses late](../gotchas/publishability-detector-diagnoses-late.md)
-- [Gotcha: PeerCheck never joins a link:-resolved parent's peers and still reports verified](../gotchas/peer-check-link-parent-reports-verified.md)
 - [Limitation: PeerCheck cannot answer yarn](../limitations/workspaces-peer-check-yarn-and-suppression-axes.md)
 - [Limitation: under the no-op hooks layer, a hook-injected catalog bump between refs is invisible to a snapshot diff](../limitations/workspaces-snapshot-hook-catalog-bump-between-refs.md)
 
