@@ -417,18 +417,22 @@ export class CacheKey extends Schema.Class<CacheKey>("CacheKey")(
 	 * failure mode a cache key has.
 	 *
 	 * Candidates are matched by their path **relative to the workspace**, and a
-	 * literal that climbs above it (`../lockfile`) is dropped, which is what
-	 * makes "never hash a file outside the workspace" structural rather than a
-	 * rule someone has to remember. Directories are excluded: a directory
+	 * literal that climbs above it (`../lockfile`) is dropped lexically — no
+	 * literal reaches outside the workspace through path text. The walk is
+	 * another matter: under `followSymlinks` a symlinked directory whose target
+	 * lives outside the workspace IS descended, and its files DO contribute to
+	 * the key — parity with `@actions/glob`, which follows links out of the
+	 * tree too. Directories are excluded: a directory
 	 * called `notes.txt` matches `**\/*.txt` and is not a file, and hashing it
 	 * would fail rather than being ignored. An absent literal is a miss; any
 	 * other failure to read one is a typed `CacheKeyReadError`, because a key
 	 * derived from an incomplete file set is wrong in a way nothing reports.
 	 *
-	 * **One knowing divergence from the runner's `hashFiles()`:** `descend`
-	 * never enters a symlinked directory (cycle safety), where `@actions/glob`
-	 * follows links by default. A file reachable only through a symlinked
-	 * directory does not contribute to the key.
+	 * Symlinked directories are followed (`descend` under
+	 * `followSymlinks: true`), matching `@actions/glob`'s default
+	 * `followSymbolicLinks: true` — a file reachable only through a symlinked
+	 * directory contributes to the key, and `descend`'s real-path cycle guard
+	 * keeps link loops finite.
 	 *
 	 * The answer is sorted, so a caller cannot make its key depend on the order
 	 * the filesystem happened to report.
@@ -455,12 +459,18 @@ export class CacheKey extends Schema.Class<CacheKey>("CacheKey")(
 		// only, `cwd`-relative posix paths — so a Windows runner matches too.
 		// Nothing is pruned implicitly, matching the runner's own `hashFiles()`;
 		// an exclusion is the caller's `!pattern`, re-applied over the union
-		// below because each include is expanded alone.
+		// below because each include is expanded alone. Under `followSymlinks`
+		// the walk follows symlinked directories with `@actions/glob`'s
+		// traversal-chain cycle guard, so files reachable only through a
+		// symlinked directory contribute to the key — matching the runner's
+		// `hashFiles()` default of `followSymbolicLinks: true`.
 		const candidates = new Set<string>();
 		for (const literal of set.literals) {
 			const target = path.join(workspace, literal);
 			// A literal that climbs above the workspace is not this workspace's
-			// file, whatever is there; the walk below cannot reach outside either.
+			// file, whatever is there. (The walk below is not so bounded: a
+			// symlinked directory targeting outside the workspace is descended,
+			// matching `@actions/glob`'s out-of-tree link following.)
 			const relative = path.relative(workspace, target);
 			if (relative === "" || relative.startsWith("..") || path.isAbsolute(relative)) {
 				continue;
@@ -485,7 +495,7 @@ export class CacheKey extends Schema.Class<CacheKey>("CacheKey")(
 			if (wildcard.negated) {
 				continue;
 			}
-			const found = yield* descend(wildcard, { cwd: workspace, prune: [] }).pipe(
+			const found = yield* descend(wildcard, { cwd: workspace, prune: [], followSymlinks: true }).pipe(
 				Effect.mapError((cause) => new CacheKeyReadError({ path: path.join(workspace, cause.path), cause })),
 			);
 			for (const match of found) {

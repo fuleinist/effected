@@ -3,8 +3,8 @@ import { tmpdir } from "node:os";
 import { basename, join } from "node:path";
 import { NodeServices } from "@effect/platform-node";
 import { assert, describe, it } from "@effect/vitest";
-import type { Path } from "effect";
-import { Effect, FileSystem, Option, Schema } from "effect";
+import { MemoryFileSystem } from "@effected/memfs";
+import { Effect, FileSystem, Layer, Option, Path, Schema } from "effect";
 import { systemError } from "effect/PlatformError";
 import { CacheKey, CacheKeyBadPatternError, CacheKeyReadError } from "../src/index.js";
 
@@ -503,6 +503,43 @@ describe("CacheKey", () => {
 					assert.strictEqual(error.path, absent);
 				}),
 			),
+		);
+	});
+
+	describe("followSymlinks semantics (memfs, no platform package)", () => {
+		// A pure virtual POSIX volume — no real-filesystem paths anywhere, so
+		// the fixture is byte-identical across platforms. (A Windows tmpdir
+		// path mixed into memfs seeds produced spellings the volume's symlink
+		// resolver never matched, so the links silently read as dangling.)
+		const seed: Record<string, import("@effected/memfs").MemoryFileSystemSeedEntry> = {
+			"/repo/src/a.ts": "alpha\n",
+			"/repo/shared/inner.ts": "inner\n",
+			"/repo/src/one": MemoryFileSystem.symlink("/repo/shared"),
+			"/repo/src/two": MemoryFileSystem.symlink("/repo/shared"),
+			// A link resolving OUTSIDE the workspace, target seeded in the same
+			// volume: @actions/glob follows links out of the tree, so hashFiles()
+			// parity says matchingFiles must too.
+			"/repo/src/out": MemoryFileSystem.symlink("/outside"),
+			"/outside/secret.ts": "secret\n",
+		};
+		// descend requires both FileSystem and Path; provide both layers.
+		const symlinkPlatform = Layer.mergeAll(MemoryFileSystem.layerWith(seed), Path.layer);
+
+		it.effect("files reachable only through a symlinked directory contribute to the key", () =>
+			Effect.gen(function* () {
+				const matched = yield* CacheKey.matchingFiles({ workspace: "/repo", patterns: ["src/**/*.ts"] }).pipe(
+					Effect.provide(symlinkPlatform),
+				);
+				// Both sibling links to one target appear — @actions/glob's
+				// per-branch traversalChain enumerates both — and so does the
+				// out-of-workspace link target, matching the runner's hashFiles().
+				assert.deepStrictEqual(matched, [
+					"/repo/src/a.ts",
+					"/repo/src/one/inner.ts",
+					"/repo/src/out/secret.ts",
+					"/repo/src/two/inner.ts",
+				]);
+			}),
 		);
 	});
 });

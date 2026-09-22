@@ -37,16 +37,24 @@ export interface FileSystemOptions {
 	 * `readDirectory` fails NotFound — the benign-race case.
 	 */
 	readonly vanished?: ReadonlySet<string>;
+	/**
+	 * Paths whose `realPath` fails with the given reason — the
+	 * `followSymlinks` counterpart of `unreadable` / `vanished`. Seeded
+	 * symlinks still list and `stat` normally; only the resolve the cycle
+	 * guard performs is intercepted, so the walk's answer to an unresolvable
+	 * link is exercised in isolation from its answer to an unreadable one.
+	 */
+	readonly unresolvable?: Readonly<Record<string, "NotFound" | "PermissionDenied">>;
 }
 
 // The v4 constructor is `PlatformError.systemError`, not a `new SystemError` —
 // `SystemError` is the reason payload, `PlatformError` is the failure.
-const readDirFailure = (reason: "NotFound" | "PermissionDenied", path: string) =>
+const failure = (method: "readDirectory" | "realPath", reason: "NotFound" | "PermissionDenied", path: string) =>
 	Effect.fail(
 		PlatformError.systemError({
 			_tag: reason,
 			module: "FileSystem",
-			method: "readDirectory",
+			method,
 			pathOrDescriptor: path,
 		}),
 	);
@@ -60,6 +68,7 @@ const readDirFailure = (reason: "NotFound" | "PermissionDenied", path: string) =
 export const fileSystem = (tree: Tree, options: FileSystemOptions = {}): Layer.Layer<FileSystem.FileSystem> => {
 	const unreadable = options.unreadable ?? new Set<string>();
 	const vanished = options.vanished ?? new Set<string>();
+	const unresolvable = options.unresolvable ?? {};
 
 	const seed: Record<string, MemoryFileSystemSeedEntry> = {};
 	for (const [path, contents] of Object.entries(tree)) seed[path] = contents;
@@ -70,9 +79,13 @@ export const fileSystem = (tree: Tree, options: FileSystemOptions = {}): Layer.L
 
 	return MemoryFileSystem.layerFaultyWith(seed, {
 		readDirectory: (path: string) => {
-			if (unreadable.has(path)) return readDirFailure("PermissionDenied", path);
-			if (vanished.has(path)) return readDirFailure("NotFound", path);
+			if (unreadable.has(path)) return failure("readDirectory", "PermissionDenied", path);
+			if (vanished.has(path)) return failure("readDirectory", "NotFound", path);
 			return undefined; // delegate to the real volume
+		},
+		realPath: (path: string) => {
+			const reason = unresolvable[path];
+			return reason === undefined ? undefined : failure("realPath", reason, path);
 		},
 	});
 };
