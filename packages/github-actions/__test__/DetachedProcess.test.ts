@@ -409,6 +409,82 @@ describe("DetachedProcess", () => {
 			}).pipe(Effect.ensuring(Effect.sync(() => rmSync(directory, { recursive: true, force: true }))));
 		});
 
+		it.live("a supplied base replaces the parent's environment wholesale, with env merged over it", () => {
+			const directory = scratch();
+			const logFile = join(directory, "env.log");
+			// A test-owned variable, not `HOME`: nothing guarantees a runner's
+			// environment carries any particular name. Set on the parent for the
+			// test's duration only, and restored on every path.
+			const PARENT_ONLY = "EFFECTED_DETACHED_PARENT_ONLY";
+			const previous = process.env[PARENT_ONLY];
+			process.env[PARENT_ONLY] = `parent-${Math.random().toString(36).slice(2)}`;
+			return Effect.gen(function* () {
+				// The parent holds it; the child must NOT see it — the base is the
+				// whole inherited block, not additions to process.env.
+				assert.isString(process.env[PARENT_ONLY], "the control: the parent must hold the variable the child must lack");
+				const pid = yield* DetachedProcess.spawn({
+					command: process.execPath,
+					args: ["-e", "process.stdout.write(JSON.stringify(process.env));"],
+					logFile,
+					base: { ONLY: "1", PATH: process.env.PATH, DROPPED: undefined },
+					env: { X: "y" },
+				});
+				assert.isAbove(pid, 0);
+				const wrote = yield* Effect.promise(() =>
+					eventually(() => {
+						try {
+							return readFileSync(logFile, "utf8").endsWith("}");
+						} catch {
+							return false;
+						}
+					}),
+				);
+				assert.isTrue(wrote, "the child must have printed its environment");
+				const seen = JSON.parse(readFileSync(logFile, "utf8")) as Record<string, string>;
+				assert.strictEqual(seen.ONLY, "1");
+				assert.strictEqual(seen.X, "y");
+				assert.strictEqual(seen.PATH, process.env.PATH);
+				assert.notProperty(seen, PARENT_ONLY, "the parent's own variables must not leak past an explicit base");
+				// An `undefined` base value is dropped, never stringified.
+				assert.notProperty(seen, "DROPPED");
+				assert.notInclude(Object.values(seen), "undefined");
+			}).pipe(
+				Effect.ensuring(
+					Effect.sync(() => {
+						if (previous === undefined) delete process.env[PARENT_ONLY];
+						else process.env[PARENT_ONLY] = previous;
+						rmSync(directory, { recursive: true, force: true });
+					}),
+				),
+			);
+		});
+
+		it.live("env overrides a key the base also carries", () => {
+			const directory = scratch();
+			const logFile = join(directory, "env.log");
+			return Effect.gen(function* () {
+				yield* DetachedProcess.spawn({
+					command: process.execPath,
+					args: ["-e", "process.stdout.write(JSON.stringify(process.env));"],
+					logFile,
+					base: { PATH: process.env.PATH, KEY: "from-base" },
+					env: { KEY: "from-env" },
+				});
+				const wrote = yield* Effect.promise(() =>
+					eventually(() => {
+						try {
+							return readFileSync(logFile, "utf8").endsWith("}");
+						} catch {
+							return false;
+						}
+					}),
+				);
+				assert.isTrue(wrote, "the child must have printed its environment");
+				const seen = JSON.parse(readFileSync(logFile, "utf8")) as Record<string, string>;
+				assert.strictEqual(seen.KEY, "from-env");
+			}).pipe(Effect.ensuring(Effect.sync(() => rmSync(directory, { recursive: true, force: true }))));
+		});
+
 		it.live("fails typed when the command does not exist", () => {
 			const directory = scratch();
 			return Effect.gen(function* () {
