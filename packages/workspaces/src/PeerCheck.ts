@@ -38,8 +38,8 @@ import { indexInstances, rootInstances } from "./internal/roots.js";
  * - `"unresolvedEdge"` — some instance records an edge this model could not
  *   name (`ResolvedPackage.unresolvedEdges`), or an importer dependency
  *   resolved through `link:`, whose target's manifest peers the lockfile
- *   never records. Either way a peer that edge involves cannot be verified
- *   in one direction or the other.
+ *   never records. Either way the peers that edge involves are neither
+ *   confirmed satisfied nor confirmed unmet.
  *
  * Both mean **fail closed**: a gate should treat an unverified report as "not
  * proven clean" rather than as a pass.
