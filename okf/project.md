@@ -7,8 +7,8 @@ tags:
   - architecture
 generated:
   by: "claude-code/opus-5"
-  at: 2026-09-15T15:38:20Z
-  body_sha256: 7fd953dfa1815f381212a4cd0650301bdb0748c4aa410f108dc5c08dcf7d1f1d
+  at: 2026-09-23T20:44:52Z
+  body_sha256: adcf1eee6b0d9a624a021f435dc2b5e9ab51ffcbfeb31b0356e7565e05b248f5
 ---
 
 # effected
@@ -45,7 +45,9 @@ The repository holds **libraries and their companions**. Standalone tools and ap
 | `git` | boundary | invention; typed git introspection over core's `ChildProcessSpawner` |
 | `spdx` | pure | invention; vendored SPDX license expressions as pure schemas |
 | `app` | integrated | invention; thin composition over `xdg` + `config-file` + `store` |
+| `engine` | pure | invention; platform-free primitives shared across front ends (distribution identity, remediation, launch context) |
 | `cli` | boundary | invention; the CLI boundary (logger, failure reporting, issue rendering) over `effect/unstable/cli` |
+| `mcp` | boundary | invention; the MCP boundary (stdio wiring, tool-failure shaping, strict-input walkers) over `effect/unstable/ai`, plus `./testing` clients |
 | `markdown` | pure | invention; CommonMark + GFM as pure schemas |
 | `commands` | boundary | part-port of `@savvy-web/silk-effects`' `ToolDiscovery` plus invention |
 | `templates` | boundary | port of `@savvy-web/silk-effects`' `ManagedSection` |

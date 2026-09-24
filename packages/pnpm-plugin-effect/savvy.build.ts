@@ -181,8 +181,8 @@ await build({
 							source: "workspace",
 						},
 						"@effected/cli": {
-							range: "^0.7.0",
-							peer: "^0.7.0",
+							range: "^0.8.0",
+							peer: "^0.8.0",
 							strategy: "lock-minor",
 							source: "workspace",
 						},
@@ -195,6 +195,12 @@ await build({
 						"@effected/config-file": {
 							range: "^0.12.0",
 							peer: "^0.12.0",
+							strategy: "lock-minor",
+							source: "workspace",
+						},
+						"@effected/engine": {
+							range: "^0.1.0",
+							peer: "^0.1.0",
 							strategy: "lock-minor",
 							source: "workspace",
 						},
@@ -247,8 +253,14 @@ await build({
 							source: "workspace",
 						},
 						"@effected/markdown": {
-							range: "^0.12.0",
+							range: "^0.12.1",
 							peer: "^0.12.0",
+							strategy: "lock-minor",
+							source: "workspace",
+						},
+						"@effected/mcp": {
+							range: "^0.1.0",
+							peer: "^0.1.0",
 							strategy: "lock-minor",
 							source: "workspace",
 						},
@@ -289,13 +301,13 @@ await build({
 							source: "workspace",
 						},
 						"@effected/schemastore": {
-							range: "^0.15.0",
+							range: "^0.15.1",
 							peer: "^0.15.0",
 							strategy: "lock-minor",
 							source: "workspace",
 						},
 						"@effected/schemastore-cli": {
-							range: "^0.15.0",
+							range: "^0.15.1",
 							peer: "^0.15.0",
 							strategy: "lock-minor",
 							source: "workspace",
@@ -343,8 +355,8 @@ await build({
 							source: "workspace",
 						},
 						"@effected/workspaces": {
-							range: "^0.25.0",
-							peer: "^0.25.0",
+							range: "^0.26.0",
+							peer: "^0.26.0",
 							strategy: "lock-minor",
 							source: "workspace",
 						},

@@ -68,6 +68,11 @@
 		"label": "@effected/lockfiles"
 	},
 	{
+		"type": "custom-link",
+		"link": "/engine",
+		"label": "@effected/engine"
+	},
+	{
 		"type": "section-header",
 		"label": "Boundary"
 	},
@@ -130,6 +135,11 @@
 		"type": "custom-link",
 		"link": "/cli",
 		"label": "@effected/cli"
+	},
+	{
+		"type": "custom-link",
+		"link": "/mcp",
+		"label": "@effected/mcp"
 	},
 	{
 		"type": "section-header",

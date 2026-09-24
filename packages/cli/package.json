@@ -23,6 +23,7 @@
 	"type": "module",
 	"exports": {
 		".": "./src/index.ts",
+		"./testing": "./src/testing.ts",
 		"./package.json": "./package.json"
 	},
 	"scripts": {
@@ -32,12 +33,14 @@
 		"types:check": "tsc --noEmit"
 	},
 	"devDependencies": {
+		"@effect/platform-node": "catalog:effect",
 		"@effect/vitest": "catalog:effect",
 		"@effected/config-file": "workspace:*",
 		"@effected/glob": "workspace:*",
 		"@effected/jsonc": "workspace:*",
 		"@effected/toml": "workspace:*",
 		"@effected/walker": "workspace:*",
+		"@effected/workspaces": "workspace:*",
 		"@effected/yaml": "workspace:*",
 		"@savvy-web/bundler": "^2.4.9",
 		"@types/node": "catalog:build",
