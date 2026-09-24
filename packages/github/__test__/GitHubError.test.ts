@@ -6,7 +6,7 @@ const thrown = (options: {
 	status?: number;
 	message?: string;
 	headers?: Record<string, unknown>;
-	errors?: ReadonlyArray<{ message?: string }>;
+	errors?: ReadonlyArray<unknown>;
 }): unknown => ({
 	name: "HttpError",
 	message: options.message ?? "boom",
@@ -137,6 +137,34 @@ describe("GitHubError.fromOctokit", () => {
 		assert.strictEqual(error.kind, "alreadyExists");
 	});
 
+	it("reads already-exists off a structured already_exists code with no message", () => {
+		// The exact body POST /repos/{owner}/{repo}/releases answers for a tag that
+		// already has a release: no errors[].message, only the documented code.
+		const error = GitHubError.fromOctokit(
+			"Release.create",
+			thrown({
+				status: 422,
+				message: "Validation Failed",
+				errors: [{ resource: "Release", code: "already_exists", field: "tag_name" }],
+			}),
+			NOW,
+		);
+		assert.strictEqual(error.kind, "alreadyExists");
+	});
+
+	it("classifies a 422 whose structured code is something else as rejected", () => {
+		const error = GitHubError.fromOctokit(
+			"x",
+			thrown({
+				status: 422,
+				message: "Validation Failed",
+				errors: [{ resource: "Release", code: "invalid", field: "tag_name" }],
+			}),
+			NOW,
+		);
+		assert.strictEqual(error.kind, "rejected");
+	});
+
 	it("classifies a 409 saying so as alreadyExists", () => {
 		const error = GitHubError.fromOctokit("x", thrown({ status: 409, message: "Ref already exists" }), NOW);
 		assert.strictEqual(error.kind, "alreadyExists");
@@ -150,6 +178,46 @@ describe("GitHubError.fromOctokit", () => {
 		);
 		assert.strictEqual(error.kind, "rejected");
 		assert.isFalse(error.retryable);
+	});
+
+	it("carries each validation entry, skipping ones with nothing GitHub-shaped in them", () => {
+		const error = GitHubError.fromOctokit(
+			"x",
+			thrown({
+				status: 422,
+				message: "Validation Failed",
+				errors: [
+					{ resource: "Label", code: "invalid", field: "color" },
+					{ code: "custom", message: "name is reserved" },
+					"not an object",
+					{},
+					{ code: 7 },
+				],
+			}),
+			NOW,
+		);
+		assert.deepStrictEqual(
+			error.validation?.map((entry) => ({ ...entry })),
+			[
+				{ resource: "Label", field: "color", code: "invalid" },
+				{ code: "custom", message: "name is reserved" },
+			],
+		);
+	});
+
+	it("omits validation when GitHub sent no errors array", () => {
+		const error = GitHubError.fromOctokit("x", thrown({ status: 422, message: "Update is not a fast forward" }), NOW);
+		assert.isUndefined(error.validation);
+	});
+
+	it("classifies an undocumented code as rejected rather than failing to build the error", () => {
+		const error = GitHubError.fromOctokit(
+			"x",
+			thrown({ status: 422, message: "Validation Failed", errors: [{ code: "too_many" }] }),
+			NOW,
+		);
+		assert.strictEqual(error.kind, "rejected");
+		assert.strictEqual(error.validation?.[0]?.code, "too_many");
 	});
 
 	it("replaces an HTML error page with a sentence", () => {
@@ -214,6 +282,17 @@ describe("GitHubError statics", () => {
 		assert.isTrue(predicate(GitHubError.notFound("x", "y")));
 		assert.isTrue(predicate(GitHubError.alreadyExists("x", "y")));
 		assert.isFalse(predicate(GitHubError.rejected("x", 422, "no")));
+	});
+
+	it("hasValidationCode matches any listed code and is false without validation", () => {
+		const error = GitHubError.fromOctokit(
+			"x",
+			thrown({ status: 422, message: "Validation Failed", errors: [{ code: "missing_field", field: "tag_name" }] }),
+			NOW,
+		);
+		assert.isTrue(GitHubError.hasValidationCode("invalid", "missing_field")(error));
+		assert.isFalse(GitHubError.hasValidationCode("missing")(error));
+		assert.isFalse(GitHubError.hasValidationCode("missing_field")(GitHubError.rejected("x", 422, "no")));
 	});
 
 	it("is a tagged error whose tag is stable", () => {

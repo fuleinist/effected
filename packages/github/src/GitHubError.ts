@@ -32,6 +32,61 @@ export const GitHubErrorKind = Schema.Literals([
 ]);
 
 /**
+ * The validation codes GitHub documents for a 422's `errors[].code`.
+ *
+ * @remarks
+ * The complete documented set. Only `already_exists` earns its own
+ * {@link GitHubErrorKind}; every other code classifies as `rejected`, and a
+ * caller that needs to tell them apart reads {@link GitHubError}'s `validation`
+ * or uses {@link GitHubError.hasValidationCode}.
+ *
+ * `missing` is the one that looks like `notFound` and is not: it names a
+ * resource the request *referred to* — a commit sha, an assignee — not the one
+ * it acted on. Routing it to `notFound` would let every
+ * `catchIf(GitHubError.hasKind("notFound"), …)` recovery swallow a bad argument.
+ *
+ * @public
+ */
+export const GitHubValidationCode = Schema.Literals([
+	/** A resource the request referred to does not exist. */
+	"missing",
+	/** A required parameter was not sent. */
+	"missing_field",
+	/** A parameter is badly formatted. */
+	"invalid",
+	/** Another resource already has this value. Classifies as `alreadyExists`. */
+	"already_exists",
+	/** The parameters were invalid. */
+	"unprocessable",
+	/** No fixed meaning: read the entry's `message`. */
+	"custom",
+]);
+
+/**
+ * One entry from a failed response's `data.errors` array, as GitHub sent it.
+ *
+ * @remarks
+ * Every field is optional because GitHub's entries vary by endpoint: the
+ * releases endpoint sends `resource`, `code` and `field` with no `message`,
+ * while a `custom` entry may carry only a `message`. `code` is a plain string
+ * rather than {@link GitHubValidationCode} so an unexpected code cannot make
+ * the error itself fail to construct: a refused request must still surface as
+ * a `GitHubError`, never as a defect.
+ *
+ * @public
+ */
+export class GitHubValidationEntry extends Schema.Class<GitHubValidationEntry>("GitHubValidationEntry")({
+	/** The resource type GitHub validated, e.g. `"Release"`. */
+	resource: Schema.optionalKey(Schema.String),
+	/** The parameter at fault, e.g. `"tag_name"`. */
+	field: Schema.optionalKey(Schema.String),
+	/** GitHub's validation code — one of {@link GitHubValidationCode} when documented. */
+	code: Schema.optionalKey(Schema.String),
+	/** GitHub's prose, when it sent any. */
+	message: Schema.optionalKey(Schema.String),
+}) {}
+
+/**
  * Every REST failure this package produces, from every resource.
  *
  * @remarks
@@ -67,6 +122,15 @@ export class GitHubError extends Schema.TaggedError<GitHubError>()("GitHubError"
 	 * `retryable` boolean it used to travel with is now a derived getter.
 	 */
 	retryAfterMillis: Schema.optionalKey(Schema.Int),
+	/**
+	 * GitHub's validation entries, when the failed response carried any.
+	 *
+	 * @remarks
+	 * The structured half of a 422: branch on an entry's `code` and `field`
+	 * rather than on `reason`. Absent when GitHub sent no `errors` array — some
+	 * 422s ("Update is not a fast forward") are prose only.
+	 */
+	validation: Schema.optionalKey(Schema.Array(GitHubValidationEntry)),
 	/** The underlying throwable, when one exists. */
 	cause: Schema.optionalKey(Schema.Defect()),
 }) {
@@ -143,6 +207,7 @@ export class GitHubError extends Schema.TaggedError<GitHubError>()("GitHubError"
 			reason: facts.reason,
 			...(facts.status !== undefined ? { status: facts.status } : {}),
 			...(retryAfterMillis !== undefined ? { retryAfterMillis } : {}),
+			...(facts.validation.length > 0 ? { validation: facts.validation } : {}),
 			cause: error,
 		});
 	}
@@ -166,6 +231,33 @@ export class GitHubError extends Schema.TaggedError<GitHubError>()("GitHubError"
 		const set = new Set<string>(kinds);
 		return (error) => set.has(error.kind);
 	}
+
+	/**
+	 * A predicate over GitHub's validation codes, for `Effect.catchIf`.
+	 *
+	 * @remarks
+	 * Matches when any entry in {@link GitHubError}'s `validation` carries one of
+	 * the codes. Use it for the distinctions {@link GitHubErrorKind} deliberately
+	 * does not draw, such as a `missing_field` against an `invalid`.
+	 *
+	 * @example
+	 * ```ts
+	 * import { GitHubError } from "@effected/github";
+	 * import { Effect } from "effect";
+	 *
+	 * declare const create: Effect.Effect<void, GitHubError>;
+	 *
+	 * const tolerant = create.pipe(
+	 *   Effect.catchIf(GitHubError.hasValidationCode("missing"), () => Effect.void),
+	 * );
+	 * ```
+	 */
+	static hasValidationCode(
+		...codes: ReadonlyArray<(typeof GitHubValidationCode.literals)[number]>
+	): (error: GitHubError) => boolean {
+		const set = new Set<string>(codes);
+		return (error) => error.validation?.some((entry) => entry.code !== undefined && set.has(entry.code)) ?? false;
+	}
 }
 
 /** What classification needs out of an unknown throwable. */
@@ -173,7 +265,7 @@ interface Throwable {
 	readonly status: number | undefined;
 	readonly headers: Readonly<Record<string, unknown>> | undefined;
 	readonly reason: string;
-	readonly detailMessages: ReadonlyArray<string>;
+	readonly validation: ReadonlyArray<GitHubValidationEntry>;
 }
 
 /**
@@ -188,7 +280,7 @@ interface Throwable {
  */
 const readThrowable = (error: unknown): Throwable => {
 	if (typeof error !== "object" || error === null) {
-		return { status: undefined, headers: undefined, reason: String(error), detailMessages: [] };
+		return { status: undefined, headers: undefined, reason: String(error), validation: [] };
 	}
 	const record = error as Record<string, unknown>;
 	const response = asRecord(record.response);
@@ -198,7 +290,7 @@ const readThrowable = (error: unknown): Throwable => {
 		status: typeof record.status === "number" ? record.status : undefined,
 		headers,
 		reason: sanitizeReason(typeof record.message === "string" ? record.message : String(error)),
-		detailMessages: readDetailMessages(data),
+		validation: readValidation(data),
 	};
 };
 
@@ -226,19 +318,38 @@ const sanitizeReason = (message: string): string => {
 
 const MAX_REASON_LENGTH = 500;
 
-/** GitHub's validation failures arrive as `data.errors[].message`. */
-const readDetailMessages = (data: Record<string, unknown> | undefined): ReadonlyArray<string> => {
+/** GitHub's validation failures arrive as `data.errors[]` entries. */
+const readValidation = (data: Record<string, unknown> | undefined): ReadonlyArray<GitHubValidationEntry> => {
 	const errors = data?.errors;
 	if (!Array.isArray(errors)) return [];
-	const messages: Array<string> = [];
-	for (const entry of errors) {
-		const message = asRecord(entry)?.message;
-		if (typeof message === "string") messages.push(message);
+	const entries: Array<GitHubValidationEntry> = [];
+	for (const raw of errors) {
+		const record = asRecord(raw);
+		if (record === undefined) continue;
+		const resource = stringField(record, "resource");
+		const field = stringField(record, "field");
+		const code = stringField(record, "code");
+		const message = stringField(record, "message");
+		if (resource === undefined && field === undefined && code === undefined && message === undefined) continue;
+		entries.push(
+			GitHubValidationEntry.make({
+				...(resource !== undefined ? { resource } : {}),
+				...(field !== undefined ? { field } : {}),
+				...(code !== undefined ? { code } : {}),
+				...(message !== undefined ? { message } : {}),
+			}),
+		);
 	}
-	return messages;
+	return entries;
 };
 
+const stringField = (record: Record<string, unknown>, key: string): string | undefined =>
+	typeof record[key] === "string" ? record[key] : undefined;
+
 const ALREADY_EXISTS = "already exists";
+
+/** GitHub's documented validation-error code for a duplicate resource. */
+const ALREADY_EXISTS_CODE = "already_exists";
 
 const classify = (
 	facts: Throwable,
@@ -262,9 +373,17 @@ const classify = (
 	return "rejected";
 };
 
+/**
+ * @remarks
+ * The structured code is the authority — the releases endpoint sends it with
+ * no message at all. The prose checks cover endpoints that say so only in
+ * words, such as `/git/refs` answering "Reference already exists".
+ */
 const saysAlreadyExists = (facts: Throwable): boolean => {
-	if (facts.reason.toLowerCase().includes(ALREADY_EXISTS)) return true;
-	return facts.detailMessages.some((message) => message.toLowerCase().includes(ALREADY_EXISTS));
+	if (facts.validation.some((entry) => entry.code === ALREADY_EXISTS_CODE)) return true;
+	const reason = facts.reason.toLowerCase();
+	if (reason.includes(ALREADY_EXISTS)) return true;
+	return facts.validation.some((entry) => entry.message?.toLowerCase().includes(ALREADY_EXISTS) ?? false);
 };
 
 /**
