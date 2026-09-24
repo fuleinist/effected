@@ -4,6 +4,7 @@
 
 ## Maintenance
 
-### Updates 1 catalog:effected version
+### Updates 2 catalog:effected versions
 
-- `@effected/mcp` ^0.1.0 -> ^0.1.1 (peer ^0.1.0)
+- `@effected/github` ^0.12.0 -> ^0.13.0 (peer ^0.13.0)
+- `@effected/github-actions` ^0.16.0 -> ^0.16.1 (peer ^0.16.0)

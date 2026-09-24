@@ -211,13 +211,13 @@ await build({
 							source: "workspace",
 						},
 						"@effected/github": {
-							range: "^0.12.0",
-							peer: "^0.12.0",
+							range: "^0.13.0",
+							peer: "^0.13.0",
 							strategy: "lock-minor",
 							source: "workspace",
 						},
 						"@effected/github-actions": {
-							range: "^0.16.0",
+							range: "^0.16.1",
 							peer: "^0.16.0",
 							strategy: "lock-minor",
 							source: "workspace",
