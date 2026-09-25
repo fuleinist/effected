@@ -1,6 +1,6 @@
 {
 	"name": "@effected/github-actions",
-	"version": "0.15.0",
+	"version": "0.16.1",
 	"private": true,
 	"description": "The GitHub Actions runtime: env, inputs, outputs, state, logging, cache, artifacts, blob storage, OIDC and the token bridge.",
 	"keywords": ["github-actions", "actions", "runtime", "cache", "oidc", "effect", "effected"],
@@ -46,7 +46,7 @@
 		"@effect/platform-node": "catalog:effect",
 		"@effect/vitest": "catalog:effect",
 		"@effected/memfs": "workspace:*",
-		"@savvy-web/bundler": "^2.4.8",
+		"@savvy-web/bundler": "^2.4.11",
 		"@types/node": "catalog:build",
 		"effect": "catalog:effect",
 		"typescript": "catalog:build"

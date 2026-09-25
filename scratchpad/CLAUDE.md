@@ -26,18 +26,37 @@ Two working areas, both **gitignored and disposable**:
 
 - `probes/*.ts` — free-form probes. Run: `pnpm scratchpad:probe probes/<name>.ts`
   (from the repo root; tsx handles workspace TS resolution — bare `node` cannot).
-- `__test__/*.test.ts` — test-shaped probes with `@effect/vitest`. Run:
+- `__test__/*.test.ts` — test-shaped probes with `@effect/vitest`. Run from
+  the repo root (from `scratchpad/` vitest does not load the root config and
+  `--project` finds no projects):
   `pnpm exec vitest run --project scratchpad --coverage.enabled=false`, or the
   vitest-agent `run_tests` tool. Results persist to the vitest-agent database
-  like any package's. Without the flag, the repo's global coverage thresholds
-  fail any project-scoped run — and through the MCP `run_tests` tool (which
-  has the same behavior) read the Tests line, not the exit code. The
+  like any package's. The flag keeps concurrent agents off the shared
+  coverage directory; a project-scoped run with coverage on skips the global
+  thresholds (`Coverage thresholds skipped: partial run`). Read both the Tests
+  line and the exit code: a filter that matches nothing prints
+  `Tests: 0/0 passed` and exits 1. The
   vitest-agent reporter owns the TERMINAL output (summary line only;
   `--reporter=*` flags do not change it) — per-test names and console capture
   come from the MCP `run_tests`/`test` tools. A file reporter still writes:
   `--reporter=json --outputFile=<path>` is how a property test's shrunk input
   and replay token are read, since the terminal compacts a falsification to
-  `Property falsified after N run(s)`.
+  `Property falsified after N run(s)`. **`console.log` inside a `__test__/`
+  probe is swallowed** by the vitest-agent reporter, which owns the terminal
+  output — write what you need to read back to a file (`--outputFile`) rather
+  than a `console.log` you expect to see; a `probes/*.ts` `tsx` probe has no
+  such reporter in front of it and prints normally.
+
+`pnpm scratchpad:check` **can be red from another session's stale probe file**
+that has nothing to do with your own work — the type-check program covers
+every file under `probes/`, `__test__/` and `lib/scripts/` at once, shared
+across every agent using this workspace concurrently. Judge only your own
+files: filter the output to your own paths, and plant a known-bad control
+file first (a line you know must fail) to prove the filter is actually live
+before trusting a clean read on it — a filter that matched nothing would
+look identical to a clean tag. `pnpm scratchpad:reset` is the other option
+when a stale probe is in your way, but it deletes every session's probes,
+not just the stale one.
 
 `pnpm scratchpad:reset` (repo root) deletes both working areas and reseeds
 them from `lib/templates/`. It never runs git. Anything you leave in the

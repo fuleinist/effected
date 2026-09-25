@@ -6,8 +6,11 @@
 		"AppStore": "the app's migrated sqlite state database in the xdg state directory"
 	},
 	"cli": {
+		"CliColor": "decide once whether cli output gets ansi color, no_color and terminal-detection aware, share with the formatter layer",
+		"CliExit": "record the highest exit code set during a run for a findings-not-a-failure cli command, read back by CliRuntime.main",
 		"CliLogger": "plain-line cli output logger, no timestamp or level prefix, errors to stderr",
 		"CliRuntime": "report a cli program's failures through its own logger, set exit code",
+		"CliTest": "spawn a built cli bin hermetically in a sandboxed temp home, read exit code and stdout/stderr as data",
 		"ConfigIssueRenderer": "render a @effected/config-file validation error into human-readable lines",
 		"SchemaIssueRenderer": "turn a schema decode failure issue tree into lines a user can act on"
 	},
@@ -67,6 +70,14 @@
 		"YamlCodec": "parse and stringify config as yaml",
 		"asConfigProvider": "bridge a loaded config document into effect's Config accessors",
 		"layerConfigProvider": "install a config file as a fallback beneath the ambient ConfigProvider"
+	},
+	"engine": {
+		"CurrentDistribution": "read which carrier package installed this run without it appearing in R, defaults to none",
+		"Distribution": "the carrier package name and version a tool's bins were installed through",
+		"DistributionField": "the nullable distribution field of a machine-readable envelope, null for a direct install",
+		"LaunchContext": "resolve a launched tool's project directory from argv, env keys, then cwd, rejecting unsubstituted placeholders",
+		"Remediation": "what a caller, usually an agent, should do after a failure: hint plus optional suggested tool and args",
+		"distributionSuffix": "render the via name version suffix for a --version line or startup log, empty for a direct install"
 	},
 	"git": {
 		"BranchEntry": "one local or remote-tracking branch, name sha and whether it is checked out",
@@ -231,6 +242,8 @@
 		"GitHubIssue": "get list close and comment on an issue, post a marked comment",
 		"GitHubRelease": "create update and list releases, upload a release asset, get a release by tag",
 		"GitHubRepository": "read patch repository settings, apply settings blob across rest graphql",
+		"GitHubValidationCode": "missing missing_field invalid already_exists unprocessable custom, github 422 validation error codes",
+		"GitHubValidationEntry": "one entry from a failed rest response's errors array, resource field code and message",
 		"GitTag": "create reset resolve and delete a tag ref, find newest semver-shaped tag",
 		"GraphQLDocument": "a named graphql query or mutation, its variables and response codec, typed graphql call",
 		"GraphQLErrorEntry": "one entry from a graphql response's errors array, message and github's error type",
@@ -442,6 +455,17 @@
 	},
 	"memfs": {
 		"MemoryFileSystem": "in-memory filesystem test double for FileSystem, seed files, inject faults, inspect writes"
+	},
+	"mcp": {
+		"McpHarness": "test mcp server in-process, call tools over queue-backed stdio",
+		"McpProbe": "smoke-test a built mcp bin, initialize then clean exit",
+		"McpProcess": "drive a spawned mcp bin, read json-rpc lines, never hang on exit",
+		"McpStdio": "serve mcp over stdio, keep stdout the json-rpc wire, exit 0 on stdin close",
+		"McpTestFailure": "mcp test client failure, stream ended, server stopped",
+		"McpToolAudit": "lint served tools list, closed inputs, titles, hints, object-rooted outputs",
+		"McpToolkit": "name every unknown tool argument in one InvalidParams, strict by default",
+		"ToolFailure": "fold remediation into tool error message, truncate echoed caller values",
+		"ToolInputSchema": "find unknown tool arguments at every depth, object-root a union input"
 	},
 	"npm": {
 		"CachingPackageManager": "list of package managers with a known cache dir",
@@ -868,7 +892,19 @@
 		"getWorkspacePackagesSync": "synchronously enumerate workspace packages, non-Effect entry point for config files",
 		"nodeFileSystem": "sync filesystem adapter over node:fs, exists read directory stat",
 		"nodePath": "sync path adapter, the running platform's node:path",
-		"nodeSyncOps": "bundle node filesystem and path adapters for the sync entry points"
+		"nodeSyncOps": "bundle node filesystem and path adapters for the sync entry points",
+		"SourceBoundary": "scan source for process reads, node imports, console and stdout writes",
+		"Offence": "one boundary violation with file line column and rule",
+		"SourceScan": "boundary scan result, files read, allowlisted files, offences",
+		"LayerPolicy": "decode a committed layers.json dependency layering policy",
+		"LayerPolicyError": "layer policy file unreadable, not json, or wrong shape",
+		"LayerEdge": "one workspace dependency edge in one manifest field",
+		"LayeringReport": "layering violations, sideways upward edges, cycles, unclassified packages",
+		"WorkspaceLayering": "check monorepo package graph against layers, per-field edges",
+		"PackedInstall": "pack carrier, install outside workspace under npm pnpm yarn bun",
+		"PackedInstallError": "packed install failure, manager unavailable, unresolved workspace protocol, missing bin",
+		"InstalledConsumer": "scratch consumer project, installed bin path",
+		"PackedInstallResult": "installed consumers, unavailable managers, packed tarball paths"
 	},
 	"xdg": {
 		"AppDirKind": "the config, data, cache, state or runtime directory kind",

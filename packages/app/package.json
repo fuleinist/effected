@@ -1,6 +1,6 @@
 {
 	"name": "@effected/app",
-	"version": "0.17.0",
+	"version": "0.18.0",
 	"private": true,
 	"description": "The application control plane for Effect: one layer wiring XDG-namespaced directories, a migrated SQLite store, a TTL cache and a config file to the same place.",
 	"keywords": ["app", "xdg", "sqlite", "store", "cache", "config", "effect", "effected"],
@@ -43,7 +43,7 @@
 		"@effected/walker": "workspace:*",
 		"@effected/xdg": "workspace:*",
 		"@effected/yaml": "workspace:*",
-		"@savvy-web/bundler": "^2.4.8",
+		"@savvy-web/bundler": "^2.4.11",
 		"@types/node": "catalog:build",
 		"effect": "catalog:effect",
 		"typescript": "catalog:build"

@@ -34,7 +34,7 @@ cat >/dev/null 2>&1 || true
 # deliberately a constant rather than read from the host repo's catalog — the
 # point is to tell a LAGGING repo what it should move to, so comparing against
 # that repo's own (possibly stale) catalog would defeat the check.
-EFFECT_PIN="4.0.0-rc.116"
+EFFECT_PIN="4.0.0-rc.117"
 
 # --- vendored-source posture -------------------------------------------------
 # Resolve the host repo root. CLAUDE_PROJECT_DIR is set by Claude Code; fall
@@ -145,8 +145,12 @@ Available via the Skill tool (several also auto-load on trigger):
   the memoization discipline (build-once-by-reference; the layer-function trap).
 - effect-v4-idioms — core Effect: typed errors, Result, generators,
   scope/resources, forking, structural equality.
-- effect-v4-cli — the CLI framework is effect/unstable/cli in core.
-  Command.Environment, tier impact, exit codes.
+- effect-v4-cli — command-line programs: effect/unstable/cli in core plus
+  the @effected/cli boundary (main assembly, exit codes, stdout vs stderr,
+  testing a built bin).
+- effect-v4-mcp — MCP servers on effect/unstable/ai: stdio wiring that keeps
+  stdout the wire, tools, failures an agent can read, resources, and the
+  in-process and spawned test clients.
 - effect-v4-observability — spans/logging/metrics; OTel composed at the edge,
   libraries telemetry-agnostic, named spans on public fallible boundaries only.
 - effect-v4-testing — @effect/vitest, it.effect, test layers, property tests,
@@ -164,6 +168,10 @@ Available via the Skill tool (several also auto-load on trigger):
   suppression for a zero-warning API (no @public X_base const).
 - hardening-a-parser-port — depth guards, code-point/proto/C0 checks, and the
   malformed-input-fails-as-a-typed-error-never-a-defect invariant.
+- design-patterns — proven architecture patterns for building on Effect v4 /
+  the @effected kit, indexed as loadable references; the first entry is the
+  carrier package pattern (core/engine/front ends -> carrier) for a tool
+  shipping more than one bin.
 
 The GitHub Actions / API suite — fifteen skills over @effected/github-actions,
 github, commands, npm and sbom. START at the router; the rest are named by it

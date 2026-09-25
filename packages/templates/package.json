@@ -1,6 +1,6 @@
 {
 	"name": "@effected/templates",
-	"version": "0.7.0",
+	"version": "0.8.0",
 	"private": true,
 	"description": "Managed-section blocks in user-editable files: parse, reconcile, sync and check delimited regions.",
 	"keywords": ["templates", "managed-section", "codegen", "sync", "effect", "effected"],
@@ -35,7 +35,7 @@
 		"@effect/platform-node": "catalog:effect",
 		"@effect/vitest": "catalog:effect",
 		"@effected/memfs": "workspace:*",
-		"@savvy-web/bundler": "^2.4.8",
+		"@savvy-web/bundler": "^2.4.11",
 		"@types/node": "catalog:build",
 		"effect": "catalog:effect",
 		"typescript": "catalog:build"

@@ -1,5 +1,35 @@
 # @effected/schemastore
 
+## 0.15.1
+
+### Documentation
+
+- The `StoreDocumentOptions.jsonSchema` API docs now state current behaviour without Effect version history: a published document's objects are closed (`onExcessProperty: "error"`) where core's own default is `"ignore"`, and `{ onExcessProperty: "ignore" }` reopens them. [#821][#821]
+
+### Thanks
+
+Thanks to [@spencerbeggs](https://github.com/spencerbeggs) for their contributions!
+
+[#821]: https://github.com/spencerbeggs/effected/pull/821
+
+## 0.15.0
+
+### Features
+
+- Upgrades core Effect to `rc-117` [#812][#812]
+
+### Dependencies
+
+| Dependency | Type | Action | From | To |
+| --- | --- | --- | --- | --- |
+| @effected/semver | dependency | updated | 0.8.0 | 0.9.0 |
+
+### Thanks
+
+Thanks to [@spencerbeggs](https://github.com/spencerbeggs) for their contributions!
+
+[#812]: https://github.com/spencerbeggs/effected/pull/812
+
 ## 0.14.0
 
 ### Breaking Changes

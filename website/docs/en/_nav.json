@@ -8,7 +8,7 @@
 	{
 		"text": "Packages",
 		"link": "/packages",
-		"activeMatch": "^/(pnpm-plugin-effect|github-references|github-actions|tsconfig-json|package-json|config-file|schemastore|schema-org|workspaces|lockfiles|templates|commands|markdown|packages|runtimes|github|semver|walker|jsonc|jsonl|memfs|store|glob|sbom|spdx|toml|yaml|app|cli|git|npm|xdg)(/(.*)?)?$",
+		"activeMatch": "^/(pnpm-plugin-effect|github-references|github-actions|tsconfig-json|package-json|config-file|schemastore|schema-org|workspaces|lockfiles|templates|commands|markdown|packages|runtimes|github|semver|walker|jsonc|jsonl|memfs|store|glob|sbom|spdx|toml|yaml|app|cli|git|npm|xdg|engine|mcp)(/(.*)?)?$",
 		"position": "right",
 		"items": [
 			{
@@ -30,6 +30,11 @@
 				"text": "@effected/config-file",
 				"link": "/config-file",
 				"activeMatch": "^/config-file/?$"
+			},
+			{
+				"text": "@effected/engine",
+				"link": "/engine",
+				"activeMatch": "^/engine/?$"
 			},
 			{
 				"text": "@effected/git",
@@ -75,6 +80,11 @@
 				"text": "@effected/markdown",
 				"link": "/markdown",
 				"activeMatch": "^/markdown/?$"
+			},
+			{
+				"text": "@effected/mcp",
+				"link": "/mcp",
+				"activeMatch": "^/mcp/?$"
 			},
 			{
 				"text": "@effected/memfs",

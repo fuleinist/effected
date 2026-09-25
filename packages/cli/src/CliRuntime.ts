@@ -1,4 +1,16 @@
-import { Cause, Effect, Runtime } from "effect";
+import type { Layer } from "effect";
+import { Cause, Effect, MutableRef, Runtime } from "effect";
+import { CliError } from "effect/unstable/cli";
+import { CliExit } from "./CliExit.js";
+import { CliLogger } from "./CliLogger.js";
+import { ExitRequested } from "./internal/ExitRequested.js";
+import { isExitCode } from "./internal/isExitCode.js";
+
+const isShowHelp = (u: unknown): u is CliError.ShowHelp => CliError.isCliError(u) && u._tag === "ShowHelp";
+
+/** A `UserError` `Command.runWith` already printed: it sets the mark to `false` after rendering. */
+const isRenderedUserError = (u: unknown): u is CliError.UserError =>
+	CliError.isCliError(u) && u._tag === "UserError" && Runtime.getErrorReported(u) === false;
 
 /**
  * How a failure is turned into output and an exit code.
@@ -19,9 +31,41 @@ export interface ReportFailuresOptions {
 	 *
 	 * @remarks
 	 * An error carrying `Runtime.errorExitCode` keeps its own; this is only the
-	 * fallback, and it defaults to `1`.
+	 * fallback, and it defaults to `1`. Pass an integer in `0..255`, the range a
+	 * POSIX exit status can carry — `256` wraps to `0` and passes a failed run.
 	 */
 	readonly exitCode?: number | undefined;
+	/**
+	 * The exit code for a usage error: a `ShowHelp` carrying parse errors, or a
+	 * `CliError.UserError` `Command.runWith` already printed.
+	 *
+	 * @remarks
+	 * Defaults to `64` (BSD `EX_USAGE`); pass an integer in `0..255`. A
+	 * `ShowHelp` with no errors — a bare root invocation, or `--help` — always
+	 * exits `0`. A `UserError` that carries its own `Runtime.errorExitCode` —
+	 * one marked with `CliRuntime.reported(error, 3)` — keeps that code instead.
+	 *
+	 * Keep `Command.runWith`'s default `renderErrors`: with `renderErrors: false`
+	 * runWith prints no parse errors and `reportFailures` never renders a
+	 * `ShowHelp`, so a parse error would exit with this code having printed
+	 * nothing on stderr.
+	 */
+	readonly usageExitCode?: number | undefined;
+}
+
+/**
+ * Options for {@link CliRuntime.main}.
+ *
+ * @public
+ */
+export interface MainOptions<RP, EP> extends ReportFailuresOptions {
+	/**
+	 * The platform layer, usually `NodeServices.layer` or an app platform built
+	 * on it. Passed in so this package never imports a platform.
+	 */
+	readonly platform: Layer.Layer<RP, EP>;
+	/** The logger, provided outermost. Defaults to `CliLogger.layer()`. */
+	readonly logger?: Layer.Layer<never> | undefined;
 }
 
 const toLines = (rendered: string | ReadonlyArray<string>): ReadonlyArray<string> =>
@@ -99,6 +143,23 @@ const chooseExitCode = (error: unknown, fallback: number | undefined): number =>
  * An **interrupt is left alone**: it is not a failure to report, and the
  * default teardown already maps an interrupt-only cause to `130`.
  *
+ * A `CliError.ShowHelp` is never rendered: `Command.runWith` already printed
+ * the help text (and any parse errors) before re-failing with it, so
+ * rendering it again would print nothing but a stray "Help requested" line.
+ * A `ShowHelp` carrying errors is remapped to `usageExitCode` (default `64`,
+ * BSD `EX_USAGE`); a bare `--help` or root invocation — `errors` empty —
+ * keeps exit `0`. A `CliError.UserError` whose `Runtime.errorReported` mark
+ * is `false` is likewise skipped: that is how `Command.runWith` leaves one it
+ * already rendered through its `CliOutput` formatter. It exits with its own
+ * `Runtime.errorExitCode` when it carries one, otherwise `usageExitCode`;
+ * under runWith's `renderErrors: false` the mark stays set, and it renders
+ * here like any other failure. Every other
+ * error renders even when it already carries the reported mark — a gate
+ * failure marked with `CliRuntime.reported` still prints its line. The
+ * private `ExitRequested` sentinel `CliRuntime.main`
+ * raises is likewise never rendered; it only carries the exit code a
+ * successful program recorded through `CliExit`.
+ *
  * @public
  */
 export class CliRuntime {
@@ -118,6 +179,29 @@ export class CliRuntime {
 					if (Cause.hasInterruptsOnly(cause)) return Effect.failCause(cause as Cause.Cause<never>);
 
 					const error = Cause.squash(cause);
+
+					// Already marked by CliRuntime.main; there is nothing to render.
+					if (error instanceof ExitRequested) return Effect.fail(error);
+
+					// Command.runWith printed help (stdout) and any parse errors (stderr)
+					// BEFORE re-failing with ShowHelp. Rendering it again prints a stray
+					// "Help requested" line.
+					if (isShowHelp(error)) {
+						const code = error.errors.length > 0 ? (options.usageExitCode ?? 64) : 0;
+						return Effect.fail(CliRuntime.reported(error, code));
+					}
+
+					// Command.runWith rendered a UserError through the CliOutput formatter
+					// and flipped its mark to false before re-failing. Rendering it again
+					// prints the same complaint twice. A UserError is a usage error, so it
+					// exits like a ShowHelp carrying errors, unless it carries a code of
+					// its own (CliRuntime.reported(userError, 3)), which it keeps. With
+					// runWith's `renderErrors: false` the mark stays true and it renders
+					// below.
+					if (isRenderedUserError(error)) {
+						return Effect.fail(CliRuntime.reported(error, chooseExitCode(error, options.usageExitCode ?? 64)));
+					}
+
 					const render = options.render ?? ((value: unknown) => String(value));
 
 					return Effect.gen(function* () {
@@ -131,12 +215,72 @@ export class CliRuntime {
 			);
 
 	/**
+	 * Assemble a CLI program in the one order that reports every failure well.
+	 *
+	 * @remarks
+	 * - `CliExit` is provided fresh, and a non-zero code after success becomes a
+	 *   marked failure the teardown honours.
+	 * - The platform layer is provided **inside** failure reporting, so a
+	 *   layer-build failure (`HOME` unset, say) renders as one line with the
+	 *   fallback code rather than escaping to the runtime's stack trace.
+	 * - The logger is provided **outermost**, so it is present whichever branch
+	 *   fails.
+	 *
+	 * You still call your platform's runner:
+	 *
+	 * @example
+	 * ```ts
+	 * NodeRuntime.runMain(
+	 *   CliRuntime.main(Command.run(root, { version }), { platform: NodeServices.layer, exitCode: 3 }),
+	 * )
+	 * ```
+	 */
+	static readonly main = <A, E, R, RP, EP>(
+		program: Effect.Effect<A, E, R>,
+		options: MainOptions<RP, EP>,
+	): Effect.Effect<void, Error, Exclude<Exclude<R, CliExit>, RP>> =>
+		Effect.gen(function* () {
+			yield* program;
+			const exit = yield* CliExit;
+			const code = MutableRef.get(exit.code);
+			// CliExit.set validates, but the cell is a public MutableRef a program
+			// can write directly; 256 would wrap to exit 0, 1.5 would throw in
+			// process.exit.
+			if (!isExitCode(code)) {
+				return yield* Effect.die(
+					new Error(`CliRuntime.main: CliExit code must be an integer 0..255, received ${code}`),
+				);
+			}
+			if (code !== 0) return yield* Effect.fail(new ExitRequested(code));
+		}).pipe(
+			Effect.provide(CliExit.layer),
+			Effect.provide(options.platform),
+			CliRuntime.reportFailures(options),
+			Effect.provide(options.logger ?? CliLogger.layer()),
+		);
+
+	/**
 	 * Mark an error as already reported, carrying an exit code.
 	 *
 	 * @remarks
 	 * Exported because a program that reports a failure itself — a validation
 	 * command that prints its own diagnostics, say — needs the same two marks
 	 * and should not have to rediscover the inverted polarity.
+	 *
+	 * Under {@link CliRuntime.main} or {@link CliRuntime.reportFailures}, do NOT
+	 * print the failure yourself before failing with it: `reportFailures`
+	 * renders every error except a `ShowHelp` and a `CliError.UserError` whose
+	 * reported mark is `false`, so it would print twice. Fail with the marked
+	 * error and put any multi-line rendering in the `render` option instead. The
+	 * mark matters for a program run WITHOUT `reportFailures`, where it keeps the
+	 * runtime from reporting a failure the program already printed.
+	 *
+	 * A `CliError.UserError` marked with `reported` is treated as already
+	 * printed and is not rendered — use a different error type if the program
+	 * has not printed it. `reportFailures` cannot tell a `UserError` that
+	 * `Command.runWith` printed from one marked here: both carry the same `false`
+	 * mark. It does keep the code you pass: `reported(userError, 3)` exits `3`,
+	 * not `usageExitCode`.
 	 *
 	 * The marks are added in place, so a typed error comes back as its own
 	 * type: the `E` overload returns the very instance it was given, and a

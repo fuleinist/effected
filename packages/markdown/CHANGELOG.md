@@ -1,5 +1,37 @@
 # @effected/markdown
 
+## 0.12.1
+
+### Documentation
+
+- Corrected the `RowContent` API docs. `make` passes an already-constructed class instance through a nested class-typed field by reference, whether or not the field is wrapped in a `Schema.Union`. The category unions behind the `children` fields of `TableRow`, `Table` and `List` exist to mirror mdast's content-model vocabulary, not for construction speed as the docs previously claimed. [#821][#821]
+
+### Thanks
+
+Thanks to [@spencerbeggs](https://github.com/spencerbeggs) for their contributions!
+
+[#821]: https://github.com/spencerbeggs/effected/pull/821
+
+## 0.12.0
+
+### Features
+
+- Upgrades core Effect to `rc-117` [#812][#812]
+
+### Dependencies
+
+| Dependency | Type | Action | From | To |
+| --- | --- | --- | --- | --- |
+| @effected/jsonc | dependency | updated | 0.12.0 | 0.13.0 |
+| @effected/toml | dependency | updated | 0.8.0 | 0.9.0 |
+| @effected/yaml | dependency | updated | 0.16.0 | 0.17.0 |
+
+### Thanks
+
+Thanks to [@spencerbeggs](https://github.com/spencerbeggs) for their contributions!
+
+[#812]: https://github.com/spencerbeggs/effected/pull/812
+
 ## 0.11.0
 
 ### Breaking Changes
