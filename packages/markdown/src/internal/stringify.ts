@@ -394,7 +394,7 @@ const literalText = (
 			// A value-final backslash in a cell with more content after it
 			// would pair with that content's `\|` and free the pipe.
 			const followed = followingText !== "" || nonTextFollows;
-			out += next === undefined && context.inTable && followed ? "\\\\" : "\\";
+			out += next === undefined && followed ? "\\\\" : "\\";
 			continue;
 		}
 		// Escaped here as well as by the `escapeCellPipes` post-pass: if a raw
