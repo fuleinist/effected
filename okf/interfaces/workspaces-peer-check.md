@@ -15,8 +15,8 @@ sources:
     resource: ../../packages/workspaces/__test__/fixtures/peers/README.md
 generated:
   by: "okfit/claude-code"
-  at: 2026-09-27T20:17:53Z
-  body_sha256: d65c679c3ee20597d68bfec0d9d1f508987d02f633588599382a61fa146bf9b5
+  at: 2026-09-27T20:51:20Z
+  body_sha256: 6414a365046010f4d3eb5c240d478411bf28030652cb34f00d391f855ccd9d6b
 ---
 
 # @effected/workspaces peer-dependency checking
@@ -142,7 +142,7 @@ with every oracle run committed under `__test__/fixtures/peers/allowany/`
 and `ignoremissing/`.[^peer-fixtures] Supplied rules therefore never
 produce `peerRulesNotApplied`, which is reserved for the case where no rules
 were supplied at all; a report can still be unverified through
-`unresolvedEdge` or `peerRangeUnresolved`, which rules do not touch.
+`unresolvedEdge`, `peerRangeUnresolved` or `peerVersionUnresolved`, which rules do not touch.
 
 ### How pnpm matches an allowedVersions key
 
@@ -207,14 +207,15 @@ Both halves of the no-cross rule are pinned by cross-axis oracle runs:
 `ignoreMissing: ["react", "redux"]` leaves both wrong-version rows in
 place.
 
-## Failing closed: the three unverified reasons
+## Failing closed: the four unverified reasons
 
-The union is closed at exactly three by measurement. With all three rule
+The union is closed at exactly four by measurement. With all three rule
 axes applied, no supplied configuration leaves a suppression unreplicated;
 with `workspacePackages` supplied, a covered `link:` target is a judged
 parent rather than a structural unknown; and the one thing a joined manifest
 can still withhold is a range the check cannot name, which is what the third
-member says. Each reason follows the same presence-is-the-assertion rule:
+member says; the fourth is the same gap on the provider side, a version the
+lockfile does not carry. Each reason follows the same presence-is-the-assertion rule:
 omitting an option key says nobody looked, and the report says so.
 
 - **`peerRulesNotApplied`** — no suppression policy was supplied, so
@@ -246,8 +247,23 @@ omitting an option key says nobody looked, and the report says so.
   protocol (`workspace:*` and its kin). A peer with *nothing* resolved
   never produces it: "no provider" needs no range, so that row is reported
   as usual.
+- **`peerVersionUnresolved`** — a peer resolved to a non-workspace provider
+  whose version is a protocol specifier rather than a version: a `file:`
+  dependency, directly or through a `file:` override. The lockfile records
+  no version for a `file:` directory, and the model carries the specifier
+  (`file:vendor/react`) in its place. `pnpm peers check` reports such a peer
+  as a `bad` row with the specifier as its found version, even when the
+  directory's manifest satisfies the range; for a joined `link:` parent it
+  reads the real version off disk instead. Neither is recoverable from the
+  lockfile, so the peer is declined without a row and the report carries
+  the marker, on the lockfile-row and joined-manifest paths alike. A
+  workspace-row provider stays accepted without a version check, and a
+  plain unparseable version is still skipped. The `filedep*` oracles pin
+  it; a `file:` tarball is where pnpm itself moved, reporting the specifier
+  under 12.6.0 and the tarball's real version under 12.7.0, over the same
+  lockfile.
 
-All three mean **fail closed**: a gate treats an unverified report as "not
+All four mean **fail closed**: a gate treats an unverified report as "not
 proven clean", never as a pass.
 
 `PeerCheck` reads `resolved` from `@effected/lockfiles`, which omits any
@@ -320,7 +336,8 @@ every one is generated over a purpose-built workspace with no
 config-dependency hooks, so oracle agreement validates the computation only
 on workspaces without them.
 
-The `link:` join is pinned by twelve fixtures. Six are over one probe workspace
+The `link:` join is pinned by twelve fixtures, and the provider-version
+reason by four more (`filedep*`). Six are over one probe workspace
 (`linkWorkspacePackages: deep`, `probe-a` declaring a `react: ^18.0.0`
 peer), each moving one variable:[^peer-fixtures]
 
