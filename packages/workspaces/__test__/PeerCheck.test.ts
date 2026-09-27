@@ -1407,6 +1407,28 @@ describe("PeerCheck.run — protocol-specifier provider versions", () => {
 		}),
 	);
 
+	it.effect("gives the one answer consistent with pnpm 11 and pnpm 12, which disagree", () =>
+		Effect.gen(function* () {
+			// pnpm 11.28.0 writes byte-identical lockfiles for every `filedep*`
+			// workspace but judges them leniently: it reports each `file:`
+			// directory provider clean — even the joined case whose directory is
+			// 17.0.2 against `^18.0.0` — where pnpm 12 reports a bad row. With the
+			// lockfile unable to tell the two apart, neither "clean" nor a row is
+			// provable, so the report is the same for every fixture: no row, and
+			// the marker.
+			for (const dir of ["filedep", "filedep-override", "filedep-tarball", "filedep-joined", "filedep-suffixed"]) {
+				assert.deepStrictEqual(theirs(dir, "peers-check-pnpm-11.json"), [], dir);
+				assert.isAbove(theirs(dir).length, 0, dir);
+				const report = PeerCheck.run(yield* parse(dir), {
+					peerDependencyRules: NoPeerDependencyRules,
+					workspacePackages: [probeA()],
+				});
+				assert.deepStrictEqual(report.unsatisfied, [], dir);
+				assert.deepStrictEqual(report.unverified, ["peerVersionUnresolved"], dir);
+			}
+		}),
+	);
+
 	it.effect("raises both reasons when neither the joined range nor the provider version can be named", () =>
 		Effect.gen(function* () {
 			const report = PeerCheck.run(yield* parse("filedep-joined"), {

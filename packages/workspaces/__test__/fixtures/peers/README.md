@@ -268,6 +268,16 @@ a registry version. Oracle, on 12.6.0 and 12.7.0: a **bad** `react` row for
 `packages/host` with `foundVersion: "file:vendor/react"`, the suffix
 stripped, which is the version the lockfile model must carry.
 
+Every `filedep*` workspace was also run under **pnpm 11.28.0**: the
+lockfiles came back byte-identical, and each directory carries that verdict
+as `peers-check-pnpm-11.json`. pnpm 11 is lenient where 12 is strict. It
+reports every `file:` directory provider **clean**, including the joined
+case at `17.0.2` against `^18.0.0` and an unsuffixed `17.0.2` directory
+against `^18.3.1` (not committed). Only a tarball's recorded version is
+compared (`17.0.2` is bad, `18.3.1` clean). The two majors therefore disagree
+over the same lockfile, which is the case for declining rather than
+answering.
+
 `@effected/lockfiles` passes the specifier through as the provider's
 version (`file:vendor/react`) for both directories and tarballs. The version
 pnpm compares is therefore not in the model in any of the four, and
