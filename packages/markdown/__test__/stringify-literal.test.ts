@@ -298,6 +298,54 @@ describe("Text escapeStyle: literal", () => {
 		});
 	});
 
+	describe("a value-final backslash with more content after it", () => {
+		it("is doubled in a paragraph, so it cannot escape the next sibling", () => {
+			const emitted = out(paragraphOf(literal("C:\\"), InlineCode.make({ value: "x" })));
+			assert.strictEqual(emitted, "C:\\\\`x`\n");
+			const paragraph = parse(emitted).children[0];
+			assert.isTrue(paragraph?.type === "paragraph");
+			if (paragraph?.type === "paragraph") {
+				assert.deepStrictEqual(
+					paragraph.children.map((child) => [child.type, "value" in child ? child.value : ""]),
+					[
+						["text", "C:\\"],
+						["inlineCode", "x"],
+					],
+				);
+			}
+		});
+
+		it("is doubled in a heading, so it cannot escape the next sibling", () => {
+			const emitted = out(
+				Root.make({
+					children: [Heading.make({ depth: 2, children: [literal("C:\\"), InlineCode.make({ value: "x" })] })],
+				}),
+			);
+			assert.strictEqual(emitted, "## C:\\\\`x`\n");
+			const heading = parse(emitted).children[0];
+			assert.isTrue(heading?.type === "heading");
+			if (heading?.type === "heading") {
+				assert.deepStrictEqual(
+					heading.children.map((child) => [child.type, "value" in child ? child.value : ""]),
+					[
+						["text", "C:\\"],
+						["inlineCode", "x"],
+					],
+				);
+			}
+		});
+
+		it("is left alone when it ends the paragraph", () => {
+			const emitted = out(paragraphOf(literal("C:\\")));
+			assert.strictEqual(emitted, "C:\\\n");
+			const paragraph = parse(emitted).children[0];
+			assert.isTrue(paragraph?.type === "paragraph" && paragraph.children[0]?.type === "text");
+			if (paragraph?.type === "paragraph" && paragraph.children[0]?.type === "text") {
+				assert.strictEqual(paragraph.children[0].value, "C:\\");
+			}
+		});
+	});
+
 	describe("structural escapes a literal heading keeps", () => {
 		it("escapes a trailing hash run that would read as the closing sequence", () => {
 			const emitted = out(Root.make({ children: [Heading.make({ depth: 2, children: [literal("v1 ~2 #")] })] }));

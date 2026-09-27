@@ -190,8 +190,8 @@ the caller vouches the value is already safe markdown, and the emitter
 drops every escape aimed at the inline phase while keeping every escape
 that defends the block phase — the structure settled before inlines are
 parsed. Kept: a table cell's unescaped `|` (with an escape pair treated as
-atomic, as the cell splitter treats it, and a value-final `\` doubled when
-more cell content follows), newlines in single-line containers, the heading
+atomic, as the cell splitter treats it), a value-final `\` doubled in any
+container when more content follows it, newlines in single-line containers, the heading
 closing-sequence `#`, blank-line and leading-whitespace defenses, line-start
 block openers (only a line start that can actually open a block: a list
 marker or `#` run followed by whitespace or the line end, `>`, a fence, a

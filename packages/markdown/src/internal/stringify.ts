@@ -454,8 +454,9 @@ const literalText = (
 				index += 1;
 				continue;
 			}
-			// A value-final backslash in a cell with more content after it
-			// would pair with that content's `\|` and free the pipe.
+			// A value-final backslash with more content after it, in any
+			// container, would pair with that content's first character: the
+			// backtick of inline code, or a table cell's `\|`, freeing the pipe.
 			const followed = followingText !== "" || nonTextFollows;
 			out += next === undefined && followed ? "\\\\" : "\\";
 			continue;

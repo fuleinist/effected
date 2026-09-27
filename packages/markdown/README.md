@@ -343,7 +343,8 @@ if (Result.isSuccess(tree)) {
 
 Escapes that protect the surrounding **block** still apply, because dropping them would corrupt the document rather than add formatting:
 
-- in a table cell, every `|` not already backslash-escaped becomes `\|`, and a value-final `\` is doubled when more cell content follows;
+- in a table cell, every `|` not already backslash-escaped becomes `\|`;
+- in any container, a value-final `\` is doubled when more content follows it, so it cannot escape that content's first character;
 - in a table cell or heading, a newline becomes a space;
 - in a heading, a trailing `#` run that would read as the closing sequence is escaped;
 - elsewhere, a newline that would form a blank line becomes `&#10;`, leading whitespace at a line start becomes a character reference, and a line start that can open a block is escaped — a `-`, `+` or `*` bullet or an ordered-list marker followed by a space, tab or line end, one to six `#` followed by the same, `>`, a run of three backticks or tildes, a thematic-break or setext run, a `---` or `+++` frontmatter fence, a line of only `-`, `:`, `|` and whitespace, and conservatively any `<`, `[`, `|` or `:` — while text that cannot, such as `~0.2.1`, `1.0.0`, `-x` or `#x`, is written as is;

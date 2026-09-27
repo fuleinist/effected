@@ -258,9 +258,11 @@ export type TableAlign = typeof TableAlign.Type;
  * than add formatting inside it:
  *
  * - in a table cell, every `|` not already backslash-escaped is written
- *   `\|` (a bare pipe splits the cell), and a value-final `\` is doubled
- *   when more cell content follows (it would otherwise pair with that
- *   content's `\|` and free the pipe);
+ *   `\|` (a bare pipe splits the cell);
+ *
+ * - in any container, a value-final `\` is doubled when more content
+ *   follows it (it would otherwise pair with that content's first
+ *   character, escaping an inline-code backtick or freeing a cell's `\|`);
  *
  * - in a table cell or heading, a newline becomes a space (neither can
  *   hold a line break);
