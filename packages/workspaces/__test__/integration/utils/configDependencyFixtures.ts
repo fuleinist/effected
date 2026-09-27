@@ -89,3 +89,76 @@ export const writeModulesYaml = (root: string, store: string): void => {
 	mkdirSync(dir, { recursive: true });
 	writeFileSync(join(dir, ".modules.yaml"), `"layoutVersion": 5\n"storeDir": ${JSON.stringify(store)}\n`);
 };
+
+/**
+ * The fake `pnpm` executable {@link writeFakePnpm} installs: a stand-in for
+ * the fetch rung's `pnpm install --frozen-lockfile --dir <scratch>
+ * [--store-dir <dir>]`, so no test drives a live package manager or reaches a
+ * registry.
+ *
+ * It models the two things the rung relies on pnpm for. It reads the pinned
+ * `<name>@<version>` and integrity out of the scratch lockfile, and refuses,
+ * as pnpm does, when the "registry" (`FAKE_PNPM_PUBLISHED`, a JSON map of
+ * `name@version` → the integrity of the tarball it serves) serves a tarball
+ * that does not match. Otherwise it writes the version into
+ * `<store-dir>/v11/links/<name>/<version>/<hash>/node_modules/<name>`, with a
+ * pnpmfile injecting `hooked-dep` at `^<version>`, and links the scratch
+ * workspace's `.pnpm-config/<name>` to it. Every run appends
+ * `{ argv, lockfile, workspaceYaml, npmrc }` (`npmrc` null when the scratch
+ * has none) as a JSON line to `FAKE_PNPM_LOG`. When `FAKE_PNPM_EXPECT_NPMRC` is
+ * set, it refuses unless the scratch `.npmrc` holds exactly that text (the
+ * empty string meaning "no `.npmrc` at all").
+ */
+const FAKE_PNPM = `#!/usr/bin/env node
+const { appendFileSync, existsSync, mkdirSync, readFileSync, symlinkSync, writeFileSync } = require("node:fs");
+const { dirname, join } = require("node:path");
+const argv = process.argv.slice(2);
+const option = (flag) => {
+	const at = argv.indexOf(flag);
+	return at === -1 ? undefined : argv[at + 1];
+};
+const scratch = option("--dir");
+const lockfile = readFileSync(join(scratch, "pnpm-lock.yaml"), "utf8");
+const workspaceYaml = readFileSync(join(scratch, "pnpm-workspace.yaml"), "utf8");
+const npmrcPath = join(scratch, ".npmrc");
+const npmrc = existsSync(npmrcPath) ? readFileSync(npmrcPath, "utf8") : null;
+appendFileSync(process.env.FAKE_PNPM_LOG, JSON.stringify({ argv, lockfile, workspaceYaml, npmrc }) + "\\n");
+// Real pnpm reads the scratch's .npmrc for registry and auth: a declaring
+// workspace with one must hand it over, byte for byte, and one without must
+// not invent one.
+const expected = process.env.FAKE_PNPM_EXPECT_NPMRC;
+if (expected !== undefined && npmrc !== (expected === "" ? null : expected)) {
+	process.stderr.write("FAKE_PNPM_NPMRC scratch .npmrc is " + JSON.stringify(npmrc) + ", expected " + JSON.stringify(expected || null) + "\\n");
+	process.exit(1);
+}
+const key = JSON.parse(/^  ("[^"]+"):$/m.exec(lockfile)[1]);
+const integrity = JSON.parse(/resolution: \\{integrity: ("[^"]+")\\}/.exec(lockfile)[1]);
+const at = key.lastIndexOf("@");
+const name = key.slice(0, at);
+const version = key.slice(at + 1);
+const served = JSON.parse(process.env.FAKE_PNPM_PUBLISHED || "{}")[key];
+if (served === undefined) {
+	process.stderr.write("ERR_PNPM_NO_MATCHING_VERSION No matching version found for " + key + "\\n");
+	process.exit(1);
+}
+if (served !== integrity) {
+	process.stderr.write("ERR_PNPM_TARBALL_INTEGRITY Got unexpected checksum for " + key + "\\n");
+	process.exit(1);
+}
+const dir = join(option("--store-dir"), "v11", "links", name, version, "0".repeat(64), "node_modules", name);
+mkdirSync(dir, { recursive: true });
+writeFileSync(join(dir, "package.json"), JSON.stringify({ name, version }));
+writeFileSync(
+	join(dir, "pnpmfile.mjs"),
+	"export const hooks = { updateConfig(config) { return { ...config, catalog: { ...(config.catalog ?? {}), \\"hooked-dep\\": \\"^" + version + "\\" } }; } };\\n",
+);
+const link = join(scratch, "node_modules", ".pnpm-config", name);
+mkdirSync(dirname(link), { recursive: true });
+symlinkSync(dir, link, "dir");
+`;
+
+/** Write the fake `pnpm` executable (see {@link FAKE_PNPM}) into `binDir`, for prepending to `PATH`. */
+export const writeFakePnpm = (binDir: string): void => {
+	mkdirSync(binDir, { recursive: true });
+	writeFileSync(join(binDir, "pnpm"), FAKE_PNPM, { mode: 0o755 });
+};

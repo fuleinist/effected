@@ -11,11 +11,13 @@
 | `DependencyMapField` | Variable | A string→string map field decoding a plain JSON object to a `HashMap`, defaulting to an empty map when the key is absent. Backs the four dependency maps and `scripts`. Not meant to be referenced directly. | dependencies field codec, json object to HashMap |
 | `DevEngine` | Class | A single `devEngines` constraint with a name and optional `version` / `onFail`. | single devEngines constraint, engine name version onFail |
 | `DevEngineOrArray` | Variable | A `devEngines` constraint slot: a single `DevEngine` or an array of them. | devEngines constraint slot, single engine or array of engines |
+| `DevEnginePackageManagerEntry` | Interface | The encoded shape of a `devEngines.packageManager` entry: what a raw `package.json` object carries. A `DevEngine` instance satisfies it structurally, so both a decoded entry and the plain object read straight off disk are accepted. | |
 | `DevEngines` | TypeAlias | The decoded `devEngines` field type. | |
 | `DevEnginesSchema` | Variable | The `devEngines` field schema, modeling runtime and package-manager constraints as optional `DevEngine` slots. | devEngines field schema, runtime and package manager os cpu libc constraints |
 | `EntryPointManifest` | Interface | The manifest fields entry resolution reads. | |
 | `ExportsField` | Variable | The `exports` field: a single string entry point or an open object of conditional exports. Not meant to be referenced directly. | exports field shape, string entry point or conditional exports object |
 | `Funding` | Class | Where to send money for a package: one funding entry. | read a package's funding field, where to sponsor a maintainer, single entry or array |
+| `InvalidPackageManagerRangeError` | Class | Indicates that a `packageManager` value, or a `devEngines.packageManager` entry, could not be read as a `PackageManagerRange`. | handle a malformed packageManager or devEngines.packageManager range, bad name, range or integrity |
 | `InvalidPackageNameError` | Class | Indicates that a string could not be used as a valid npm package name. | handle invalid npm package name, failed naming rules |
 | `InvalidSpdxLicenseError` | Class | Indicates that a string is not a valid SPDX license identifier or expression. | handle invalid spdx license field, unrecognized identifier or expression |
 | `LenientFieldIssue` | Interface | One degraded field from a lenient decode: the top-level `field` that did not match its permissive shape, a human-readable description of the `expected` shape, and the raw `value` found there (also preserved verbatim under `LenientManifest.rest[field]`). | |
