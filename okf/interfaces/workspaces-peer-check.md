@@ -214,7 +214,9 @@ so there is nothing left for a third reason to name. The `link:` importer
 decline folds into `unresolvedEdge` rather than growing the union; whether
 consumers need a separate member distinguishing the structural pnpm
 `link:` case from an unnameable edge is an open design question tracked
-on issue 800.
+on issue 800 — and the `workspacePackages` join is the working answer to
+it, since a covered target stops being a structural unknown and becomes a
+judged row with no union member to add.
 
 - **`peerRulesNotApplied`** — no suppression policy was supplied, so
   pnpm's suppression could not be replicated and some rows may be ones
@@ -228,12 +230,13 @@ on issue 800.
   Such a peer is declined rather than reported: reporting it would be a
   false positive, declining it silently would be a false negative, and
   only doing both halves is honest. Second, an importer dependency
-  resolved through `link:` raises it too: a linked parent has no
-  `packages:` row, so its manifest peers are never in the lockfile and
-  are declined rather than fabricated. Under pnpm every `workspace:`
-  dependency is recorded `link:`, so this second trigger is structural
-  for pnpm monorepos with internal dependencies, not a finding about a
-  particular workspace.
+  resolved through `link:` raises it too when the caller did not supply
+  that target's manifest: a linked parent has no `packages:` row, so its
+  manifest peers are never in the lockfile and are declined rather than
+  fabricated. Under pnpm every `workspace:` dependency is recorded
+  `link:`, so this second trigger is structural for pnpm monorepos with
+  internal dependencies whenever the manifests are not supplied — and
+  gone for every target the supplied set covers.
 
 `PeerCheck` reads `resolved` from `@effected/lockfiles`, which omits any
 edge whose identity it cannot compose and verify — a rule that keeps this
@@ -242,14 +245,21 @@ carries two different meanings, "nothing resolved" and "something resolved
 that could not be named", and this package treats the first as a positive
 finding.
 
-The `link:` hole this posture once had is closed on the declining side: a
-parent reached through a `link:` edge still has no package row and its
-peers are still never joined, but every `link:` importer dependency now
-raises `unresolvedEdge`, so the report says unverified instead of
-verified. The joining side remains open as issue 800's option 1 — reading
-a linked parent's manifest from disk would make `PeerCheck` no longer a
-pure value over the lockfile alone, which is a design decision rather
-than a report change.
+The `link:` hole this posture once had is closed on the declining side,
+AND answered on the joining side — without reading the disk, so the check
+stays a pure value over its inputs. `PeerCheckOptions.workspacePackages`
+takes the discovery output the caller already has; a `link:` target it
+covers contributes its manifest's declared peers to the walk, named from
+the manifest (`probe-a@1.0.0`, not the row's `packages/a@0.0.0`) and
+judged against the IMPORTER's own dependency set, which is where pnpm
+resolves them from. Measured one variable at a time on the probe
+workspace against pnpm 12.5.1 and 12.6.0: the consumer's own
+`react@18.3.1` satisfies the linked parent's `^18.0.0` peer, the same
+version installed only by a SIBLING importer does not, and the consumer's
+own `react@17.0.2` is a `bad` row carrying `foundVersion`. A target the
+supplied set does not cover — every target, when the key is omitted —
+keeps raising `unresolvedEdge`, which is the same presence-is-the-
+assertion rule `peerDependencyRules` follows.
 
 ## The differential oracle
 
