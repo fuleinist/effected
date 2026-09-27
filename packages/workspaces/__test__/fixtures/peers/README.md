@@ -124,20 +124,16 @@ Real pnpm 12.5.1 output, generated 2026-09-22 by the same recipe
 workspace from effected#800: `linkWorkspacePackages: deep`, package
 `probe-a` declaring a `react: ^18.0.0` peer nothing satisfies, package
 `probe-b` depending on `probe-a: workspace:*` — which pnpm records as
-`version: link:../a`. The peer range is literal rather than a catalog read
-because pnpm/pnpm#15049 (still open) limits the oracle for packages that
-read `catalog:` peers through a workspace edge.
+`version: link:../a`. The peer range is literal; a `catalog:` variant
+produces byte-identical artefacts (see the catalog section below).
 
-The oracle is the divergence this fixture exists to record: `pnpm peers
-check --json` READS THE LINKED MANIFEST on disk and reports the missing
-`react` row for `packages/b` (parents `probe-a@1.0.0`). The lockfile
-records no peer declarations for the linked parent, so `PeerCheck` cannot
-see the row — it declines to fabricate one and instead fails the report
-closed with `unresolvedEdge` (effected#800, the issue's minimum ask). The
-two sides therefore do NOT agree row-for-row here, and the tests pin both
-halves: no fabricated finding, and the unverified marker. If the
-join-from-disk route (the issue's option 1) ever lands, the committed
-oracle is what turns the test into a full agreement check.
+`pnpm peers check --json` READS THE LINKED MANIFEST on disk and reports the
+missing `react` row for `packages/b` (parents `probe-a@1.0.0`). The lockfile
+records no peer declarations for the linked parent, so the fixture pins both
+modes of `PeerCheck`: with `workspacePackages` supplied, the linked parent's
+manifest peers are joined and the report agrees with the oracle row for row;
+with the key omitted, `PeerCheck` fabricates no row and fails the report
+closed with `unresolvedEdge` (effected#800).
 
 A published-parent control (the same graph with `probe-a` carrying a real
 `packages:` row, where the row appears today) could not be generated
