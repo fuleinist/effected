@@ -355,6 +355,13 @@ export class Markdown {
 	 * rows describe a synthesized node, which is the case a test asserting on
 	 * generated markdown actually has.
 	 *
+	 * **Text escaping is canonical unless a `Text` node opts out.** A `Text`
+	 * carrying `escapeStyle: "literal"` is emitted verbatim apart from the
+	 * escapes that protect block structure (a table cell's `|`, a newline in a
+	 * single-line container, line-start block openers); its exact set is
+	 * documented on {@link Text}. The opt-out is additive: a tree that never
+	 * sets it serializes byte-identically to the canonical form.
+	 *
 	 * **Representability wins over the table.** The canonical form never emits
 	 * text that would re-parse as something else, so a row yields where the two
 	 * conflict. The case that reaches a consumer is the indented code block: an
@@ -431,7 +438,9 @@ export class Markdown {
 	 * admits spec mdast and strips everything outside it, so a `fenceChar`,
 	 * `headingStyle`, `markerChar` or `delimiter` placed on a plain mdast tree
 	 * before admission is silently dropped and the canonical default applies.
-	 * Set them on the nodes that come back.
+	 * Set them on the nodes that come back. The exception is `Text`'s
+	 * `escapeStyle`, an emitter instruction rather than a source spelling,
+	 * which the boundary admits.
 	 *
 	 * @param root - The document tree to serialize.
 	 * @returns An `Effect` that succeeds with markdown source, or fails with
