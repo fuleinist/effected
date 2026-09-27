@@ -15,8 +15,8 @@ sources:
     resource: ../../packages/workspaces/__test__/fixtures/peers/README.md
 generated:
   by: "okfit/claude-code"
-  at: 2026-09-27T19:57:47Z
-  body_sha256: fb2c2249436fa49d31f14836cba9704559fe23cacc1d0120a256e624fb876d57
+  at: 2026-09-27T20:17:53Z
+  body_sha256: d65c679c3ee20597d68bfec0d9d1f508987d02f633588599382a61fa146bf9b5
 ---
 
 # @effected/workspaces peer-dependency checking
