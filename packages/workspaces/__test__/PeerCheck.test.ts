@@ -18,10 +18,37 @@ import { NoPeerDependencyRules } from "../src/ConfigDependencyHooks.js";
 import { peerNameMatcher } from "../src/internal/peerPatterns.js";
 import type { UnsatisfiedPeer } from "../src/PeerCheck.js";
 import { PeerCheck } from "../src/PeerCheck.js";
+import { WorkspacePackage } from "../src/WorkspacePackage.js";
 
 const fixture = (relative: string): string => readFileSync(join(import.meta.dirname, "fixtures", relative), "utf8");
 
 const parse = (dir: string) => Lockfile.parse(fixture(`peers/${dir}/pnpm-lock.yaml`), { format: "pnpm" });
+
+/**
+ * A discovery-shaped {@link WorkspacePackage} for the `linkdeep*` probes:
+ * `probe-a` at `packages/a`, declaring the `react: ^18.0.0` peer nothing in
+ * that workspace satisfies.
+ *
+ * @remarks
+ * The join reads only `relativePath`, `name`, `version`, `peerDependencies`
+ * and (for optional flags) `manifestRecord`; the rest is what discovery always
+ * carries, spelled minimally here because the model requires it.
+ */
+const probeA = (overrides?: {
+	readonly name?: string;
+	readonly version?: string;
+	readonly relativePath?: string;
+	readonly peerDependencies?: Record<string, string>;
+}): WorkspacePackage =>
+	WorkspacePackage.make({
+		name: overrides?.name ?? "probe-a",
+		version: overrides?.version ?? "1.0.0",
+		path: "C:/ws/packages/a",
+		packageJsonPath: "C:/ws/packages/a/package.json",
+		relativePath: overrides?.relativePath ?? "packages/a",
+		workspaceRoot: "C:/ws",
+		peerDependencies: overrides?.peerDependencies ?? { react: "^18.0.0" },
+	});
 
 /** One normalized row, comparable across both sides of the oracle. */
 interface Row {
@@ -577,6 +604,134 @@ describe("PeerCheck.run — peerDependencyRules and the unverified states", () =
 			const report = PeerCheck.run(yield* parse("linkdeep"));
 			assert.include(report.unverified, "peerRulesNotApplied");
 			assert.include(report.unverified, "unresolvedEdge");
+		}),
+	);
+
+	// The join (effected#800's option 1): the caller supplies the discovered
+	// manifests, and a `link:`-resolved parent's peers are read from the one
+	// place they exist. Every oracle below is a real `pnpm peers check --json`
+	// run over the probe workspace, committed verbatim beside its lockfile.
+	it.effect("joins a supplied linked parent's manifest peers, clearing the marker it replaced", () =>
+		Effect.gen(function* () {
+			const report = PeerCheck.run(yield* parse("linkdeep"), {
+				peerDependencyRules: NoPeerDependencyRules,
+				workspacePackages: [probeA()],
+			});
+
+			// Agreement, row for row, with the verdict pnpm read off the linked
+			// manifest on disk — and the fail-closed marker gone, which is the
+			// half that says the join happened rather than the row merely
+			// agreeing by silence.
+			assert.deepStrictEqual(ours(report.unsatisfied), theirs("linkdeep"));
+			assert.deepStrictEqual(report.unverified, []);
+		}),
+	);
+
+	it.effect("fails closed for a link: target the supplied set does not cover", () =>
+		Effect.gen(function* () {
+			// A set that covers a DIFFERENT directory says nothing about this
+			// edge: the target's manifest is still invisible, so the report
+			// keeps saying so. Supplying the key is the assertion — its
+			// CONTENTS are what decides which edges it answers for.
+			const report = PeerCheck.run(yield* parse("linkdeep"), {
+				peerDependencyRules: NoPeerDependencyRules,
+				workspacePackages: [probeA({ relativePath: "packages/elsewhere" })],
+			});
+			assert.deepStrictEqual(report.unsatisfied, []);
+			assert.deepStrictEqual(report.unverified, ["unresolvedEdge"]);
+		}),
+	);
+
+	it.effect("judges a joined parent's peers against the importer's OWN dependency set", () =>
+		Effect.gen(function* () {
+			// Measured one variable at a time against pnpm 12.5.1 and 12.6.0,
+			// because the obvious rule — look the peer name up among the
+			// workspace's instances — is wrong in both directions:
+			//
+			// - `linkdeep-provided/`: react@18.3.1 as the CONSUMER's own
+			//   dependency satisfies the linked parent's `^18.0.0` peer. pnpm
+			//   reports the importer clean, and so must we.
+			const provided = PeerCheck.run(yield* parse("linkdeep-provided"), {
+				peerDependencyRules: NoPeerDependencyRules,
+				workspacePackages: [probeA()],
+			});
+			assert.deepStrictEqual(ours(provided.unsatisfied), theirs("linkdeep-provided"));
+			assert.deepStrictEqual(provided.unverified, []);
+
+			// - `linkdeep-sibling/`: the SAME version installed only by a
+			//   sibling importer does not. pnpm reports the peer missing, so a
+			//   workspace-wide name lookup would have manufactured a clean
+			//   report here — the false-negative shape this check exists to
+			//   avoid.
+			const sibling = PeerCheck.run(yield* parse("linkdeep-sibling"), {
+				peerDependencyRules: NoPeerDependencyRules,
+				workspacePackages: [probeA()],
+			});
+			assert.deepStrictEqual(ours(sibling.unsatisfied), theirs("linkdeep-sibling"));
+			assert.deepStrictEqual(sibling.unverified, []);
+
+			// - `linkdeep-bad/`: the consumer's own react@17.0.2 is outside the
+			//   range, which is a `bad` row carrying the version that resolved.
+			const bad = PeerCheck.run(yield* parse("linkdeep-bad"), {
+				peerDependencyRules: NoPeerDependencyRules,
+				workspacePackages: [probeA()],
+			});
+			assert.deepStrictEqual(ours(bad.unsatisfied), theirs("linkdeep-bad"));
+			assert.deepStrictEqual(bad.unverified, []);
+		}),
+	);
+
+	it.effect("clears the marker for a supplied target without inventing rows from it", () =>
+		Effect.gen(function* () {
+			// `workspacepeer/`'s satisfying edge is a `link:` into
+			// `packages/fakereact`, which declares no peers of its own. Supply
+			// it and the report becomes verified — pnpm calls this workspace
+			// clean, and now so do we, for a reason (the manifest was read)
+			// rather than by declining to look.
+			const report = PeerCheck.run(yield* parse("workspacepeer"), {
+				peerDependencyRules: NoPeerDependencyRules,
+				workspacePackages: [
+					probeA({ name: "react", version: "18.3.1", relativePath: "packages/fakereact", peerDependencies: {} }),
+				],
+			});
+			assert.deepStrictEqual(ours(report.unsatisfied), theirs("workspacepeer"));
+			assert.deepStrictEqual(report.unverified, []);
+		}),
+	);
+
+	it.effect("echoes a protocol specifier it cannot evaluate, and declines the comparison", () =>
+		Effect.gen(function* () {
+			// A manifest range that is a protocol specifier rather than a range
+			// — `catalog:peers` here, `catalog:effected:peers` in the repo that
+			// reported this — is carried through verbatim rather than resolved:
+			// resolving it needs the catalog map, which is not an input.
+			const catalog = probeA({ peerDependencies: { react: "catalog:peers" } });
+
+			// With nothing resolved for the peer, the row needs no range
+			// arithmetic: "no provider" is a fact about the graph. The row is
+			// reported, only its `wanted` string differs from the range pnpm
+			// resolved the catalog to.
+			const missing = PeerCheck.run(yield* parse("linkdeep"), {
+				peerDependencyRules: NoPeerDependencyRules,
+				workspacePackages: [catalog],
+			});
+			assert.strictEqual(missing.unsatisfied.length, 1);
+			assert.strictEqual(missing.unsatisfied[0]?.wanted, "catalog:peers");
+			assert.deepStrictEqual(missing.unverified, []);
+
+			// With a provider present the comparison is declined rather than
+			// guessed, exactly as an unparseable range on a lockfile instance
+			// is. That is the KNOWN under-report: pnpm resolves the specifier
+			// and reports a `bad` row here (`linkdeep-bad/`'s oracle, whose
+			// `react@17.0.2` is outside the catalog's `^18.0.0`), and we say
+			// nothing. Pinned so the gap is a recorded decision rather than a
+			// surprise; closing it needs the catalog map as an input.
+			const declined = PeerCheck.run(yield* parse("linkdeep-bad"), {
+				peerDependencyRules: NoPeerDependencyRules,
+				workspacePackages: [catalog],
+			});
+			assert.deepStrictEqual(declined.unsatisfied, []);
+			assert.deepStrictEqual(declined.unverified, []);
 		}),
 	);
 
