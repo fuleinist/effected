@@ -18,11 +18,21 @@ on:
         description: Run in dry-run mode
         type: boolean
         default: false
+      snapshot:
+        description: Publish a snapshot of the dispatched branch instead of running the release workflow
+        type: boolean
+        default: false
+      snapshot_tag:
+        description: Dist-tag (and version prefix) for a snapshot publish; never latest
+        type: string
+        default: next
 
 concurrency:
   # The event name keeps a fork push's pull_request and pull_request_target
   # runs in separate groups; sharing one would cancel one of them.
-  group: release-${{ github.event_name }}-${{ github.event.pull_request.number || github.sha }}
+  # A snapshot dispatch gets its own group, so another dispatch on the same
+  # commit (a dry-run release, say) cannot cancel it mid-publish.
+  group: release-${{ github.event_name }}${{ inputs.snapshot && '-snapshot' || '' }}-${{ github.event.pull_request.number || github.sha }}
   cancel-in-progress: true
 
 jobs:
@@ -39,6 +49,12 @@ jobs:
       artifact-metadata: write
     with:
       dry-run: ${{ inputs.dry_run || false }}
+      # A snapshot dispatch runs silk-release-action's snapshot phase through the
+      # reusable workflow's nested release-snapshot.yml; every other event takes
+      # the normal release path. The id-token and packages grants above are what
+      # that nested job needs for OIDC publishing and GitHub Packages.
+      snapshot: ${{ inputs.snapshot || false }}
+      snapshot-tag: ${{ inputs.snapshot_tag }}
       auto-merge: "squash"
       skip-claude-review: false
       # Fails the validation phase when the effected catalog has drifted from
