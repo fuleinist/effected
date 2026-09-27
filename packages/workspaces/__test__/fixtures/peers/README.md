@@ -171,6 +171,27 @@ false`, `linkWorkspacePackages: deep`, `packages: ['packages/*']`, no root
 `package.json`. Oracles are `pnpm peers check --json` output verbatim, taken
 with `npx pnpm@12.5.1` and re-taken with 12.6.0 — identical on all three.
 
+## `linkdeep-root/` and `linkdeep-root-bad/`
+
+Real pnpm **12.6.0** output, generated 2026-09-27 by the same recipe
+(`pnpm install --lockfile-only`, `autoInstallPeers: false`,
+`linkWorkspacePackages: deep`, `packages: ['packages/*']`), over a workspace
+whose **root** `package.json` depends on `probe-a: workspace:*` and
+`js-tokens: 4.0.0`. `packages/a` (`probe-a@1.0.0`) declares the
+`react: ^18.0.0` peer, as in `linkdeep/`. pnpm records the edge on the root
+importer as `version: link:packages/a` — the shape effected#800 reported for
+`@savvy-web/silk` linked at a real workspace's root.
+
+- **`linkdeep-root/`** — nothing provides react. Oracle: a **missing** `react`
+  row for `.`, parents `probe-a@1.0.0`.
+- **`linkdeep-root-bad/`** — the root ALSO depends on `react@17.0.2`. Oracle: a
+  **bad** row for `.` carrying `foundVersion: "17.0.2"`, so the root's own
+  dependency set is the provider context, as it is for a non-root importer.
+
+The root has no workspace row under pnpm, so these are the fixtures that
+exercise a linked target reached from an importer that is answered through its
+dependency records rather than through its own row.
+
 ## The catalog-peer variant, and why it is not a directory here
 
 `linkdeep/`'s probe workspace with one change — `packages/a` declaring

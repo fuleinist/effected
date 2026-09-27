@@ -699,6 +699,79 @@ describe("PeerCheck.run — peerDependencyRules and the unverified states", () =
 		}),
 	);
 
+	// The ROOT importer has no workspace row under pnpm, so the shared join
+	// composes `probe-a@link:packages/a`, matches nothing, and never reaches
+	// the linked target. Before the walk learned to seed it, a covered target
+	// there cleared the marker WITHOUT being judged — `unverified: []` and no
+	// rows, while pnpm reported the peer. Both oracles are pnpm 12.6.0 over a
+	// root depending on `probe-a: workspace:*` (README, `linkdeep-root/`).
+	it.effect("walks a ROOT importer's covered link: target and agrees with pnpm", () =>
+		Effect.gen(function* () {
+			const report = PeerCheck.run(yield* parse("linkdeep-root"), {
+				peerDependencyRules: NoPeerDependencyRules,
+				workspacePackages: [probeA()],
+			});
+			assert.strictEqual(theirs("linkdeep-root").length, 1);
+			assert.deepStrictEqual(ours(report.unsatisfied), theirs("linkdeep-root"));
+			assert.deepStrictEqual(report.unresolvedImporters, []);
+			assert.deepStrictEqual(report.unverified, []);
+		}),
+	);
+
+	it.effect("judges a ROOT importer's linked peer against the root's own dependency set", () =>
+		Effect.gen(function* () {
+			// The root's own react@17.0.2 is the provider pnpm judges against, so
+			// the row is `bad` with that version rather than `missing`.
+			const report = PeerCheck.run(yield* parse("linkdeep-root-bad"), {
+				peerDependencyRules: NoPeerDependencyRules,
+				workspacePackages: [probeA()],
+			});
+			assert.deepStrictEqual(ours(report.unsatisfied), theirs("linkdeep-root-bad"));
+			assert.strictEqual(report.unsatisfied[0]?.found, "17.0.2");
+			assert.deepStrictEqual(report.unverified, []);
+		}),
+	);
+
+	it.effect("keeps the marker for a ROOT importer's link: target the supplied set does not cover", () =>
+		Effect.gen(function* () {
+			const report = PeerCheck.run(yield* parse("linkdeep-root"), {
+				peerDependencyRules: NoPeerDependencyRules,
+				workspacePackages: [probeA({ relativePath: "packages/elsewhere" })],
+			});
+			assert.deepStrictEqual(report.unsatisfied, []);
+			assert.deepStrictEqual(report.unverified, ["unresolvedEdge"]);
+		}),
+	);
+
+	it.effect("keeps the marker for a covered link: target with no lockfile row to walk", () =>
+		Effect.gen(function* () {
+			// A supplied manifest whose directory the lockfile records no importer
+			// for cannot be walked, so its peers were never judged: covering the
+			// path is not the same as judging it.
+			const lockfile = yield* Lockfile.parse(
+				[
+					"lockfileVersion: '9.0'",
+					"",
+					"importers:",
+					"",
+					"  .:",
+					"    dependencies:",
+					"      probe-a:",
+					"        specifier: link:vendor/a",
+					"        version: link:vendor/a",
+					"",
+				].join("\n"),
+				{ format: "pnpm" },
+			);
+			const report = PeerCheck.run(lockfile, {
+				peerDependencyRules: NoPeerDependencyRules,
+				workspacePackages: [probeA({ relativePath: "vendor/a" })],
+			});
+			assert.deepStrictEqual(report.unsatisfied, []);
+			assert.include(report.unverified, "unresolvedEdge");
+		}),
+	);
+
 	it.effect("echoes a protocol specifier it cannot evaluate, and declines the comparison", () =>
 		Effect.gen(function* () {
 			// A manifest range that is a protocol specifier rather than a range

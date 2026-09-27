@@ -43,11 +43,13 @@ import type { WorkspacePackage } from "./WorkspacePackage.js";
  *   involves are neither confirmed satisfied nor confirmed unmet.
  *
  * Supplying {@link PeerCheckOptions.workspacePackages} clears the second
- * trigger for every `link:` target the supplied set covers: the linked
- * manifest's peers are joined and judged for real, which is what makes the
- * report an answer rather than a refusal. Omitting the option — or omitting a
- * linked target from it — leaves the edge unverified, because an unjoined
- * parent's peers are recorded nowhere in the lockfile.
+ * trigger for every `link:` target the supplied set covers AND the walk
+ * reaches: the linked manifest's peers are joined and judged for real, which
+ * is what makes the report an answer rather than a refusal. Omitting the
+ * option — or omitting a linked target from it — leaves the edge unverified,
+ * because an unjoined parent's peers are recorded nowhere in the lockfile; so
+ * does a covered target the lockfile records no workspace row for, since
+ * there is nothing to walk and its peers were never judged.
  *
  * Both mean **fail closed**: a gate should treat an unverified report as "not
  * proven clean" rather than as a pass.
@@ -215,6 +217,55 @@ const linkTargetPath = (importerPath: string, target: string): string => {
 };
 
 /**
+ * One `link:`-resolved importer dependency, classified before the walk.
+ *
+ * @internal
+ */
+interface LinkEdge {
+	/** The name the importer depends on the target under. */
+	readonly name: string;
+	/** The workspace row the target directory stands for, when the lockfile records one. */
+	readonly row: ResolvedPackage | undefined;
+	/** Whether the caller supplied a manifest for the target directory. */
+	readonly covered: boolean;
+}
+
+/**
+ * An importer's walk roots with its `link:` targets seeded in.
+ *
+ * @remarks
+ * An importer with its own workspace row already reaches its link targets
+ * through that row's `resolved` edges. One without — the ROOT under pnpm —
+ * does not: the shared join composes `name@link:…`, matches no instance, and
+ * drops the dependency, so a covered target there would never be walked.
+ * Seeding the target rows here, rather than forking the shared join in
+ * `internal/roots.ts`, keeps `DuplicateCheck` on the join it was measured
+ * against while letting the peer walk judge the root's linked parents against
+ * the root's own provider context, as pnpm does (`linkdeep-root/`).
+ *
+ * An importer the shared join gave up on is rescued only when EVERY versioned
+ * dependency it has is a `link:` edge with a row: that failure was then the
+ * missing link seed and nothing else. Any other unjoinable dependency keeps the
+ * importer unresolved.
+ *
+ * @internal
+ */
+const withLinkRoots = (
+	roots: ImporterRoots | undefined,
+	links: ReadonlyArray<LinkEdge>,
+	dependencies: ReadonlyArray<{ readonly version?: string | undefined }>,
+): ImporterRoots | undefined => {
+	const rows = links.flatMap((link) => (link.row === undefined ? [] : [link.row]));
+	if (roots?._tag === "own" || rows.length === 0) return roots;
+	if (roots === undefined) {
+		const versioned = dependencies.filter((dep) => dep.version !== undefined).length;
+		if (versioned !== rows.length) return undefined;
+		return { _tag: "dependencies", instances: rows };
+	}
+	return { _tag: "dependencies", instances: [...roots.instances, ...rows] };
+};
+
+/**
  * The caller-supplied manifests, the `link:` targets they cover, and the
  * dependency set a joined parent's peers resolve from.
  *
@@ -253,10 +304,15 @@ interface Join {
 const providerContext = (
 	roots: ImporterRoots,
 	byId: ReadonlyMap<string, ResolvedPackage>,
+	links: ReadonlyArray<LinkEdge>,
 ): ReadonlyMap<string, ResolvedPackage> => {
 	const context = new Map<string, ResolvedPackage>();
 	if (roots._tag === "dependencies") {
 		for (const instance of roots.instances) context.set(instance.name, instance);
+		// A workspace row is named by its DIRECTORY, so a linked provider is
+		// keyed by the name the importer depends on it under, which is the
+		// name a peer asks for.
+		for (const link of links) if (link.row !== undefined) context.set(link.name, link.row);
 		return context;
 	}
 	for (const [name, instanceId] of Object.entries(roots.instance.resolved)) {
@@ -491,7 +547,9 @@ export class PeerCheck extends Schema.Class<PeerCheck>("PeerCheck")({
 	 * invisible parent pass as checked (effected#800).
 	 *
 	 * Supplying {@link PeerCheckOptions.workspacePackages} closes that gap for
-	 * every `link:` target the set covers: the claimed manifest's declared
+	 * every `link:` target the set covers — the root importer's included,
+	 * whose linked targets the walk seeds itself because the root has no
+	 * workspace row to reach them through: the claimed manifest's declared
 	 * peers are walked, judged against the importer's own dependency set (see
 	 * {@link providerContext}), and reported with the manifest's name and
 	 * version in `parents` — the two facts a workspace row cannot carry, since
@@ -543,23 +601,25 @@ export class PeerCheck extends Schema.Class<PeerCheck>("PeerCheck")({
 		// a `link:` version is spelled relative to the importer that recorded
 		// it — so they are computed in one pass rather than twice.
 		const joinable = new Set<string>();
+		const linksByImporter = new Map<string, ReadonlyArray<LinkEdge>>();
 		let unjoinedLink = false;
 		for (const importer of lockfile.importers) {
+			const edges: Array<LinkEdge> = [];
 			for (const dep of importer.dependencies) {
 				const version = dep.version;
 				if (version?.startsWith(LINK_PREFIX) !== true) continue;
 				const target = linkTargetPath(importer.path, version.slice(LINK_PREFIX.length));
-				if (!manifests.has(target)) {
-					unjoinedLink = true;
-					continue;
-				}
 				// The row the edge lands on, when the target is an importer at
 				// all: `link:` can also point outside the workspace globs, in
-				// which case the supplied set cannot cover it either (its
-				// manifest is not a workspace package) and the marker stands.
+				// which case there is nothing to walk, its peers are never
+				// judged, and the post-walk check below keeps the marker.
 				const row = index.workspaceByPath.get(target);
-				if (row !== undefined) joinable.add(row.instanceId);
+				const covered = manifests.has(target);
+				if (!covered) unjoinedLink = true;
+				if (covered && row !== undefined) joinable.add(row.instanceId);
+				edges.push({ name: dep.name, row, covered });
 			}
+			if (edges.length > 0) linksByImporter.set(importer.path, edges);
 		}
 
 		const rows: Array<UnsatisfiedPeer> = [];
@@ -567,16 +627,27 @@ export class PeerCheck extends Schema.Class<PeerCheck>("PeerCheck")({
 		const seen = new Set<string>();
 
 		for (const importer of lockfile.importers) {
-			const roots = rootInstances(lockfile, importer.path, index);
+			const links = linksByImporter.get(importer.path) ?? [];
+			const roots = withLinkRoots(rootInstances(lockfile, importer.path, index), links, importer.dependencies);
 			if (roots === undefined) {
 				unresolved.push(importer.path);
+				// Nothing was walked, so no covered edge here was judged.
+				if (links.length > 0) unjoinedLink = true;
 				continue;
 			}
 			// A joinable parent's peers are judged against the IMPORTER's own
 			// dependency set, which is where pnpm resolves them from; see
 			// {@link providerContext}.
-			const join: Join = { manifests, joinable, context: providerContext(roots, byId) };
-			collect(importer.path, walksFrom(roots, join), byId, rows, seen, policy, join);
+			const join: Join = { manifests, joinable, context: providerContext(roots, byId, links) };
+			const judged = new Set<string>();
+			collect(importer.path, walksFrom(roots, join), byId, rows, seen, policy, join, judged);
+			// A covered edge clears the marker ONLY when the walk actually read
+			// the target's manifest peers for THIS importer. Covering the path
+			// is not judging it: a target with no lockfile row, or one the walk
+			// never reached, is still invisible, and the report says so.
+			for (const edge of links) {
+				if (edge.covered && (edge.row === undefined || !judged.has(edge.row.instanceId))) unjoinedLink = true;
+			}
 		}
 
 		// An edge the lockfile records but the model could not name means some
@@ -589,10 +660,12 @@ export class PeerCheck extends Schema.Class<PeerCheck>("PeerCheck")({
 		// whose peers are empty BY DESIGN, and at worst — the root importer —
 		// to nothing at all, while `pnpm peers check` reads the linked manifest
 		// on disk and reports those peers. Where the caller supplied that
-		// manifest, the walk above judged those peers for real and this marker
-		// is not owed; where it did not — the key omitted, or a target outside
-		// the supplied set — the peers are still invisible, and the report says
-		// so rather than presenting its rows as the answer. `version` is
+		// manifest AND the walk read it for the importer that recorded the edge,
+		// those peers were judged for real and this marker is not owed; where it
+		// did not — the key omitted, a target outside the supplied set, or a
+		// covered target the walk could not reach — the peers are still
+		// invisible, and the report says so rather than presenting its rows as
+		// the answer. `version` is
 		// populated by pnpm only, so npm and bun never reach the branch and the
 		// scan stays format-free.
 		if (unjoinedLink || lockfile.packages.some((pkg) => pkg.unresolvedEdges.length > 0)) {
@@ -636,6 +709,7 @@ const collect = (
 	seen: Set<string>,
 	policy: Policy,
 	join: Join,
+	judged: Set<string>,
 ): void => {
 	const visited = new Set<string>();
 	const queue: Array<Walk> = [...roots];
@@ -655,6 +729,9 @@ const collect = (
 		const declared = linked?.peerDependencies ?? current.instance.peerDependencies;
 		const optionalNames = linked === undefined ? undefined : optionalPeers(linked);
 		const declaring = linked?.name ?? current.instance.name;
+		// Recorded so the caller can tell a covered edge that was JUDGED from
+		// one that was merely covered; see {@link PeerCheck.run}.
+		if (linked !== undefined) judged.add(current.instance.instanceId);
 
 		for (const [peer, wanted] of Object.entries(declared)) {
 			if (peer === "") continue;
