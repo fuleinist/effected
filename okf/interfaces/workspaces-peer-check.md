@@ -15,8 +15,8 @@ sources:
     resource: ../../packages/workspaces/__test__/fixtures/peers/README.md
 generated:
   by: "okfit/claude-code"
-  at: 2026-09-27T21:01:48Z
-  body_sha256: b5f72a987d79454be0c5e780e72e9103d5591e9f28adac58bedca4449606a5c4
+  at: 2026-09-27T21:38:36Z
+  body_sha256: 5e3f480d91f2191709cf47d71363fae26e6ad7529fca9fa5bfc96e81ac513b2c
 ---
 
 # @effected/workspaces peer-dependency checking
@@ -249,7 +249,10 @@ omitting an option key says nobody looked, and the report says so.
   as usual.
 - **`peerVersionUnresolved`** — a peer resolved to a non-workspace provider
   whose version is a protocol specifier rather than a version: a `file:`
-  dependency, directly or through a `file:` override. The lockfile records
+  directory or tarball, directly or through a `file:` override, and a git
+  or remote-tarball provider, which pnpm keys by its URL
+  (`https://codeload.github.com/…`, `git+https://…`) so the URL stands
+  where a version belongs. The lockfile records
   no version for a `file:` directory, and the model carries the specifier
   (`file:vendor/react`) in its place. `pnpm peers check` reports such a peer
   as a `bad` row with the specifier as its found version, even when the
@@ -380,4 +383,6 @@ oracle directory.
     `UnsatisfiedPeer`, `PeerParent`, `PeerCheckOptions`, `UnverifiedReason`.
 [^peer-fixtures]: `packages/workspaces/__test__/fixtures/peers/README.md` —
     provenance of every oracle run, including the `allowany/` and
-    `ignoremissing/` measurement pass and the six `linkdeep*` directories.
+    `ignoremissing/` measurement pass and the eight `linkdeep*` directories
+    (`linkdeep`, `-bad`, `-directory`, `-directory-false`, `-provided`,
+    `-root`, `-root-bad`, `-sibling`).

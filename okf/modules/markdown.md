@@ -10,8 +10,8 @@ tags:
   - architecture
 generated:
   by: "okfit/claude-code"
-  at: 2026-09-27T19:59:34Z
-  body_sha256: 058ffb76e97e618dbeba82548775832c826818f98b7ef3384df99d9f69e52851
+  at: 2026-09-27T21:36:12Z
+  body_sha256: 7b11a62f42f794241dcb18432c0ae026f1ebcba2e7b5ffee578417cb77c04238
 ---
 
 # `@effected/markdown`

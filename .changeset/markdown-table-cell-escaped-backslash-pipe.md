@@ -1,5 +1,5 @@
 ---
-"@effected/markdown": patch
+"@effected/markdown": minor
 ---
 
 ## Bug Fixes

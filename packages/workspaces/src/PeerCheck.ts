@@ -60,14 +60,18 @@ import type { WorkspacePackage } from "./WorkspacePackage.js";
  *   supplied set names nothing for, or any other protocol (`workspace:*` and
  *   friends). A peer with NOTHING resolved never produces it: "no provider"
  *   is reportable without the range, so that row is emitted as usual.
- * - `"peerVersionUnresolved"` — a peer resolved to a provider whose version
- *   is a protocol specifier rather than a version (`file:../x` from a `file:`
- *   dependency or a `file:` override), so the comparison was never
- *   performed. The lockfile records no version for a `file:` directory at
- *   all, and `pnpm peers check` reports such a peer as a `bad` row carrying
- *   the specifier as its found version even when the directory's own
- *   manifest satisfies the range, so calling it satisfied would pass a
- *   workspace pnpm rejects. Applies to a peer declared by a lockfile row and
+ * - `"peerVersionUnresolved"` — a peer resolved to a non-workspace provider
+ *   whose version is a protocol specifier rather than a version, so the
+ *   comparison was never performed. That is any `file:` provider — a
+ *   directory, a tarball, or either through a `file:` override
+ *   (`file:../x`) — and equally a git or remote-tarball provider, which
+ *   pnpm keys by its URL (`https://codeload.github.com/…`,
+ *   `git+https://…`), so the URL stands where a version belongs. The
+ *   lockfile records no version for a `file:` directory at all, and
+ *   `pnpm peers check` reports such a peer as a `bad` row carrying the
+ *   specifier as its found version even when the directory's own manifest
+ *   satisfies the range, so calling it satisfied would pass a workspace
+ *   pnpm rejects. Applies to a peer declared by a lockfile row and
  *   by a joined `link:` manifest alike. A workspace-row provider never
  *   produces it (it is accepted as always), and neither does a plain
  *   unparseable version, which is skipped.
@@ -1184,8 +1188,9 @@ const judge = (
 	// against a real range would be exactly that false answer.
 	if (provider.isWorkspace) return SATISFIED;
 
-	// A provider resolved through a protocol — a `file:` dependency or a
-	// `file:` override — carries the specifier where a version belongs:
+	// A provider resolved through a protocol — a `file:` dependency or
+	// override, or a git or remote tarball pnpm keys by its URL — carries the
+	// specifier where a version belongs:
 	// `@effected/lockfiles` passes it through, and for a `file:` DIRECTORY the
 	// lockfile records no version at all. `pnpm peers check` reports such a
 	// peer `bad`, with the specifier as `foundVersion`, even when the

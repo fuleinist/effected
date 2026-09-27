@@ -16,8 +16,8 @@ sources:
     resource: ../../packages/markdown/__test__/stringify.test.ts
 generated:
   by: "okfit/claude-code"
-  at: 2026-09-27T19:59:34Z
-  body_sha256: 1e6ab3056ed5846bd8d569abfe4f3364772ab31b042bf05e31f7ab936751a2f0
+  at: 2026-09-27T21:38:36Z
+  body_sha256: 1ca4e0d7e7243e4298caba3a08b46bd463b511d83854711a15fe998e77173f59
 ---
 
 # The markdown canonical form is a published commitment — a row that moves is a breaking change
@@ -61,6 +61,9 @@ documented on the same surfaces rather than left to be rediscovered:
   assertion over synthesized code blocks therefore depends on the
   preceding sibling. See
   [languageless-code-node-indents](../gotchas/languageless-code-node-indents.md).
+  A representability fix — canonical output that did not round-trip, such
+  as a table that re-parsed as a paragraph — changes bytes only for output
+  that was already broken, so it ships as a minor, not a breaking change.
 - **`Mdast.fromMdast` strips fidelity fields**, being a spec-mdast admission
   boundary, so fidelity fields are settable only on the decoded tree; the
   drop is correct and silent, which is why both the boundary and the
