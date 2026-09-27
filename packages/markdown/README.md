@@ -248,7 +248,7 @@ Effect.runPromise(program).then(console.log);
 
 ## mdast interop
 
-The node classes already use mdast's type names and field shapes; `Mdast.toMdast` strips the fidelity fields this package adds — bullet characters, fence style, ATX-versus-setext spelling — and emits plain spec-valid mdast JSON that the remark ecosystem consumes directly, including `mdast-util-to-hast` if you want hast:
+The node classes already use mdast's type names and field shapes; `Mdast.toMdast` strips the fidelity fields this package adds — bullet characters, fence style, ATX-versus-setext spelling — (keeping only a `Text` node's `escapeStyle` when set, see [Literal text](#literal-text)) and emits plain spec-valid mdast JSON that the remark ecosystem consumes directly, including `mdast-util-to-hast` if you want hast:
 
 ```ts
 import { Markdown, Mdast } from "@effected/markdown";
@@ -317,9 +317,39 @@ MDX nodes are part of the same commitment: the serialization choices listed unde
 
 The posture that makes this a non-issue — and the one to adopt if you build trees and assert on their bytes — is to set `fenceChar` on every `Code` node carrying neither a `lang` nor one already, in a post-decode walk that reaches nested nodes. The choice then leaves the emitter entirely and no output depends on a node's neighbours.
 
-Fidelity fields must be set on the **decoded** tree: `Mdast.fromMdast` admits spec mdast and strips everything outside it, so a `fenceChar` placed on a plain mdast tree before admission is silently dropped.
+Fidelity fields must be set on the **decoded** tree: `Mdast.fromMdast` admits spec mdast and strips everything outside it, so a `fenceChar` placed on a plain mdast tree before admission is silently dropped. The one exception is `escapeStyle` on a `text` node, described next.
 
 A node that carries a fidelity field overrides the matching row — `headingStyle`, `markerChar`, `fenceChar`, `delimiter` — which is how a parsed document re-serializes in its author's spelling. The table describes a synthesized node, which is what a test asserting on generated markdown actually holds.
+
+### Literal text
+
+Text escaping is canonical by default: `~0.2.1` in a table cell emits as `\~0.2.1`. A `Text` node carrying `escapeStyle: "literal"` opts out — the caller vouches that the value is already safe markdown, and the emitter writes it verbatim with none of the escaping aimed at inline syntax. That suits generated content such as a dependency table, where `~0.2.1`, `^1.0.0` and `@scope/pkg` should read as written:
+
+```ts
+import { Markdown, Mdast } from "@effected/markdown";
+import { Result } from "effect";
+
+const cell = (value: string) => ({ type: "tableCell", children: [{ type: "text", value, escapeStyle: "literal" }] });
+const tree = Mdast.fromMdastResult({
+  type: "root",
+  children: [{ type: "table", children: [{ type: "tableRow", children: [cell("Range"), cell("~0.2.1 | ^1.0.0")] }] }],
+});
+if (Result.isSuccess(tree)) {
+  console.log(Result.getOrThrow(Markdown.stringifyResult(tree.success)));
+  // | Range | ~0.2.1 \| ^1.0.0 |
+  // | --- | --- |
+}
+```
+
+Escapes that protect the surrounding **block** still apply, because dropping them would corrupt the document rather than add formatting:
+
+- in a table cell, every `|` not already backslash-escaped becomes `\|`, and a value-final `\` is doubled when more cell content follows;
+- in a table cell or heading, a newline becomes a space;
+- in a heading, a trailing `#` run that would read as the closing sequence is escaped;
+- elsewhere, a newline that would form a blank line becomes `&#10;`, leading whitespace at a line start becomes a character reference, and a line-start character that could open a block — `#`, `>`, `+`, `-`, `=`, `~`, backtick, `*`, `_`, `<`, `[`, `|`, `:`, or an ordered-list marker — is escaped;
+- in a tree carrying MDX nodes, `{` and `<` stay escaped.
+
+**A literal value that parses as markdown does not round-trip**: `*a*` emits verbatim and re-parses as emphasis. Keeping the value free of inline syntax is the caller's promise; the emitter does not check it. The parser never sets `escapeStyle`, and `Mdast.fromMdast` admits it on a `text` node — the one fidelity field that crosses that boundary, because it is an instruction to the emitter rather than a record of source spelling — so a plain mdast tree can carry it straight in. The opt-out is additive: a tree that never sets it serializes byte-identically to the canonical form above.
 
 To *normalize* an existing document to different choices, use `MarkdownFormat` with `MarkdownFormattingOptions`. That is the configurable surface; this one deliberately is not.
 

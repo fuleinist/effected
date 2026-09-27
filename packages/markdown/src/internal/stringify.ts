@@ -310,6 +310,113 @@ const escapeText = (
 	return { text: out, atLineStart: lineStart };
 };
 
+// --- literal text (`escapeStyle: "literal"`) ---------------------------------
+//
+// The caller vouches the value is already safe markdown source, so every
+// escape aimed at the INLINE phase is dropped. What stays is what defends the
+// BLOCK phase — the structure around the text, decided before inlines are
+// parsed: newlines (blank lines end a paragraph; single-line containers have
+// none), line-start block openers and leading whitespace, the heading closing
+// sequence, and the table cell's pipes (cells are split before inline
+// parsing). MDX's `{`/`<` also stay: MDX reads a stray one as a syntax error.
+// Kept apart from `escapeText` so the canonical path is untouched byte for
+// byte.
+
+/**
+ * Line-start characters escaped in literal text: the canonical line-start
+ * set plus the openers the canonical path covers through its always-escape
+ * set (`*` lists and breaks, `_` breaks, `<` HTML blocks, `[` definitions,
+ * `|`/`:` table delimiter rows).
+ */
+const LITERAL_LINE_START_ESCAPE = new Set([...LINE_START_ESCAPE, "*", "_", "<", "[", "|", ":"]);
+
+/** ASCII punctuation: what a backslash escapes, so `\x` is one cell character. */
+const reAsciiPunctuation = /[!-/:-@[-`{-~]/;
+
+const literalText = (
+	value: string,
+	context: InlineContext,
+	atLineStart: boolean,
+	mdx: boolean,
+	followingText: string,
+	nonTextFollows: boolean,
+): { text: string; atLineStart: boolean } => {
+	let out = "";
+	let lineStart = atLineStart;
+	for (let index = 0; index < value.length; index += 1) {
+		const char = value[index] as string;
+		if (char === "\n") {
+			// The canonical newline rules, unchanged: they are all structural.
+			const adjacent = value[index - 1] === "\n" || value[index + 1] === "\n";
+			if (context.singleLine) {
+				out += " ";
+				lineStart = false;
+			} else if (adjacent || lineStart) {
+				out += "&#10;";
+				lineStart = false;
+			} else {
+				out += "\n";
+				lineStart = true;
+			}
+			continue;
+		}
+		if (lineStart) {
+			lineStart = false;
+			if (char === "\t") {
+				out += "&#9;";
+				continue;
+			}
+			if (char === " ") {
+				out += "&#32;";
+				continue;
+			}
+			const lineEnd = value.indexOf("\n", index);
+			const ordered = ORDERED_MARKER.exec(value.slice(index, lineEnd === -1 ? undefined : lineEnd));
+			if (ordered !== null) {
+				out += `${ordered[0].slice(0, -1)}\\${ordered[0].slice(-1)}`;
+				index += ordered[0].length - 1;
+				continue;
+			}
+			if (LITERAL_LINE_START_ESCAPE.has(char)) {
+				out += `\\${char}`;
+				continue;
+			}
+		}
+		if (char === "\\") {
+			const next = value[index + 1];
+			if (next !== undefined && reAsciiPunctuation.test(next)) {
+				// An escape pair is atomic — the cell scanner consumes it whole
+				// — so an already-escaped `\|` passes through untouched.
+				out += `\\${next}`;
+				index += 1;
+				continue;
+			}
+			// A value-final backslash in a cell with more content after it
+			// would pair with that content's `\|` and free the pipe.
+			const followed = followingText !== "" || nonTextFollows;
+			out += next === undefined && context.inTable && followed ? "\\\\" : "\\";
+			continue;
+		}
+		// Escaped here as well as by the `escapeCellPipes` post-pass: if a raw
+		// sibling ended on a lone backslash, a bare `|` would pair with it and
+		// eat it, while `\|` leaves an even run the post-pass repairs.
+		if (char === "|" && context.inTable) {
+			out += "\\|";
+			continue;
+		}
+		if (mdx && (char === "{" || char === "<")) {
+			out += `\\${char}`;
+			continue;
+		}
+		if (context.inHeading && char === "#" && isClosingHashRun(value, index, followingText, nonTextFollows)) {
+			out += "\\#";
+			continue;
+		}
+		out += char;
+	}
+	return { text: out, atLineStart: lineStart };
+};
+
 // --- inline serialization ---------------------------------------------------
 
 /** Pick the effective emphasis marker, flipping away from a forbidden char. */
@@ -445,7 +552,14 @@ const serializeInlines = (
 					followingText += (children[next] as Text).value;
 					next += 1;
 				}
-				const escaped = escapeText(child.value, context, atLineStart, state.mdx, followingText, next < children.length);
+				const escaped = (child.escapeStyle === "literal" ? literalText : escapeText)(
+					child.value,
+					context,
+					atLineStart,
+					state.mdx,
+					followingText,
+					next < children.length,
+				);
 				out += escaped.text;
 				atLineStart = escaped.atLineStart;
 				break;
@@ -818,6 +932,24 @@ const alignCell = (align: "left" | "right" | "center" | null | undefined): strin
 	}
 };
 
+/**
+ * Escape every cell pipe the GFM cell splitter would read as a column
+ * boundary. The splitter consumes a backslash and the punctuation after it as
+ * one character, so `\\` is an escaped backslash: a pipe is escaped already
+ * iff the run of backslashes directly before it has odd length, and needs a
+ * `\` iff that run is even, zero included.
+ */
+const escapeCellPipes = (content: string): string => {
+	let out = "";
+	let backslashes = 0;
+	for (const char of content) {
+		if (char === "|" && backslashes % 2 === 0) out += "\\";
+		backslashes = char === "\\" ? backslashes + 1 : 0;
+		out += char;
+	}
+	return out;
+};
+
 const serializeTable = (table: Table, state: StringifyState): string => {
 	const columnCount = Math.max(1, ...table.children.map((row) => row.children.length));
 	const rows = table.children.map((row) => {
@@ -826,10 +958,9 @@ const serializeTable = (table: Table, state: StringifyState): string => {
 			guard(state, cell);
 			// Text-level pipes are escaped by the cell context; anything a
 			// nested emission smuggled through raw (a code span, raw HTML, a
-			// destination) gets caught here — the cell splitter unescapes
-			// `\|` everywhere in a cell, code spans included, so this is
-			// lossless.
-			const content = serializeInlines(cell.children, CELL_CONTEXT, state, false).replace(/(?<!\\)\|/g, "\\|");
+			// destination) gets caught here — the cell splitter unescapes `\|`
+			// everywhere in a cell, code spans included, so this is lossless.
+			const content = escapeCellPipes(serializeInlines(cell.children, CELL_CONTEXT, state, false));
 			unguard(state);
 			return content;
 		});

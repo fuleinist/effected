@@ -243,11 +243,53 @@ export type TableAlign = typeof TableAlign.Type;
  * Text — a run of literal characters, with entity references and backslash
  * escapes already resolved into `value`.
  *
+ * @remarks
+ * `escapeStyle` is an opt-in emitter extra, the one fidelity field the
+ * parser never sets: absent (or `"canonical"`), `Markdown.stringify` escapes
+ * the value canonically so it re-parses to the same text. `"literal"` is the
+ * caller vouching that `value` is already safe markdown source, so the
+ * emitter writes it verbatim and applies no escaping aimed at inline syntax:
+ * `~0.2.1`, `^1.0.0`, `some_pkg` and `@scope/pkg` come out as written, as do
+ * `*`, `_`, `[`, `]`, `~`, `&`, `\`, the backtick and autolink-shaped
+ * text.
+ *
+ * Escaping that defends the containing BLOCK'S structure still applies,
+ * because its absence would corrupt the document around the text rather
+ * than add formatting inside it:
+ *
+ * - in a table cell, every `|` not already backslash-escaped is written
+ *   `\|` (a bare pipe splits the cell), and a value-final `\` is doubled
+ *   when more cell content follows (it would otherwise pair with that
+ *   content's `\|` and free the pipe);
+ *
+ * - in a table cell or heading, a newline becomes a space (neither can
+ *   hold a line break);
+ *
+ * - in a heading, a trailing `#` run that would read as the ATX closing
+ *   sequence is escaped;
+ *
+ * - elsewhere, a newline that would form a blank line (ending the
+ *   paragraph) becomes `&#10;`, and at every line start leading whitespace
+ *   becomes a character reference and a character that could open a block
+ *   construct is escaped: `#`, `>`, `+`, `-`, `=`, `~`, `*`, `_`, `<`,
+ *   `[`, `|`, `:`, the backtick, and an ordered-list marker's delimiter;
+ *
+ * - in a tree carrying MDX nodes, `{` and `<` stay escaped, since MDX reads
+ *   a stray one as a syntax error rather than as text.
+ *
+ * **A literal text whose value parses as markdown does not round-trip to the
+ * same value**: `*a*` emits verbatim and re-parses as emphasis. Keeping the
+ * value free of inline syntax is the caller's promise, not something the
+ * emitter checks. `Mdast.fromMdast` admits this field on a `text` node (it is
+ * the one emitter instruction a plain tree can carry in), and `Mdast.toMdast`
+ * projects it back out when present.
+ *
  * @public
  */
 export class Text extends Schema.Class<Text>("Text")({
 	type: Schema.tag("text"),
 	value: Schema.String,
+	escapeStyle: Schema.optionalKey(Schema.Literals(["canonical", "literal"])),
 	position: NodePosition,
 }) {}
 

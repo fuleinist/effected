@@ -5,7 +5,6 @@
 * Updated @effected/workspaces catalogs and the config-dependency seam
 * Updated @effected/workspaces discovery and detection
 * Updated @effected/workspaces snapshots
-* Updated @effected/workspaces: monorepo tooling
 * Updated A lockfile is a YAML stream, not always one document
 * Updated Publish a snapshot
 * Updated Under the no-op hooks layer, a hook-injected catalog's range bump between two refs is invisible to a snapshot diff
@@ -13,7 +12,10 @@
 * Updated lockfiles
 * Updated npm
 * Updated package-json
+* Updated @effected/markdown
+* Updated The markdown canonical form is a published commitment — a row that moves is a breaking change
 * Updated @effected/workspaces peer-dependency checking
+* Updated @effected/workspaces: monorepo tooling
 * Updated silk-update-action
 
 ## 2026-09-25
@@ -25,6 +27,7 @@
 * Updated savvy-web/systems
 * Updated spencerbeggs/okfit
 * Updated @effected/mcp
+* Updated @effected/workspaces: monorepo tooling
 
 ## 2026-09-24
 
