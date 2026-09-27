@@ -227,6 +227,48 @@ against that consumer's dependencies, and never surface one link further out.
   clean. A linked package's registry dependencies are its own importer's
   business too, so attribution stops at a workspace package.
 
+## `filedep/`, `filedep-override/`, `filedep-tarball/` and `filedep-joined/`
+
+Real pnpm **12.6.0** output, generated 2026-09-27 by the `linkdeep*` recipe
+(`pnpm install --lockfile-only`, `autoInstallPeers: false`,
+`linkWorkspacePackages: deep`, `packages: ['packages/*']`, no root
+`package.json`). Every lockfile was re-generated with **pnpm 12.7.0** and came
+back byte-identical. The case is a peer whose PROVIDER resolved through
+`file:`, from a stub `react` at `vendor/react` (outside the globs):
+
+- **`filedep/`**: `packages/host` depends on `react-dom@18.3.1` and
+  `react: file:../../vendor/react`, a DIRECTORY whose manifest says `18.3.1`.
+  The lockfile records no version for a `file:` directory anywhere, and the
+  instance is keyed `react@file:vendor/react`. Oracle: a **bad** row with
+  `foundVersion: "file:vendor/react"`, **even though 18.3.1 satisfies
+  `^18.3.1`**. A `17.0.2` stub produced a byte-identical lockfile and the same
+  row, so it is not committed. pnpm 12.7.0 gives the same verdict.
+- **`filedep-override/`**: the same, with `react: ^18.0.0` in the manifest
+  and `overrides: { react: file:vendor/react }`. Oracle: the same bad row, on
+  12.6.0 and 12.7.0. This is the shape silk-update-action met on
+  savvy-web/systems.
+- **`filedep-tarball/`**: `react: file:../../vendor/react-18.3.1.tgz`, a
+  TARBALL, which the lockfile DOES record `version: 18.3.1` for. Here the
+  two pnpm versions disagree over one lockfile: 12.6.0 (`peers-check.json`)
+  reports the bad row with the tarball specifier as `foundVersion`, while
+  12.7.0 (`peers-check-pnpm-12.7.0.json`) reads the tarball's real version and
+  reports the workspace **clean**. A `17.0.2` tarball is bad on both versions,
+  with 12.7.0 reporting `foundVersion: "17.0.2"`.
+- **`filedep-joined/`**: `probe-a` (`packages/a`) peers on `react: ^18.0.0`,
+  and `packages/b` depends on `probe-a: workspace:*` and a `file:` directory
+  react at `17.0.2`. Oracle: a **bad** row for `packages/b` with
+  `foundVersion: "17.0.2"`. pnpm reads the directory's real version off disk
+  for a joined parent. The same workspace at `18.3.1` (identical lockfile) is
+  clean, on 12.6.0 and 12.7.0, for directories and tarballs alike.
+
+`@effected/lockfiles` passes the specifier through as the provider's
+version (`file:vendor/react`) for both directories and tarballs. The version
+pnpm compares is therefore not in the model in any of the four, and
+`PeerCheck` declines each peer with `peerVersionUnresolved`, fabricating no
+row. With `peerDependencyRules.allowAny: [react]` added to `filedep/`, pnpm
+12.6.0 reports the workspace clean. That was measured but is not committed,
+and the check does not consume it for this reason.
+
 ## The catalog-peer variant, and why it is not a directory here
 
 `linkdeep/`'s probe workspace with one change — `packages/a` declaring

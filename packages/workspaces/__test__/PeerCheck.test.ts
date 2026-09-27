@@ -1298,3 +1298,143 @@ describe("peerNameMatcher — @pnpm/matcher semantics", () => {
 		assert.isTrue(m("redux"));
 	});
 });
+
+// A peer whose PROVIDER resolved through a protocol rather than to a version.
+// The four `filedep*` oracles are pnpm 12.6.0 over purpose-built workspaces
+// (README, `filedep*`): a `file:` dependency, directly or through a `file:`
+// override, and for a `file:` directory the lockfile records no version at
+// all. `@effected/lockfiles` passes the specifier through as the provider's
+// version, which semver cannot parse — and skipping it as "unparseable" is
+// what once reported these workspaces proven clean while pnpm called them bad.
+describe("PeerCheck.run — protocol-specifier provider versions", () => {
+	/** The provider `react` instance in a `filedep*` lockfile. */
+	const reactProvider = (lockfile: Lockfile) => lockfile.packagesNamed("react")[0];
+
+	it.effect("fails closed on a registry parent's peer provided by a `file:` directory", () =>
+		Effect.gen(function* () {
+			const lockfile = yield* parse("filedep");
+			// Precondition: the provider really is a protocol-specifier version,
+			// or the assertions below could pass for the wrong reason.
+			assert.strictEqual(reactProvider(lockfile)?.version, "file:vendor/react");
+			assert.isFalse(reactProvider(lockfile)?.isWorkspace);
+
+			const report = PeerCheck.run(lockfile, { peerDependencyRules: NoPeerDependencyRules });
+			// No fabricated row: the comparison never ran, so "unsatisfied" would
+			// be as false as "satisfied".
+			assert.deepStrictEqual(report.unsatisfied, []);
+			assert.deepStrictEqual(report.unverified, ["peerVersionUnresolved"]);
+
+			// And the divergence is KNOWN: pnpm reports a bad row carrying the
+			// specifier as its found version — although the directory's manifest
+			// says 18.3.1, which satisfies `^18.3.1`.
+			const oracle = theirs("filedep");
+			assert.strictEqual(oracle.length, 1);
+			assert.strictEqual(oracle[0]?.importer, "packages/host");
+			assert.strictEqual(oracle[0]?.dependency, "react");
+			assert.strictEqual(oracle[0]?.found, "file:vendor/react");
+		}),
+	);
+
+	it.effect("fails closed on a peer provided through a `file:` override", () =>
+		Effect.gen(function* () {
+			const lockfile = yield* parse("filedep-override");
+			assert.strictEqual(reactProvider(lockfile)?.version, "file:vendor/react");
+			const report = PeerCheck.run(lockfile, { peerDependencyRules: NoPeerDependencyRules });
+			assert.deepStrictEqual(report.unsatisfied, []);
+			assert.deepStrictEqual(report.unverified, ["peerVersionUnresolved"]);
+			assert.strictEqual(theirs("filedep-override")[0]?.found, "file:vendor/react");
+		}),
+	);
+
+	it.effect("fails closed on a `file:` tarball, which pnpm itself judges two ways", () =>
+		Effect.gen(function* () {
+			const lockfile = yield* parse("filedep-tarball");
+			assert.strictEqual(reactProvider(lockfile)?.version, "file:vendor/react-18.3.1.tgz");
+			const report = PeerCheck.run(lockfile, { peerDependencyRules: NoPeerDependencyRules });
+			assert.deepStrictEqual(report.unsatisfied, []);
+			assert.deepStrictEqual(report.unverified, ["peerVersionUnresolved"]);
+			// Same lockfile, two verdicts: pnpm 12.6.0 reports the specifier as the
+			// found version, 12.7.0 reads the tarball's real 18.3.1 and calls it
+			// clean. Declining with a marker is the answer consistent with both.
+			assert.strictEqual(theirs("filedep-tarball")[0]?.found, "file:vendor/react-18.3.1.tgz");
+			assert.deepStrictEqual(theirs("filedep-tarball", "peers-check-pnpm-12.7.0.json"), []);
+		}),
+	);
+
+	it.effect("fails closed on a joined link: manifest's peer provided by a `file:` directory", () =>
+		Effect.gen(function* () {
+			const lockfile = yield* parse("filedep-joined");
+			assert.strictEqual(reactProvider(lockfile)?.version, "file:vendor/react");
+			const report = PeerCheck.run(lockfile, {
+				peerDependencyRules: NoPeerDependencyRules,
+				workspacePackages: [probeA()],
+			});
+			// pnpm reads the directory's real version off disk for a joined parent
+			// and reports 17.0.2 bad. The lockfile does not carry it, so the row
+			// is declined — and the report says so, instead of passing a peer pnpm
+			// rejects.
+			assert.deepStrictEqual(report.unsatisfied, []);
+			assert.deepStrictEqual(report.unverified, ["peerVersionUnresolved"]);
+			const oracle = theirs("filedep-joined");
+			assert.strictEqual(oracle.length, 1);
+			assert.strictEqual(oracle[0]?.found, "17.0.2");
+			assert.deepStrictEqual(oracle[0]?.parents, ["probe-a@1.0.0"]);
+
+			// Control: without the join the manifest peer is never judged, so only
+			// the link: marker applies. The version reason comes from the
+			// judgement, not from the file: instance merely being in the lockfile.
+			const unjoined = PeerCheck.run(lockfile, { peerDependencyRules: NoPeerDependencyRules });
+			assert.deepStrictEqual(unjoined.unverified, ["unresolvedEdge"]);
+		}),
+	);
+
+	it.effect("raises both reasons when neither the joined range nor the provider version can be named", () =>
+		Effect.gen(function* () {
+			const report = PeerCheck.run(yield* parse("filedep-joined"), {
+				peerDependencyRules: NoPeerDependencyRules,
+				workspacePackages: [probeA({ peerDependencies: { react: "workspace:*" } })],
+			});
+			assert.deepStrictEqual(report.unsatisfied, []);
+			assert.deepStrictEqual(report.unverified, ["peerRangeUnresolved", "peerVersionUnresolved"]);
+		}),
+	);
+
+	it.effect("still skips a plain unparseable, non-protocol provider version", () =>
+		Effect.gen(function* () {
+			// The existing decision, unchanged: junk that is NOT a protocol
+			// specifier is skipped without a marker.
+			const text = fixture("peers/filedep/pnpm-lock.yaml").replaceAll("file:vendor/react", "not-a-version");
+			const lockfile = yield* Lockfile.parse(text, { format: "pnpm" });
+			assert.strictEqual(reactProvider(lockfile)?.version, "not-a-version");
+			const report = PeerCheck.run(lockfile, { peerDependencyRules: NoPeerDependencyRules });
+			assert.deepStrictEqual(report.unsatisfied, []);
+			assert.deepStrictEqual(report.unverified, []);
+		}),
+	);
+
+	it.effect("still accepts a workspace-row provider and still judges a semver provider", () =>
+		Effect.gen(function* () {
+			// A workspace row (placeholder 0.0.0) stays accepted on name alone.
+			const workspace = PeerCheck.run(yield* parse("workspacepeer"), {
+				peerDependencyRules: NoPeerDependencyRules,
+				workspacePackages: [
+					probeA({ name: "react", version: "18.3.1", relativePath: "packages/fakereact", peerDependencies: {} }),
+				],
+			});
+			assert.deepStrictEqual(workspace.unsatisfied, []);
+			assert.deepStrictEqual(workspace.unverified, []);
+
+			// A semver provider is compared as before, on both the lockfile-row
+			// path (`mixed/`) and the joined path (`linkdeep-bad/`).
+			const rows = PeerCheck.run(yield* parse("mixed"), { peerDependencyRules: NoPeerDependencyRules });
+			assert.deepStrictEqual(ours(rows.unsatisfied), theirs("mixed"));
+			assert.deepStrictEqual(rows.unverified, []);
+			const joined = PeerCheck.run(yield* parse("linkdeep-bad"), {
+				peerDependencyRules: NoPeerDependencyRules,
+				workspacePackages: [probeA()],
+			});
+			assert.deepStrictEqual(ours(joined.unsatisfied), theirs("linkdeep-bad"));
+			assert.deepStrictEqual(joined.unverified, []);
+		}),
+	);
+});
