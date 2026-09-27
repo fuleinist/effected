@@ -8,7 +8,18 @@
 import { assert, describe, it } from "@effect/vitest";
 import { Result } from "effect";
 import { Markdown } from "../src/Markdown.js";
-import { Heading, MdxFlowExpression, Paragraph, Root, Table, TableCell, TableRow, Text } from "../src/MarkdownNode.js";
+import {
+	Emphasis,
+	Heading,
+	InlineCode,
+	MdxFlowExpression,
+	Paragraph,
+	Root,
+	Table,
+	TableCell,
+	TableRow,
+	Text,
+} from "../src/MarkdownNode.js";
 import { Mdast } from "../src/Mdast.js";
 
 type EscapeStyle = "canonical" | "literal";
@@ -180,8 +191,84 @@ describe("Text escapeStyle: literal", () => {
 		}
 
 		it("escapes an opener at a line start after a soft break, and nothing mid-line", () => {
-			const emitted = out(paragraphOf(literal("x ~1.0 a_b\n- y\n= z\n| --- |")));
-			assert.strictEqual(emitted, "x ~1.0 a_b\n\\- y\n\\= z\n\\| --- |\n");
+			const emitted = out(paragraphOf(literal("x ~1.0 a_b\n- y\n= z\n==\n| --- |")));
+			assert.strictEqual(emitted, "x ~1.0 a_b\n\\- y\n= z\n\\==\n\\| --- |\n");
+			const reparsed = parse(emitted);
+			assert.strictEqual(reparsed.children.length, 1);
+			assert.strictEqual(reparsed.children[0]?.type, "paragraph");
+		});
+
+		// Only text that can open a block at a line start is escaped: a marker
+		// needs its trailing space, tab or end of line, a break or fence its
+		// run. Each emitted line must parse back to one paragraph carrying the
+		// exact value.
+		const lineStarts = [
+			["~0.2.1", "~0.2.1"],
+			["~~~x", "\\~~~x"],
+			["```x", "\\```x"],
+			["``x", "``x"],
+			["1.0.0", "1.0.0"],
+			["1. x", "1\\. x"],
+			["2) x", "2\\) x"],
+			["1.", "1\\."],
+			["1234567890. x", "1234567890. x"],
+			["- x", "\\- x"],
+			["-x", "-x"],
+			["-", "\\-"],
+			["--", "\\--"],
+			["--- | ---", "\\--- | ---"],
+			["-:", "\\-:"],
+			["---json", "\\---json"],
+			["+ x", "\\+ x"],
+			["+1", "+1"],
+			["+++", "\\+++"],
+			["*a*", "*a*"],
+			["* x", "\\* x"],
+			["***", "\\***"],
+			["* * *", "\\* * *"],
+			["_a_", "_a_"],
+			["___", "\\___"],
+			["# x", "\\# x"],
+			["#x", "#x"],
+			["#", "\\#"],
+			["####### x", "####### x"],
+			["=", "\\="],
+			["=x", "=x"],
+			["> x", "\\> x"],
+			[">x", "\\>x"],
+		] as const;
+		for (const [value, expected] of lineStarts) {
+			it(`emits the line start of ${JSON.stringify(value)} as ${JSON.stringify(expected)}`, () => {
+				const emitted = out(paragraphOf(literal(value)));
+				assert.strictEqual(emitted, `${expected}\n`);
+				const reparsed = parse(emitted);
+				assert.strictEqual(reparsed.children.length, 1, `emitted: ${JSON.stringify(emitted)}`);
+				const paragraph = reparsed.children[0];
+				assert.strictEqual(paragraph?.type, "paragraph", `emitted: ${JSON.stringify(emitted)}`);
+				if (paragraph?.type === "paragraph" && paragraph.children.every((child) => child.type === "text")) {
+					assert.strictEqual(paragraph.children.map((child) => child.value).join(""), value);
+				}
+			});
+		}
+
+		it("escapes a line start that is an opener only once the following siblings are read", () => {
+			assert.strictEqual(out(paragraphOf(literal("1."), canonical(" x"))), "1\\. x\n");
+			assert.strictEqual(out(paragraphOf(literal("1."), canonical("0"))), "1.0\n");
+			assert.strictEqual(out(paragraphOf(literal("#"), literal("x"))), "#x\n");
+			assert.strictEqual(out(paragraphOf(literal("#"), literal(" x"))), "\\# x\n");
+		});
+
+		it("escapes a marker whose next character belongs to a non-text sibling", () => {
+			const emitted = out(paragraphOf(literal("-"), InlineCode.make({ value: "x" })));
+			assert.strictEqual(emitted, "\\-`x`\n");
+			const fence = out(paragraphOf(literal("``"), InlineCode.make({ value: "x" })));
+			assert.strictEqual(fence, "\\```x`\n");
+			assert.strictEqual(parse(fence).children[0]?.type, "paragraph");
+		});
+
+		it("escapes a break-shaped run that a parent's closing marker could complete", () => {
+			const emitted = out(paragraphOf(Emphasis.make({ children: [literal("a\n**")] })));
+			assert.strictEqual(emitted, "*a\n\\***\n");
 			const reparsed = parse(emitted);
 			assert.strictEqual(reparsed.children.length, 1);
 			assert.strictEqual(reparsed.children[0]?.type, "paragraph");

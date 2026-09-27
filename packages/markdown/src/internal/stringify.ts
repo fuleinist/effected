@@ -322,13 +322,67 @@ const escapeText = (
 // Kept apart from `escapeText` so the canonical path is untouched byte for
 // byte.
 
+/** Space or tab — the whitespace a list marker or ATX run must be followed by. */
+const isSpaceOrTab = (char: string | undefined): boolean => char === " " || char === "\t";
+
+/** Every character of `line` is `marker` or space/tab — a thematic-break or setext-shaped run. */
+const isRunOf = (line: string, marker: string): boolean =>
+	line.length > 0 && [...line].every((char) => char === marker || char === " " || char === "\t");
+
+/** Only the characters a GFM delimiter row is made of (re2c's `spacechar` included). */
+const reDelimiterRowShaped = /^[-:| \t\v\f]+$/;
+
 /**
- * Line-start characters escaped in literal text: the canonical line-start
- * set plus the openers the canonical path covers through its always-escape
- * set (`*` lists and breaks, `_` breaks, `<` HTML blocks, `[` definitions,
- * `|`/`:` table delimiter rows).
+ * Whether a literal line starting with `line` can open a block, so its first
+ * character must be escaped. `line` is the text known to be on the line —
+ * the value up to its next newline, then the following text siblings — and
+ * `open` says the line may carry more than that (no newline ended it).
+ * Beyond the known text sits either the end of the line or content this
+ * function cannot see (a non-text sibling, a parent's closing delimiter), so
+ * a marker that needs "space, tab or end of line" after it is escaped when
+ * it reaches the end of `line`. Every test errs toward escaping: an extra
+ * backslash is inert, a missing one changes the document.
  */
-const LITERAL_LINE_START_ESCAPE = new Set([...LINE_START_ESCAPE, "*", "_", "<", "[", "|", ":"]);
+const literalLineOpensBlock = (line: string, open: boolean): boolean => {
+	const char = line[0];
+	switch (char) {
+		// A blockquote always opens; an HTML block, a link reference or footnote
+		// definition, and a GFM table row are escaped conservatively.
+		case ">":
+		case "<":
+		case "[":
+		case "|":
+		case ":":
+			return true;
+		case "#": {
+			const run = /^#{1,6}/.exec(line)?.[0] ?? "";
+			return run.length > 0 && (run.length === line.length || isSpaceOrTab(line[run.length]));
+		}
+		case "`":
+		case "~":
+			// A fence is 3+ of either; an open line of only 1-2 could be completed.
+			return line.startsWith(char.repeat(3)) || (open && [...line].every((each) => each === char));
+		case "=":
+			// A setext underline, kept escaped even on a paragraph's first line.
+			return /^=+[ \t]*$/.test(line);
+		case "+":
+		case "-":
+		case "*":
+		case "_": {
+			const bullet = char !== "_" && (line.length === 1 || isSpaceOrTab(line[1]));
+			const breakRun = char !== "+" && isRunOf(line, char);
+			const thematic = breakRun && (open || [...line].filter((each) => each === char).length >= 3);
+			// `---`/`+++` open frontmatter at the document head (`---json`
+			// too). A dash line may be a setext underline or a delimiter row;
+			// the delimiter-row shape covers both.
+			const frontmatter = (char === "-" || char === "+") && line.startsWith(char.repeat(3));
+			const dashLine = char === "-" && reDelimiterRowShaped.test(line);
+			return bullet || thematic || frontmatter || dashLine;
+		}
+		default:
+			return false;
+	}
+};
 
 /** ASCII punctuation: what a backslash escapes, so `\x` is one cell character. */
 const reAsciiPunctuation = /[!-/:-@[-`{-~]/;
@@ -371,13 +425,22 @@ const literalText = (
 				continue;
 			}
 			const lineEnd = value.indexOf("\n", index);
-			const ordered = ORDERED_MARKER.exec(value.slice(index, lineEnd === -1 ? undefined : lineEnd));
-			if (ordered !== null) {
-				out += `${ordered[0].slice(0, -1)}\\${ordered[0].slice(-1)}`;
-				index += ordered[0].length - 1;
-				continue;
+			let line = value.slice(index, lineEnd === -1 ? undefined : lineEnd);
+			let open = false;
+			if (lineEnd === -1) {
+				const followingEnd = followingText.indexOf("\n");
+				line += followingText.slice(0, followingEnd === -1 ? undefined : followingEnd);
+				open = followingEnd === -1;
 			}
-			if (LITERAL_LINE_START_ESCAPE.has(char)) {
+			const ordered = ORDERED_MARKER.exec(line);
+			if (ordered !== null) {
+				const after = line[ordered[0].length];
+				if (after === undefined || isSpaceOrTab(after)) {
+					out += `${ordered[0].slice(0, -1)}\\${ordered[0].slice(-1)}`;
+					index += ordered[0].length - 1;
+					continue;
+				}
+			} else if (literalLineOpensBlock(line, open)) {
 				out += `\\${char}`;
 				continue;
 			}

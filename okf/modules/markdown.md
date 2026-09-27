@@ -193,8 +193,11 @@ parsed. Kept: a table cell's unescaped `|` (with an escape pair treated as
 atomic, as the cell splitter treats it, and a value-final `\` doubled when
 more cell content follows), newlines in single-line containers, the heading
 closing-sequence `#`, blank-line and leading-whitespace defenses, line-start
-block openers (the canonical line-start set plus `*`, `_`, `<`, `[`, `|`,
-`:`), and MDX's `{`/`<`. A literal value that parses as markdown does not
+block openers (only a line start that can actually open a block: a list
+marker or `#` run followed by whitespace or the line end, `>`, a fence, a
+thematic-break or setext run, a frontmatter fence, a delimiter-row-shaped
+dash line, and conservatively any `<`, `[`, `|` or `:`; `~0.2.1` and
+`1.0.0` stay as written), and MDX's `{`/`<`. A literal value that parses as markdown does not
 round-trip, and that is the caller's promise to keep. The parser never sets
 the field, the literal path is a separate emitter function so canonical
 bytes cannot drift, and `packages/markdown/__test__/stringify-literal.test.ts`

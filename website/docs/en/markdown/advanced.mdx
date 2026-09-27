@@ -247,7 +247,7 @@ console.log(Result.getOrThrow(Markdown.stringifyResult(tree)));
 // | --- | --- |
 ```
 
-Literal drops only the escaping aimed at inline syntax. The escapes that protect the surrounding block stay, because without them the document itself would change shape: a table cell's unescaped `|`, a newline inside a cell or heading (written as a space), a heading's trailing `#` run, a blank line or leading indentation inside a paragraph, a line-start character that could open a block (`#`, `>`, `+`, `-`, `=`, `~`, a backtick, `*`, `_`, `<`, `[`, `|`, `:`, an ordered-list marker), and `{`/`<` in a tree carrying MDX.
+Literal drops only the escaping aimed at inline syntax. The escapes that protect the surrounding block stay, because without them the document itself would change shape: a table cell's unescaped `|`, a newline inside a cell or heading (written as a space), a heading's trailing `#` run, a blank line or leading indentation inside a paragraph, a line start that can open a block (a bullet or ordered-list marker or a `#` run followed by a space, tab or line end, `>`, a code fence, a thematic-break or setext run, a frontmatter fence, a delimiter-row-shaped dash line, and conservatively any `<`, `[`, `|` or `:`; `~0.2.1`, `1.0.0`, `-x` and `#x` stay as written), and `{`/`<` in a tree carrying MDX.
 
 The promise is yours to keep: **a literal value that parses as markdown does not round-trip.** `*a*` emits verbatim and reads back as emphasis. The parser never sets `escapeStyle`, and a tree that never sets it serializes byte-identically to the canonical form.
 

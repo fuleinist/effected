@@ -270,9 +270,14 @@ export type TableAlign = typeof TableAlign.Type;
  *
  * - elsewhere, a newline that would form a blank line (ending the
  *   paragraph) becomes `&#10;`, and at every line start leading whitespace
- *   becomes a character reference and a character that could open a block
- *   construct is escaped: `#`, `>`, `+`, `-`, `=`, `~`, `*`, `_`, `<`,
- *   `[`, `|`, `:`, the backtick, and an ordered-list marker's delimiter;
+ *   becomes a character reference, and a line start that can open a block
+ *   is escaped: a `-`, `+` or `*` bullet or an ordered-list marker followed
+ *   by a space, tab or line end; one to six `#` followed by the same; `>`;
+ *   three or more backticks or tildes; a thematic-break or setext run
+ *   (`***`, `___`, `==`); a `---` or `+++` frontmatter fence; a line of
+ *   only `-`, `:`, `|` and whitespace; and, conservatively, any `<`, `[`,
+ *   `|` or `:`. Text that cannot open a block there, such as `~0.2.1`,
+ *   `1.0.0`, `-x` or `#x`, is written as is;
  *
  * - in a tree carrying MDX nodes, `{` and `<` stay escaped, since MDX reads
  *   a stray one as a syntax error rather than as text.
