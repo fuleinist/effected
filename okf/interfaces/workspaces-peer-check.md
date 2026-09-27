@@ -15,8 +15,8 @@ sources:
     resource: ../../packages/workspaces/__test__/fixtures/peers/README.md
 generated:
   by: "okfit/claude-code"
-  at: 2026-09-27T20:51:20Z
-  body_sha256: 6414a365046010f4d3eb5c240d478411bf28030652cb34f00d391f855ccd9d6b
+  at: 2026-09-27T21:01:48Z
+  body_sha256: b5f72a987d79454be0c5e780e72e9103d5591e9f28adac58bedca4449606a5c4
 ---
 
 # @effected/workspaces peer-dependency checking
@@ -261,7 +261,10 @@ omitting an option key says nobody looked, and the report says so.
   plain unparseable version is still skipped. The `filedep*` oracles pin
   it; a `file:` tarball is where pnpm itself moved, reporting the specifier
   under 12.6.0 and the tarball's real version under 12.7.0, over the same
-  lockfile.
+  lockfile. pnpm 11 writes the same lockfiles and reports every `file:`
+  directory provider clean, whatever its version, so the two supported
+  majors disagree over identical input and the marker is the one answer
+  consistent with both.
 
 All four mean **fail closed**: a gate treats an unverified report as "not
 proven clean", never as a pass.
