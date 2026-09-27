@@ -270,16 +270,31 @@ check stays a pure value over its inputs:
 - **The manifest comes from the caller.** `workspacePackages` takes the
   discovery output the caller already has, matched to the `link:` target
   by `relativePath` — the POSIX workspace-relative directory the lockfile's
-  importer paths and `link:` targets are spelled in. A covered target
-  contributes its manifest's declared peers to the walk, named from the
-  manifest (`probe-a@1.0.0`, not the row's `packages/a@0.0.0`) in
-  `parents`.
+  importer paths are spelled in — or by the package's publish directory.
+  pnpm links a workspace dependency INTO `publishConfig.directory` unless
+  `publishConfig.linkDirectory` is `false`, which it defaults to true, so
+  the lockfile then records `link:../a/dist`. A covered target contributes
+  its manifest's declared peers to the walk, named from the manifest
+  (`probe-a@1.0.0`, not the row's `packages/a@0.0.0`) in `parents`.
+- **A publish-directory link reads the source manifest.** pnpm reads the
+  peers from the manifest AT the link target — the built one — while
+  `PeerCheck` reads the supplied source manifest and resolves its `catalog:`
+  ranges through `catalogs`. The two agree when the build emits the peer
+  ranges the source's specifiers resolve to, which is the contract a
+  publish-directory build keeps.
 - **Providers come from the importer's own dependency set**, which is where
   pnpm resolves them from — never a sibling importer's, and never a
   workspace-wide lookup by name. The consumer's own `react@18.3.1`
   satisfies the linked parent's `^18.0.0` peer; the same version installed
   only by a sibling does not; the consumer's own `react@17.0.2` is a row
   carrying the wrong version as `found`.
+- **Attribution stops at a workspace package.** A linked package's manifest
+  peers are judged only for the importer that links it DIRECTLY, and a
+  linked package's own dependencies — registry or linked — are judged by
+  that package's own importer. pnpm never surfaces either on a consumer one
+  link further out, so the walk does not continue past a workspace package
+  it reached from the importer. Each `link:` edge is therefore cleared by
+  the walk of the importer that records it, or keeps `unresolvedEdge`.
 - **The root importer's linked targets are walked too.** The root has no
   workspace row under pnpm to reach them through, so the walk seeds its
   covered targets directly and judges them against the root's own
@@ -305,7 +320,7 @@ every one is generated over a purpose-built workspace with no
 config-dependency hooks, so oracle agreement validates the computation only
 on workspaces without them.
 
-The `link:` join is pinned by six fixtures over one probe workspace
+The `link:` join is pinned by twelve fixtures. Six are over one probe workspace
 (`linkWorkspacePackages: deep`, `probe-a` declaring a `react: ^18.0.0`
 peer), each moving one variable:[^peer-fixtures]
 
@@ -323,8 +338,18 @@ peer), each moving one variable:[^peer-fixtures]
   `probe-a` (`version: link:packages/a`), with no provider and with its own
   `react@17.0.2` respectively: a missing row and a wrong-version row for `.`.
 
+Two move the link target: **`linkdeep-directory/`** (`publishConfig.directory`
+alone, recorded as `link:../a/dist`) and **`linkdeep-directory-false/`**
+(`linkDirectory: false`, recorded as `link:../a`), with the same missing row.
+Four are chains: **`linkchain-parent-provides/`**,
+**`linkchain-importer-provides/`** and **`linkchain-none/`** (`b` links `a`,
+`a` links `c`, `c` peers on react) put the row on `packages/a` or nowhere,
+never on `packages/b`; **`linkchain-registry/`** (`b` links `c`, `c` depends
+on `react-dom` without react) reports the missing react on `packages/c` only.
+
 The first four were measured with pnpm 12.5.1 and re-taken with 12.6.0,
-identically; the two root fixtures were recorded with pnpm 12.6.0. A
+identically; the root, directory and chain fixtures were recorded with
+pnpm 12.6.0. A
 `catalog:` variant of the probe workspace produces a lockfile and verdict
 byte-identical to `linkdeep/` — nothing in that pair can record that a range
 was catalog-sourced — so the catalog dimension is pinned on the manifest
