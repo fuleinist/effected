@@ -27,8 +27,8 @@ sources:
     resource: ../../packages/workspaces/src/testing.ts
 generated:
   by: "okfit/claude-code"
-  at: 2026-09-25T21:33:50Z
-  body_sha256: 6fad18a9f28f87edbd545c574553d24ef3ccf205b8171ba1ecb14bc79e12ca6e
+  at: 2026-09-27T02:04:08Z
+  body_sha256: a4f43deebeb7ec195870bd3f27a214b65ad45ee092496457f3476832d5167226
 ---
 
 # @effected/workspaces: monorepo tooling

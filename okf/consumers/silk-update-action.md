@@ -7,8 +7,8 @@ status: stable
 tags: [ci, dx]
 generated:
   by: okfit/claude-code
-  at: 2026-09-13T05:33:04Z
-  body_sha256: 9e135433651c584413b2dc3bf14a698b1da93375a4372e255b5ecc42f13bff86
+  at: 2026-09-27T19:57:47Z
+  body_sha256: de1e5d9611cc8fe3bea57c7a6d91f8a9d68a10c26577c0b9898e5018e8b98434
 sources:
   - id: repo
     resource: "https://github.com/savvy-web/silk-update-action"
@@ -68,6 +68,19 @@ values — one call site at a time.
 Deno version satisfies a range; this repository is what makes that useful,
 because it then writes the answer into a manifest's runtime-engines field.
 
+**The peer gate.** Its peer-check step judges the post-install lockfile with
+[`PeerCheck`](../interfaces/workspaces-peer-check.md), after refreshing
+`WorkspaceCatalogs` so the suppression rules are the after-state ones, and
+degrades a failed rules lookup to omitting the option — landing on the
+fail-closed `peerRulesNotApplied` path rather than asserting an empty rule
+set. It passes `peerDependencyRules` only
+(`src/steps/peer-check.ts:123`, checked 2026-09-27). `PeerCheck` also takes
+`workspacePackages` and `catalogs`, and without them every `link:`-resolved
+workspace dependency keeps the report `unresolvedEdge`, which under pnpm is
+every internal `workspace:` edge; supplying both — from `WorkspaceDiscovery`
+and `WorkspaceCatalogs.set()`, which this step already has in reach — is
+what lets the gate judge a linked parent's peers instead of refusing them.
+
 ## Where the kit's edge sits
 
 - **The update policy itself** — which dependency sections to touch, the
@@ -106,3 +119,9 @@ because it then writes the answer into a manifest's runtime-engines field.
    package is ever warranted — see
    [silk-release-action](silk-release-action.md#open-questions), which
    holds the other `tar` shell-out.
+3. **Its peer gate supplies one of `PeerCheck`'s three option keys.** Until
+   it also passes `workspacePackages` and `catalogs`, a pnpm monorepo with
+   internal dependencies can never produce a verified peer report through
+   this gate: with the gate enforcing and auto-merge enabled, its
+   `decidePeerGate` withholds auto-merge as `unverified` on every run there
+   (`src/utils/peers.ts`).
