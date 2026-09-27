@@ -78,6 +78,7 @@ None exported. The conformance harness (652 CommonMark examples, the GFM extensi
 
 ## Gotchas
 
+- **Canonical text escaping has one opt-out: `escapeStyle: "literal"` on a `Text` node.** `~0.2.1` in a cell emits as `\~0.2.1` by default; with literal it emits verbatim. Only inline-syntax escapes are dropped — a cell's unescaped `|`, newlines in cells and headings, a heading's trailing `#` run, and line-start block openers stay escaped. A literal value that *parses* as markdown (`*a*`) does not round-trip; that is the caller's promise. `Mdast.fromMdast` admits the field on a plain `text` node — the one fidelity field that crosses that boundary — so set it on the plain tree; every other fidelity field (`fenceChar`, `headingStyle`, ...) is stripped there and must go on the decoded tree.
 - **The node classes are the builder API.** Reaching for `remark`/`mdast-util-to-markdown` to *emit* markdown from this repo is re-implementing a surface the package already ships.
 - **`Frontmatter` is captured behind a parse toggle**, and absence is ambiguous without help: `FrontmatterMissingError.reason` (`FrontmatterMissingReason` = `"absent" | "captureDisabled"`) distinguishes "the source had no block" from "you parsed with capture off," and `MarkdownDocument.hasFrontmatterBlock` is the non-failing form of the same question. Reading `frontmatter === undefined` alone conflates the two.
 - **Frontmatter codecs are free-standing named exports**, deliberately never collected into a namespace object — touching one would otherwise reach every format engine.

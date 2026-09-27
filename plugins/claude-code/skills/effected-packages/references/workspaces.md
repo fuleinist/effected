@@ -155,10 +155,10 @@ const ReporterLive = Layer.effect(
 ).pipe(Layer.provide(KitGraph), Layer.provide(NodeServices.layer));
 ```
 
-`PeerCheck` gating a build — the predicate that actually means "clean", and threading `peerDependencyRules()` so the report is verified rather than fail-closed:
+`PeerCheck` gating a build — the predicate that actually means "clean", and threading all three option keys so the report is verified rather than fail-closed:
 
 ```ts
-import { LockfileReader, PeerCheck, WorkspaceCatalogs } from "@effected/workspaces";
+import { LockfileReader, PeerCheck, WorkspaceCatalogs, WorkspaceDiscovery } from "@effected/workspaces";
 import { Effect } from "effect";
 
 const isClean = (report: PeerCheck): boolean =>
@@ -167,12 +167,18 @@ const isClean = (report: PeerCheck): boolean =>
 const program = Effect.gen(function* () {
  const reader = yield* LockfileReader;
  const catalogs = yield* WorkspaceCatalogs;
+ const discovery = yield* WorkspaceDiscovery;
  const lockfile = yield* reader.read();
- const peerDependencyRules = yield* catalogs.peerDependencyRules();
- const report = PeerCheck.run(lockfile, { peerDependencyRules });
+ const report = PeerCheck.run(lockfile, {
+  peerDependencyRules: yield* catalogs.peerDependencyRules(),
+  workspacePackages: yield* discovery.listPackages(),
+  catalogs: yield* catalogs.set(),
+ });
  return isClean(report);
 });
 ```
+
+The predicate means "proven clean", and under pnpm it is reachable for a monorepo with internal dependencies when the caller supplies `workspacePackages` and `catalogs`. Every `workspace:` dependency is recorded `link:`, and a linked parent's manifest peers are never in the lockfile; `workspacePackages` joins those manifests (the root importer's links included) and judges their peers against the consuming importer's own dependencies, and `catalogs` (`WorkspaceCatalogs.set()`, hook-injected catalogs included) resolves a manifest peer declared as `catalog:<name>` to the range pnpm reports. Omit `workspacePackages`, or leave a link target out of it, and the report keeps `"unresolvedEdge"`; omit `catalogs`, or reference a catalog entry that does not exist, and a catalog-sourced peer with a provider present yields `"peerRangeUnresolved"`. A `link:` target matches a supplied package by its directory or by its publish directory: pnpm links a workspace dependency into `publishConfig.directory` unless `publishConfig.linkDirectory` is `false` (it defaults to true), recording `link:../a/dist`. For such a link pnpm reads the built manifest at the target, while `PeerCheck` reads the source manifest and resolves its `catalog:` ranges through `catalogs`; the two agree when the build emits the ranges the source's specifiers resolve to. Attribution stops at a workspace package: a linked package's manifest peers are judged only for the importer that links it directly, and its own dependencies (registry or linked) only for its own importer, never for a consumer one link further out. Never drop the `unverified` clause from the gate.
 
 ### Repo-shape checks in a consumer's own tests
 
@@ -243,7 +249,7 @@ No service doubles are exported under `./testing` — that subpath holds the rep
 - `WorkspaceSnapshots.at(ref)` and `worktree()` replay through ONE hooks reference per composite, so they cannot diverge on policy; never provide a different `ConfigDependencyHooks` to each side by hand-composing. Keep `WorkspaceStateSnapshot.crossSeed` in a diff path — under a replaying layer the seed is inert where the ref answers, and under `layerNoop` it is what recovers the declared range.
 - `PublishabilityDetector`'s error channel is `never` by contract — an overriding layer backed by something fallible must fold failures into a safe answer or `Effect.die`; it cannot widen the channel the shape declares.
 - `matchesDependency` compiles a raw string pattern on every call; an uncompilable literal throws as a defect (developer wiring, not untrusted input) rather than a typed error.
-- **`PeerCheck.run` fails closed, and an empty `unsatisfied` is NOT the same as clean.** The real "nothing wrong" predicate is `supported && !report.unresolvedImporters.length && !report.unverified.length && !report.required.length` — check all four, not just `unsatisfied`. `unverified` is `"peerRulesNotApplied" | "unresolvedEdge"`; both mean fail closed, and no distinction between them is meaningful to a consumer.
+- **`PeerCheck.run` fails closed, and an empty `unsatisfied` is NOT the same as clean.** The real "proven clean" predicate is `supported && !report.unresolvedImporters.length && !report.unverified.length && !report.required.length` — check all four, not just `unsatisfied`. `unverified` is `"peerRulesNotApplied" | "unresolvedEdge" | "peerRangeUnresolved" | "peerVersionUnresolved"`; every reason means fail closed. `"peerRangeUnresolved"` fires when a linked manifest's peer range is a protocol specifier that could not be resolved (`catalog:` with `catalogs` omitted or no matching entry, `workspace:*`) while something resolved for that peer — pass `catalogs: yield* catalogs.set()` to resolve catalog ranges. `"peerVersionUnresolved"` fires when a peer's non-workspace provider resolved through a protocol, so the lockfile carries a specifier where a version belongs: a `file:` directory, tarball or override (`file:…`), or a git or remote-tarball provider that pnpm keys by its URL (`https://…`, `git+https://…`). `pnpm peers check` reports a `file:` provider `bad` even when the target's own version satisfies the range, so the peer is declined, never passed. No option clears it — unlink the `file:` override, or pin a git or tarball provider to a registry version, to get a verified report. `"unresolvedEdge"` also fires for every `link:`-resolved importer dependency whose target the caller supplied no manifest for — under pnpm that is every `workspace:` dependency — so a pnpm workspace with internal dependencies is unverified structurally UNLESS the discovered packages are passed as `workspacePackages`: that joins the linked manifests, names them from the manifest (`probe-a@1.0.0`, not the row's `packages/a@0.0.0`) and judges their peers against the importer's OWN dependency set, which is where pnpm resolves them from. The match covers a link into `publishConfig.directory` (pnpm's default unless `linkDirectory: false`), and only the DIRECT consumer is judged: pnpm never reports a linked package's peers, or its dependencies' peers, on a consumer one link further out.
 - **Presence of the `peerDependencyRules` option key is the assertion, not its contents.** Omitting the key entirely means "nobody looked" and always yields `"peerRulesNotApplied"`; passing `NoPeerDependencyRules` means "I looked, there are none" and yields a verified report. The two are deliberately different results — never normalize an omitted option to `NoPeerDependencyRules` before calling `run`, and never treat the two as equivalent.
 - `PeerCheck` is unsupported for yarn (`supported: false`) — yarn resolves peers virtually and the lockfile does not record which virtual instance satisfied which peer, so the answer is not recoverable rather than merely unimplemented.
 - `PeerCheck.run` applies all three `peerDependencyRules` axes. `allowedVersions` keys are `parent>peer` (parent version ignored) or a bare peer name; `ignoreMissing` and `allowAny` are **`@pnpm/matcher` peer-name patterns** (`*` wildcard, lone `*` matches all, leading `!` negates, an all-negation list matches everything not excluded), NOT `parent>peer` keys — those match nothing on the two list axes. `ignoreMissing` hides only a required peer that resolved to nothing; `allowAny` hides only a peer that resolved outside its range; they never cross. `"peerRulesNotApplied"` fires only when the `peerDependencyRules` option KEY is omitted.

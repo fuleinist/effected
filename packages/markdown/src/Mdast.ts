@@ -142,6 +142,12 @@ const projectNode = (node: AnyNode): Record<string, unknown> => {
 		case "heading":
 			return { type: "heading", depth: node.depth, children: projectChildren(node.children), position };
 		case "text":
+			return {
+				type: "text",
+				value: node.value,
+				...(node.escapeStyle === undefined ? {} : { escapeStyle: node.escapeStyle }),
+				position,
+			};
 		case "html":
 		case "inlineCode":
 			return { type: node.type, value: node.value, position };
@@ -300,7 +306,11 @@ const admittedFields: Readonly<Record<string, ReadonlyArray<string>>> = {
 	tableCell: [],
 	break: [],
 	thematicBreak: [],
-	text: ["value"],
+	// `escapeStyle` is this package's emitter instruction, not spec mdast,
+	// but it is the one extra a plain tree must be able to carry in: a
+	// consumer building mdast for `Markdown.stringify` has no decoded node to
+	// set it on until after admission.
+	text: ["value", "escapeStyle"],
 	html: ["value"],
 	inlineCode: ["value"],
 	heading: ["depth"],
@@ -490,6 +500,12 @@ export class Mdast {
 	 * decoded nodes this returns instead. The drop is correct (the boundary
 	 * admits spec mdast and nothing else) but it is silent, which is why it is
 	 * called out here.
+	 *
+	 * **One exception: `escapeStyle` on a `text` node is admitted.** It
+	 * records no source spelling; it is the caller's instruction to the
+	 * emitter (`"literal"` writes the value verbatim, see {@link Text}), so a
+	 * plain tree built for `Markdown.stringify` can carry it straight in. A
+	 * value outside `"canonical" | "literal"` fails the decode typed.
 	 *
 	 * @param input - A plain mdast tree, typically a `root`.
 	 * @returns A `Result` succeeding with the decoded {@link Root}, or

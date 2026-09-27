@@ -16,8 +16,8 @@ sources:
     resource: ../../packages/markdown/__test__/stringify.test.ts
 generated:
   by: "okfit/claude-code"
-  at: 2026-09-22T01:21:07Z
-  body_sha256: a6c0d5a1f61986a8fac71d28c5cad33e7621185a0f325669984a866c0e6ee926
+  at: 2026-09-27T21:38:36Z
+  body_sha256: 1ca4e0d7e7243e4298caba3a08b46bd463b511d83854711a15fe998e77173f59
 ---
 
 # The markdown canonical form is a published commitment — a row that moves is a breaking change
@@ -61,10 +61,24 @@ documented on the same surfaces rather than left to be rediscovered:
   assertion over synthesized code blocks therefore depends on the
   preceding sibling. See
   [languageless-code-node-indents](../gotchas/languageless-code-node-indents.md).
+  A representability fix — canonical output that did not round-trip, such
+  as a table that re-parsed as a paragraph — changes bytes only for output
+  that was already broken, so it ships as a minor, not a breaking change.
 - **`Mdast.fromMdast` strips fidelity fields**, being a spec-mdast admission
   boundary, so fidelity fields are settable only on the decoded tree; the
   drop is correct and silent, which is why both the boundary and the
-  emitter document it.
+  emitter document it. The single exception is `Text`'s `escapeStyle`, an
+  emitter instruction the boundary admits.
+
+## Adding an opt-out is additive; changing a default is not
+
+A per-node opt-out that a tree must set explicitly leaves every tree that
+does not set it byte-identical, so it is a minor change. `Text`'s
+`escapeStyle: "literal"` is the model: it drops inline-phase escaping for
+that node only, keeps the escapes that defend block structure, and is
+pinned against the canonical bytes by
+`packages/markdown/__test__/stringify-literal.test.ts`. Changing what the
+default escapes is still a breaking change.
 
 [^stringify-tsdoc]: `packages/markdown/src/Markdown.ts` — the "canonical form is a stability commitment" TSDoc on `stringifyResult` and `stringify`.
 [^readme-canonical]: `packages/markdown/README.md` — "The canonical form is stable", including "Representability wins over the table".

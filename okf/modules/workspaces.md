@@ -27,8 +27,8 @@ sources:
     resource: ../../packages/workspaces/src/testing.ts
 generated:
   by: "okfit/claude-code"
-  at: 2026-09-25T21:33:50Z
-  body_sha256: 6fad18a9f28f87edbd545c574553d24ef3ccf205b8171ba1ecb14bc79e12ca6e
+  at: 2026-09-27T02:04:08Z
+  body_sha256: a4f43deebeb7ec195870bd3f27a214b65ad45ee092496457f3476832d5167226
 ---
 
 # @effected/workspaces: monorepo tooling
@@ -460,7 +460,6 @@ suppressed.
 - [The runtime-edge layering decision](../decisions/kit-layering-checks-runtime-edges.md)
 - [Gotcha: ReleaseTag's strict-SemVer default](../gotchas/releasetag-strict-semver-default.md)
 - [Gotcha: the publishability detector diagnoses late](../gotchas/publishability-detector-diagnoses-late.md)
-- [Gotcha: PeerCheck never joins a link:-resolved parent's peers and still reports verified](../gotchas/peer-check-link-parent-reports-verified.md)
 - [Limitation: PeerCheck cannot answer yarn](../limitations/workspaces-peer-check-yarn-and-suppression-axes.md)
 - [Limitation: under the no-op hooks layer, a hook-injected catalog bump between refs is invisible to a snapshot diff](../limitations/workspaces-snapshot-hook-catalog-bump-between-refs.md)
 

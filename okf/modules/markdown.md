@@ -10,8 +10,8 @@ tags:
   - architecture
 generated:
   by: "okfit/claude-code"
-  at: 2026-09-22T01:21:07Z
-  body_sha256: b4b98ccbb1a2b7395c889d73dca8f0b4a3325d88c7101e49db9c637b64313599
+  at: 2026-09-27T21:36:12Z
+  body_sha256: 7b11a62f42f794241dcb18432c0ae026f1ebcba2e7b5ffee578417cb77c04238
 ---
 
 # `@effected/markdown`
@@ -89,7 +89,10 @@ CommonMark types, the GFM additions and the frontmatter node
 line/column and byte offsets. Fidelity fields — bullet character, fence
 character and info string, ATX vs setext heading style, delimiter runs,
 spacing — ride alongside the mdast shape; the `Mdast` module projects to
-plain spec-valid mdast JSON by stripping them.
+plain spec-valid mdast JSON by stripping them. The one exception is `Text`'s
+`escapeStyle`: an instruction to the emitter rather than a record of source
+spelling, it is admitted by `Mdast.fromMdast` and projected back out by
+`Mdast.toMdast` when set, so a consumer building plain mdast can carry it in.
 
 Node discriminators use `Schema.Class` with an explicit tag field named
 `type`, never `Schema.TaggedClass` — `TaggedClass` hardwires the `_tag` key,
@@ -181,6 +184,24 @@ would otherwise unescape by hand. `*` stays in the always-escape set on
 purpose, because an intraword `*` can open emphasis. The MDX presence-keyed
 `{` escape is documented separately in the [MDX
 interface](../interfaces/markdown-mdx.md).
+
+A `Text` node carrying `escapeStyle: "literal"` opts out of that escaping:
+the caller vouches the value is already safe markdown, and the emitter
+drops every escape aimed at the inline phase while keeping every escape
+that defends the block phase — the structure settled before inlines are
+parsed. Kept: a table cell's unescaped `|` (with an escape pair treated as
+atomic, as the cell splitter treats it), a value-final `\` doubled in any
+container when more content follows it, newlines in single-line containers, the heading
+closing-sequence `#`, blank-line and leading-whitespace defenses, line-start
+block openers (only a line start that can actually open a block: a list
+marker or `#` run followed by whitespace or the line end, `>`, a fence, a
+thematic-break or setext run, a frontmatter fence, a delimiter-row-shaped
+dash line, and conservatively any `<`, `[`, `|` or `:`; `~0.2.1` and
+`1.0.0` stay as written), and MDX's `{`/`<`. A literal value that parses as markdown does not
+round-trip, and that is the caller's promise to keep. The parser never sets
+the field, the literal path is a separate emitter function so canonical
+bytes cannot drift, and `packages/markdown/__test__/stringify-literal.test.ts`
+pins both the kept set and the unchanged canonical bytes.
 
 One default is worth naming because it surprised a real consumer: **a
 language-less code node with no explicit fence character stringifies as an

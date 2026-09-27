@@ -186,7 +186,7 @@ The walk is infallible at the type level, and the third variant explains why the
 
 ## Cross the mdast boundary in both directions
 
-The node classes already use mdast's exact type names and field shapes, so interop is a projection rather than a conversion. `Mdast.toMdast` strips this package's fidelity fields — bullet characters, fence style, ATX-versus-setext spelling — and emits plain, spec-valid mdast JSON, the same shape `mdast-util-from-markdown` produces. Every mdast utility, `mdast-util-to-hast` included, works on it unchanged:
+The node classes already use mdast's exact type names and field shapes, so interop is a projection rather than a conversion. `Mdast.toMdast` strips this package's fidelity fields — bullet characters, fence style, ATX-versus-setext spelling — keeping only a `Text` node's `escapeStyle` when set, and emits plain, spec-valid mdast JSON, the same shape `mdast-util-from-markdown` produces. Every mdast utility, `mdast-util-to-hast` included, works on it unchanged:
 
 ```ts with-api
 import { Markdown, Mdast } from "@effected/markdown";
@@ -201,7 +201,7 @@ if (Result.isSuccess(parsed)) {
 }
 ```
 
-`Mdast.fromMdast` (and its `fromMdastResult` twin) is the checked admission boundary going the other way: it validates a foreign tree into this package's node classes and synthesizes zero-width sentinel positions wherever one is absent or incomplete. Trees admitted that way serve tree-level workflows and canonical `stringify` — but **not** offset splicing, which needs the real positions only a parse produces. The boundary also strips everything outside spec mdast, fidelity fields included, so a `fenceChar` set on a plain mdast tree *before* admission is silently dropped. Set fidelity fields on the decoded tree.
+`Mdast.fromMdast` (and its `fromMdastResult` twin) is the checked admission boundary going the other way: it validates a foreign tree into this package's node classes and synthesizes zero-width sentinel positions wherever one is absent or incomplete. Trees admitted that way serve tree-level workflows and canonical `stringify` — but **not** offset splicing, which needs the real positions only a parse produces. The boundary also strips everything outside spec mdast, fidelity fields included, so a `fenceChar` set on a plain mdast tree *before* admission is silently dropped. Set fidelity fields on the decoded tree. The one field admitted is `escapeStyle` on a `text` node — an instruction to the emitter, not a record of source spelling — so a plain tree can carry [literal text](#emit-already-safe-text-verbatim) straight in.
 
 Rendering HTML is deliberately not this package's job. The mdast projection is the bridge; what you run over it is your choice.
 
@@ -227,6 +227,29 @@ Effect.runPromise(Markdown.stringify(tree)).then(console.log);
 ```
 
 `stringify` takes **no options**, and that is a published commitment: the canonical form is pinned by byte-level tests, cross-checked against commonmark.js over the full CommonMark 0.31.2 corpus, and changing any of it is a breaking change rather than a patch. A test may assert on those bytes. ATX headings at every depth, `***` thematic breaks, `-` bullets, `*`/`**` emphasis, exactly one blank line between blocks, one trailing newline. A node that carries a fidelity field overrides the matching default, which is how a parsed document re-serializes in its author's spelling. To normalize an *existing* document to different choices, use `MarkdownFormat` with `MarkdownFormattingOptions` — that is the configurable surface, and this one deliberately is not.
+
+### Emit already-safe text verbatim
+
+Canonical escaping makes every text value round-trip, which costs readability in generated content: a dependency range `~0.2.1` in a table cell emits as `\~0.2.1`. When you know a value is already safe markdown, set `escapeStyle: "literal"` on its `Text` node and the emitter writes it as given:
+
+```ts with-api
+import { Markdown, Root, Table, TableCell, TableRow, Text } from "@effected/markdown";
+import { Result } from "effect";
+
+const cell = (value: string) => TableCell.make({ children: [Text.make({ value, escapeStyle: "literal" })] });
+
+const tree = Root.make({
+  children: [Table.make({ children: [TableRow.make({ children: [cell("@scope/pkg"), cell("~0.2.1 | ^1.0.0")] })] })],
+});
+
+console.log(Result.getOrThrow(Markdown.stringifyResult(tree)));
+// | @scope/pkg | ~0.2.1 \| ^1.0.0 |
+// | --- | --- |
+```
+
+Literal drops only the escaping aimed at inline syntax. The escapes that protect the surrounding block stay, because without them the document itself would change shape: a table cell's unescaped `|`, a newline inside a cell or heading (written as a space), a heading's trailing `#` run, a blank line or leading indentation inside a paragraph, a line start that can open a block (a bullet or ordered-list marker or a `#` run followed by a space, tab or line end, `>`, a code fence, a thematic-break or setext run, a frontmatter fence, a delimiter-row-shaped dash line, and conservatively any `<`, `[`, `|` or `:`; `~0.2.1`, `1.0.0`, `-x` and `#x` stay as written), and `{`/`<` in a tree carrying MDX.
+
+The promise is yours to keep: **a literal value that parses as markdown does not round-trip.** `*a*` emits verbatim and reads back as emphasis. The parser never sets `escapeStyle`, and a tree that never sets it serializes byte-identically to the canonical form.
 
 The MDX vocabulary lives in the same commitment. The parser reads no MDX syntax; these nodes exist so a synthesized tree can carry JSX and serialize to valid MDX instead of joining strings:
 

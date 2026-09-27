@@ -310,6 +310,177 @@ const escapeText = (
 	return { text: out, atLineStart: lineStart };
 };
 
+// --- literal text (`escapeStyle: "literal"`) ---------------------------------
+//
+// The caller vouches the value is already safe markdown source, so every
+// escape aimed at the INLINE phase is dropped. What stays is what defends the
+// BLOCK phase — the structure around the text, decided before inlines are
+// parsed: newlines (blank lines end a paragraph; single-line containers have
+// none), line-start block openers and leading whitespace, the heading closing
+// sequence, and the table cell's pipes (cells are split before inline
+// parsing). MDX's `{`/`<` also stay: MDX reads a stray one as a syntax error.
+// Kept apart from `escapeText` so the canonical path is untouched byte for
+// byte.
+
+/** Space or tab — the whitespace a list marker or ATX run must be followed by. */
+const isSpaceOrTab = (char: string | undefined): boolean => char === " " || char === "\t";
+
+/** Every character of `line` is `marker` or space/tab — a thematic-break or setext-shaped run. */
+const isRunOf = (line: string, marker: string): boolean =>
+	line.length > 0 && [...line].every((char) => char === marker || char === " " || char === "\t");
+
+/** Only the characters a GFM delimiter row is made of (re2c's `spacechar` included). */
+const reDelimiterRowShaped = /^[-:| \t\v\f]+$/;
+
+/**
+ * Whether a literal line starting with `line` can open a block, so its first
+ * character must be escaped. `line` is the text known to be on the line —
+ * the value up to its next newline, then the following text siblings — and
+ * `open` says the line may carry more than that (no newline ended it).
+ * Beyond the known text sits either the end of the line or content this
+ * function cannot see (a non-text sibling, a parent's closing delimiter), so
+ * a marker that needs "space, tab or end of line" after it is escaped when
+ * it reaches the end of `line`. Every test errs toward escaping: an extra
+ * backslash is inert, a missing one changes the document.
+ */
+const literalLineOpensBlock = (line: string, open: boolean): boolean => {
+	const char = line[0];
+	switch (char) {
+		// A blockquote always opens; an HTML block, a link reference or footnote
+		// definition, and a GFM table row are escaped conservatively.
+		case ">":
+		case "<":
+		case "[":
+		case "|":
+		case ":":
+			return true;
+		case "#": {
+			const run = /^#{1,6}/.exec(line)?.[0] ?? "";
+			return run.length > 0 && (run.length === line.length || isSpaceOrTab(line[run.length]));
+		}
+		case "`":
+		case "~":
+			// A fence is 3+ of either; an open line of only 1-2 could be completed.
+			return line.startsWith(char.repeat(3)) || (open && [...line].every((each) => each === char));
+		case "=":
+			// A setext underline, kept escaped even on a paragraph's first line.
+			return /^=+[ \t]*$/.test(line);
+		case "+":
+		case "-":
+		case "*":
+		case "_": {
+			const bullet = char !== "_" && (line.length === 1 || isSpaceOrTab(line[1]));
+			const breakRun = char !== "+" && isRunOf(line, char);
+			const thematic = breakRun && (open || [...line].filter((each) => each === char).length >= 3);
+			// `---`/`+++` open frontmatter at the document head (`---json`
+			// too). A dash line may be a setext underline or a delimiter row;
+			// the delimiter-row shape covers both.
+			const frontmatter = (char === "-" || char === "+") && line.startsWith(char.repeat(3));
+			const dashLine = char === "-" && reDelimiterRowShaped.test(line);
+			return bullet || thematic || frontmatter || dashLine;
+		}
+		default:
+			return false;
+	}
+};
+
+/** ASCII punctuation: what a backslash escapes, so `\x` is one cell character. */
+const reAsciiPunctuation = /[!-/:-@[-`{-~]/;
+
+const literalText = (
+	value: string,
+	context: InlineContext,
+	atLineStart: boolean,
+	mdx: boolean,
+	followingText: string,
+	nonTextFollows: boolean,
+): { text: string; atLineStart: boolean } => {
+	let out = "";
+	let lineStart = atLineStart;
+	for (let index = 0; index < value.length; index += 1) {
+		const char = value[index] as string;
+		if (char === "\n") {
+			// The canonical newline rules, unchanged: they are all structural.
+			const adjacent = value[index - 1] === "\n" || value[index + 1] === "\n";
+			if (context.singleLine) {
+				out += " ";
+				lineStart = false;
+			} else if (adjacent || lineStart) {
+				out += "&#10;";
+				lineStart = false;
+			} else {
+				out += "\n";
+				lineStart = true;
+			}
+			continue;
+		}
+		if (lineStart) {
+			lineStart = false;
+			if (char === "\t") {
+				out += "&#9;";
+				continue;
+			}
+			if (char === " ") {
+				out += "&#32;";
+				continue;
+			}
+			const lineEnd = value.indexOf("\n", index);
+			let line = value.slice(index, lineEnd === -1 ? undefined : lineEnd);
+			let open = false;
+			if (lineEnd === -1) {
+				const followingEnd = followingText.indexOf("\n");
+				line += followingText.slice(0, followingEnd === -1 ? undefined : followingEnd);
+				open = followingEnd === -1;
+			}
+			const ordered = ORDERED_MARKER.exec(line);
+			if (ordered !== null) {
+				const after = line[ordered[0].length];
+				if (after === undefined || isSpaceOrTab(after)) {
+					out += `${ordered[0].slice(0, -1)}\\${ordered[0].slice(-1)}`;
+					index += ordered[0].length - 1;
+					continue;
+				}
+			} else if (literalLineOpensBlock(line, open)) {
+				out += `\\${char}`;
+				continue;
+			}
+		}
+		if (char === "\\") {
+			const next = value[index + 1];
+			if (next !== undefined && reAsciiPunctuation.test(next)) {
+				// An escape pair is atomic — the cell scanner consumes it whole
+				// — so an already-escaped `\|` passes through untouched.
+				out += `\\${next}`;
+				index += 1;
+				continue;
+			}
+			// A value-final backslash with more content after it, in any
+			// container, would pair with that content's first character: the
+			// backtick of inline code, or a table cell's `\|`, freeing the pipe.
+			const followed = followingText !== "" || nonTextFollows;
+			out += next === undefined && followed ? "\\\\" : "\\";
+			continue;
+		}
+		// Escaped here as well as by the `escapeCellPipes` post-pass: if a raw
+		// sibling ended on a lone backslash, a bare `|` would pair with it and
+		// eat it, while `\|` leaves an even run the post-pass repairs.
+		if (char === "|" && context.inTable) {
+			out += "\\|";
+			continue;
+		}
+		if (mdx && (char === "{" || char === "<")) {
+			out += `\\${char}`;
+			continue;
+		}
+		if (context.inHeading && char === "#" && isClosingHashRun(value, index, followingText, nonTextFollows)) {
+			out += "\\#";
+			continue;
+		}
+		out += char;
+	}
+	return { text: out, atLineStart: lineStart };
+};
+
 // --- inline serialization ---------------------------------------------------
 
 /** Pick the effective emphasis marker, flipping away from a forbidden char. */
@@ -445,7 +616,14 @@ const serializeInlines = (
 					followingText += (children[next] as Text).value;
 					next += 1;
 				}
-				const escaped = escapeText(child.value, context, atLineStart, state.mdx, followingText, next < children.length);
+				const escaped = (child.escapeStyle === "literal" ? literalText : escapeText)(
+					child.value,
+					context,
+					atLineStart,
+					state.mdx,
+					followingText,
+					next < children.length,
+				);
 				out += escaped.text;
 				atLineStart = escaped.atLineStart;
 				break;
@@ -818,6 +996,24 @@ const alignCell = (align: "left" | "right" | "center" | null | undefined): strin
 	}
 };
 
+/**
+ * Escape every cell pipe the GFM cell splitter would read as a column
+ * boundary. The splitter consumes a backslash and the punctuation after it as
+ * one character, so `\\` is an escaped backslash: a pipe is escaped already
+ * iff the run of backslashes directly before it has odd length, and needs a
+ * `\` iff that run is even, zero included.
+ */
+const escapeCellPipes = (content: string): string => {
+	let out = "";
+	let backslashes = 0;
+	for (const char of content) {
+		if (char === "|" && backslashes % 2 === 0) out += "\\";
+		backslashes = char === "\\" ? backslashes + 1 : 0;
+		out += char;
+	}
+	return out;
+};
+
 const serializeTable = (table: Table, state: StringifyState): string => {
 	const columnCount = Math.max(1, ...table.children.map((row) => row.children.length));
 	const rows = table.children.map((row) => {
@@ -826,10 +1022,9 @@ const serializeTable = (table: Table, state: StringifyState): string => {
 			guard(state, cell);
 			// Text-level pipes are escaped by the cell context; anything a
 			// nested emission smuggled through raw (a code span, raw HTML, a
-			// destination) gets caught here — the cell splitter unescapes
-			// `\|` everywhere in a cell, code spans included, so this is
-			// lossless.
-			const content = serializeInlines(cell.children, CELL_CONTEXT, state, false).replace(/(?<!\\)\|/g, "\\|");
+			// destination) gets caught here — the cell splitter unescapes `\|`
+			// everywhere in a cell, code spans included, so this is lossless.
+			const content = escapeCellPipes(serializeInlines(cell.children, CELL_CONTEXT, state, false));
 			unguard(state);
 			return content;
 		});

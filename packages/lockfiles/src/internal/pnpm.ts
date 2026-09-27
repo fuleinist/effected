@@ -10,6 +10,7 @@ import {
 	gatePnpmVersion,
 	importerDependencies,
 	peerDeclarations,
+	splitNameVersion,
 	splitPeerSuffix,
 	toIntegrityHash,
 	validationFailure,
@@ -473,15 +474,13 @@ const toFields = (raw: PnpmLockfileRawType): Effect.Effect<LockfileFields, Parse
 			edges: ReadonlyArray<Readonly<Record<string, string>> | undefined>,
 		) =>
 			Effect.gen(function* () {
-				// Keys may carry a peer-resolution suffix — "fdir@6.5.0(picomatch@4.0.4)" —
-				// whose inner "@" would corrupt the split; splitPeerSuffix (the one
-				// stripping implementation, shared with the importer path) drops
-				// everything from the first "(".
-				const { plain: bare } = splitPeerSuffix(instanceId);
-				const atIndex = bare.lastIndexOf("@");
-				if (atIndex <= 0) return; // malformed "name@version" keys are skipped, never thrown on
-				const name = bare.slice(0, atIndex);
-				const version = bare.slice(atIndex + 1);
+				// Keys may carry a peer-resolution suffix — "fdir@6.5.0(picomatch@4.0.4)",
+				// "lib@file:vendor/lib(react@18.3.1)" — whose inner "@" would corrupt
+				// the split; splitPeerSuffix (the one stripping implementation, shared
+				// with the importer path) drops it first.
+				const split = splitNameVersion(splitPeerSuffix(instanceId).plain);
+				if (split === undefined) return; // malformed "name@version" keys are skipped, never thrown on
+				const { name, version } = split;
 				const integrity = yield* toIntegrityHash(meta?.resolution?.integrity);
 				emitted.add(instanceId);
 				packages.push(

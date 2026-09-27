@@ -15,11 +15,8 @@ sources:
     resource: ../../packages/workspaces/__test__/fixtures/peers/README.md
 generated:
   by: "okfit/claude-code"
-  at: 2026-09-22T01:21:07Z
-  body_sha256: 33b6fe038d8922d8b7ad5535d8ad1aad0267932301641a0fc5edbe23322c7312
-verified:
-  - by: human:spencer
-    at: 2026-09-24T00:11:52.590Z
+  at: 2026-09-27T21:38:36Z
+  body_sha256: 5e3f480d91f2191709cf47d71363fae26e6ad7529fca9fa5bfc96e81ac513b2c
 ---
 
 # @effected/workspaces peer-dependency checking
@@ -47,7 +44,11 @@ attributed to the importer that pulls it in, with the chain carried in
 ## The surface is a report, not an array
 
 `PeerCheck.run(lockfile, options?)` is a total static returning the value
-class itself, carrying `supported`, `unsatisfied`, `unresolvedImporters`,
+class itself. Its options are three keys, each supplied from what the caller
+already has: `peerDependencyRules` (from
+`WorkspaceCatalogs.peerDependencyRules()`), `workspacePackages` (from
+`WorkspaceDiscovery`) and `catalogs` (from `WorkspaceCatalogs.set()`). The
+report carries `supported`, `unsatisfied`, `unresolvedImporters`,
 and `unverified`, plus a `required` getter narrowing `unsatisfied` to the
 non-optional rows. An `UnsatisfiedPeer` row names the importer, the peer,
 what was wanted, what was found (`null` when nothing resolved at all),
@@ -141,7 +142,7 @@ with every oracle run committed under `__test__/fixtures/peers/allowany/`
 and `ignoremissing/`.[^peer-fixtures] Supplied rules therefore never
 produce `peerRulesNotApplied`, which is reserved for the case where no rules
 were supplied at all; a report can still be unverified through
-`unresolvedEdge`, which rules do not touch.
+`unresolvedEdge`, `peerRangeUnresolved` or `peerVersionUnresolved`, which rules do not touch.
 
 ### How pnpm matches an allowedVersions key
 
@@ -206,11 +207,16 @@ Both halves of the no-cross rule are pinned by cross-axis oracle runs:
 `ignoreMissing: ["react", "redux"]` leaves both wrong-version rows in
 place.
 
-## Failing closed: the two unverified reasons
+## Failing closed: the four unverified reasons
 
-The union is closed at exactly two by measurement: with all three rule axes
-now applied, no supplied configuration leaves a suppression unreplicated,
-so there is nothing left for a third reason to name.
+The union is closed at exactly four by measurement. With all three rule
+axes applied, no supplied configuration leaves a suppression unreplicated;
+with `workspacePackages` supplied, a covered `link:` target is a judged
+parent rather than a structural unknown; and the one thing a joined manifest
+can still withhold is a range the check cannot name, which is what the third
+member says; the fourth is the same gap on the provider side, a version the
+lockfile does not carry. Each reason follows the same presence-is-the-assertion rule:
+omitting an option key says nobody looked, and the report says so.
 
 - **`peerRulesNotApplied`** — no suppression policy was supplied, so
   pnpm's suppression could not be replicated and some rows may be ones
@@ -219,11 +225,52 @@ so there is nothing left for a third reason to name.
   none, while omitting the key says nobody looked. Collapsing those two
   would tell a gate that an unchecked workspace is clean. Supplied rules
   never produce it, whatever their contents — all three axes are applied.
-- **`unresolvedEdge`** — some instance records an edge the model could not
-  name, so a peer that edge satisfies cannot be verified. Such a peer is
-  declined rather than reported: reporting it would be a false positive,
-  declining it silently would be a false negative, and only doing both
-  halves is honest.
+- **`unresolvedEdge`** — two triggers. Some instance records an edge the
+  model could not name, so a peer that edge satisfies cannot be verified.
+  Such a peer is declined rather than reported: reporting it would be a
+  false positive, declining it silently would be a false negative, and
+  only doing both halves is honest. Second, an importer dependency
+  resolved through `link:` whose target was not judged for that importer:
+  a linked parent's manifest peers are never in the lockfile, so they are
+  declined rather than fabricated. That covers a target outside the
+  supplied `workspacePackages`, every target when the key is omitted, and
+  a covered target the walk never read — one the lockfile records no
+  workspace row for (a `link:` outside the workspace globs), or one the
+  importer's walk did not reach. Covering a path is not judging it; the
+  marker clears only for an edge whose target's peers were actually read
+  for the importer that recorded it.
+- **`peerRangeUnresolved`** — a peer declared by a joined `link:` manifest
+  carries a range that is still a protocol specifier, while something
+  resolved for that peer, so the comparison was never performed. The
+  triggers are a `catalog:` specifier with `catalogs` omitted, a
+  `catalog:` specifier the supplied set names nothing for, and any other
+  protocol (`workspace:*` and its kin). A peer with *nothing* resolved
+  never produces it: "no provider" needs no range, so that row is reported
+  as usual.
+- **`peerVersionUnresolved`** — a peer resolved to a non-workspace provider
+  whose version is a protocol specifier rather than a version: a `file:`
+  directory or tarball, directly or through a `file:` override, and a git
+  or remote-tarball provider, which pnpm keys by its URL
+  (`https://codeload.github.com/…`, `git+https://…`) so the URL stands
+  where a version belongs. The lockfile records
+  no version for a `file:` directory, and the model carries the specifier
+  (`file:vendor/react`) in its place. `pnpm peers check` reports such a peer
+  as a `bad` row with the specifier as its found version, even when the
+  directory's manifest satisfies the range; for a joined `link:` parent it
+  reads the real version off disk instead. Neither is recoverable from the
+  lockfile, so the peer is declined without a row and the report carries
+  the marker, on the lockfile-row and joined-manifest paths alike. A
+  workspace-row provider stays accepted without a version check, and a
+  plain unparseable version is still skipped. The `filedep*` oracles pin
+  it; a `file:` tarball is where pnpm itself moved, reporting the specifier
+  under 12.6.0 and the tarball's real version under 12.7.0, over the same
+  lockfile. pnpm 11 writes the same lockfiles and reports every `file:`
+  directory provider clean, whatever its version, so the two supported
+  majors disagree over identical input and the marker is the one answer
+  consistent with both.
+
+All four mean **fail closed**: a gate treats an unverified report as "not
+proven clean", never as a pass.
 
 `PeerCheck` reads `resolved` from `@effected/lockfiles`, which omits any
 edge whose identity it cannot compose and verify — a rule that keeps this
@@ -232,10 +279,53 @@ carries two different meanings, "nothing resolved" and "something resolved
 that could not be named", and this package treats the first as a positive
 finding.
 
-One known hole in the fail-closed posture is open: a parent reached through
-a `link:` edge has no package row, so its peers are never joined and the
-report still says verified. See
-[the link-parent gotcha](../gotchas/peer-check-link-parent-reports-verified.md).
+## Joining a `link:`-resolved parent
+
+Under pnpm every `workspace:` dependency is recorded `link:`, and pnpm
+records no peer declarations for workspace projects, so a linked parent
+joins at best to a workspace row whose peers are empty by design — and, for
+the root importer, to nothing at all. `pnpm peers check` nonetheless reports
+that parent's peers, because it reads the linked manifest on disk.
+`PeerCheck` answers the same question without reading the disk, so the
+check stays a pure value over its inputs:
+
+- **The manifest comes from the caller.** `workspacePackages` takes the
+  discovery output the caller already has, matched to the `link:` target
+  by `relativePath` — the POSIX workspace-relative directory the lockfile's
+  importer paths are spelled in — or by the package's publish directory.
+  pnpm links a workspace dependency INTO `publishConfig.directory` unless
+  `publishConfig.linkDirectory` is `false`, which it defaults to true, so
+  the lockfile then records `link:../a/dist`. A covered target contributes
+  its manifest's declared peers to the walk, named from the manifest
+  (`probe-a@1.0.0`, not the row's `packages/a@0.0.0`) in `parents`.
+- **A publish-directory link reads the source manifest.** pnpm reads the
+  peers from the manifest AT the link target — the built one — while
+  `PeerCheck` reads the supplied source manifest and resolves its `catalog:`
+  ranges through `catalogs`. The two agree when the build emits the peer
+  ranges the source's specifiers resolve to, which is the contract a
+  publish-directory build keeps.
+- **Providers come from the importer's own dependency set**, which is where
+  pnpm resolves them from — never a sibling importer's, and never a
+  workspace-wide lookup by name. The consumer's own `react@18.3.1`
+  satisfies the linked parent's `^18.0.0` peer; the same version installed
+  only by a sibling does not; the consumer's own `react@17.0.2` is a row
+  carrying the wrong version as `found`.
+- **Attribution stops at a workspace package.** A linked package's manifest
+  peers are judged only for the importer that links it DIRECTLY, and a
+  linked package's own dependencies — registry or linked — are judged by
+  that package's own importer. pnpm never surfaces either on a consumer one
+  link further out, so the walk does not continue past a workspace package
+  it reached from the importer. Each `link:` edge is therefore cleared by
+  the walk of the importer that records it, or keeps `unresolvedEdge`.
+- **The root importer's linked targets are walked too.** The root has no
+  workspace row under pnpm to reach them through, so the walk seeds its
+  covered targets directly and judges them against the root's own
+  dependencies as provider context, exactly as for any other importer.
+- **A `catalog:` peer range is resolved through `catalogs`**, and the
+  resolved range is what is judged and reported as `wanted` — the value
+  `pnpm peers check` reports as `wantedRange`. `WorkspaceCatalogs.set()`
+  already folds in catalogs a config-dependency hook injects, so the
+  caller passes it as-is.
 
 ## The differential oracle
 
@@ -252,8 +342,47 @@ every one is generated over a purpose-built workspace with no
 config-dependency hooks, so oracle agreement validates the computation only
 on workspaces without them.
 
+The `link:` join is pinned by twelve fixtures, and the provider-version
+reason by four more (`filedep*`). Six are over one probe workspace
+(`linkWorkspacePackages: deep`, `probe-a` declaring a `react: ^18.0.0`
+peer), each moving one variable:[^peer-fixtures]
+
+- **`linkdeep/`** — `packages/b` depends on `probe-a` and nothing provides
+  react: a missing row for `packages/b`, parents `probe-a@1.0.0`, which
+  `PeerCheck` reproduces once the manifests are supplied and declines with
+  `unresolvedEdge` when they are not.
+- **`linkdeep-provided/`** — `packages/b` also depends on `react@18.3.1`:
+  clean.
+- **`linkdeep-sibling/`** — only a sibling importer has `react@18.3.1`: still
+  missing, which is what rules out a workspace-wide provider lookup.
+- **`linkdeep-bad/`** — `packages/b` depends on `react@17.0.2`: a wrong-version
+  row.
+- **`linkdeep-root/`** and **`linkdeep-root-bad/`** — the root importer links
+  `probe-a` (`version: link:packages/a`), with no provider and with its own
+  `react@17.0.2` respectively: a missing row and a wrong-version row for `.`.
+
+Two move the link target: **`linkdeep-directory/`** (`publishConfig.directory`
+alone, recorded as `link:../a/dist`) and **`linkdeep-directory-false/`**
+(`linkDirectory: false`, recorded as `link:../a`), with the same missing row.
+Four are chains: **`linkchain-parent-provides/`**,
+**`linkchain-importer-provides/`** and **`linkchain-none/`** (`b` links `a`,
+`a` links `c`, `c` peers on react) put the row on `packages/a` or nowhere,
+never on `packages/b`; **`linkchain-registry/`** (`b` links `c`, `c` depends
+on `react-dom` without react) reports the missing react on `packages/c` only.
+
+The first four were measured with pnpm 12.5.1 and re-taken with 12.6.0,
+identically; the root, directory and chain fixtures were recorded with
+pnpm 12.6.0. A
+`catalog:` variant of the probe workspace produces a lockfile and verdict
+byte-identical to `linkdeep/` — nothing in that pair can record that a range
+was catalog-sourced — so the catalog dimension is pinned on the manifest
+side, through the `WorkspacePackage` a test supplies, rather than by another
+oracle directory.
+
 [^peer-check-ts]: `packages/workspaces/src/PeerCheck.ts` — `PeerCheck`,
     `UnsatisfiedPeer`, `PeerParent`, `PeerCheckOptions`, `UnverifiedReason`.
 [^peer-fixtures]: `packages/workspaces/__test__/fixtures/peers/README.md` —
     provenance of every oracle run, including the `allowany/` and
-    `ignoremissing/` measurement pass.
+    `ignoremissing/` measurement pass and the eight `linkdeep*` directories
+    (`linkdeep`, `-bad`, `-directory`, `-directory-false`, `-provided`,
+    `-root`, `-root-bad`, `-sibling`).

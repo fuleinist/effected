@@ -117,6 +117,203 @@ importer and the edge resolves to a workspace row. Oracle: clean. A workspace ro
 carries the placeholder version `0.0.0`, so a checker that version-compared it
 against `^18.0 || ^19` would invent a finding pnpm does not have.
 
+## `linkdeep/`
+
+Real pnpm 12.5.1 output, generated 2026-09-22 by the same recipe
+(`pnpm install --lockfile-only`, `autoInstallPeers: false`) over the probe
+workspace from effected#800: `linkWorkspacePackages: deep`, package
+`probe-a` declaring a `react: ^18.0.0` peer nothing satisfies, package
+`probe-b` depending on `probe-a: workspace:*` — which pnpm records as
+`version: link:../a`. The peer range is literal; a `catalog:` variant
+produces byte-identical artefacts (see the catalog section below).
+
+`pnpm peers check --json` READS THE LINKED MANIFEST on disk and reports the
+missing `react` row for `packages/b` (parents `probe-a@1.0.0`). The lockfile
+records no peer declarations for the linked parent, so the fixture pins both
+modes of `PeerCheck`: with `workspacePackages` supplied, the linked parent's
+manifest peers are joined and the report agrees with the oracle row for row;
+with the key omitted, `PeerCheck` fabricates no row and fails the report
+closed with `unresolvedEdge` (effected#800).
+
+A published-parent control (the same graph with `probe-a` carrying a real
+`packages:` row, where the row appears today) could not be generated
+without publishing it: an `injectWorkspacePackages: true` variant still
+recorded `version: link:../a` and no row. The control is pinned instead by
+the registry-parent fixtures — `missing/` and `mixed/`, where the
+declaring parent has a real row and its unsatisfied peers appear.
+
+## `linkdeep-provided/`, `linkdeep-sibling/` and `linkdeep-bad/`
+
+Real pnpm **12.5.1** output over `linkdeep/`'s probe workspace, one variable
+moved at a time — the measurement pass behind the join the issue's option 1
+asks for. `packages/a` (`probe-a`) declares the `react: ^18.0.0` peer in all
+three; what changes is where a provider sits:
+
+- **`linkdeep-provided/`** — `packages/b` ALSO depends on `react@18.3.1` of
+  its own. Oracle: `packages/b` is **clean**. A linked parent's peer resolves
+  against the consumer importer's own dependency set, and this satisfies it.
+- **`linkdeep-sibling/`** — nothing depends on react except a SIBLING,
+  `packages/c`, which has `react@18.3.1`. Oracle: `packages/b` reports the
+  peer **missing** with `found: null`. The same version one importer away is
+  NOT a provider, so a workspace-wide lookup by name is the wrong rule —
+  `linkdeep/` alone cannot pin that (it has no provider anywhere), and this
+  fixture is what does.
+- **`linkdeep-bad/`** — `packages/b` depends on `react@17.0.2`. Oracle: a
+  **bad** row carrying `foundVersion: "17.0.2"`, the version-compare half of
+  the same rule.
+
+Recipe for all three: `pnpm install --lockfile-only`, `autoInstallPeers:
+false`, `linkWorkspacePackages: deep`, `packages: ['packages/*']`, no root
+`package.json`. Oracles are `pnpm peers check --json` output verbatim, taken
+with `npx pnpm@12.5.1` and re-taken with 12.6.0 — identical on all three.
+
+## `linkdeep-root/` and `linkdeep-root-bad/`
+
+Real pnpm **12.6.0** output, generated 2026-09-27 by the same recipe
+(`pnpm install --lockfile-only`, `autoInstallPeers: false`,
+`linkWorkspacePackages: deep`, `packages: ['packages/*']`), over a workspace
+whose **root** `package.json` depends on `probe-a: workspace:*` and
+`js-tokens: 4.0.0`. `packages/a` (`probe-a@1.0.0`) declares the
+`react: ^18.0.0` peer, as in `linkdeep/`. pnpm records the edge on the root
+importer as `version: link:packages/a` — the shape effected#800 reported for
+`@savvy-web/silk` linked at a real workspace's root.
+
+- **`linkdeep-root/`** — nothing provides react. Oracle: a **missing** `react`
+  row for `.`, parents `probe-a@1.0.0`.
+- **`linkdeep-root-bad/`** — the root ALSO depends on `react@17.0.2`. Oracle: a
+  **bad** row for `.` carrying `foundVersion: "17.0.2"`, so the root's own
+  dependency set is the provider context, as it is for a non-root importer.
+
+The root has no workspace row under pnpm, so these are the fixtures that
+exercise a linked target reached from an importer that is answered through its
+dependency records rather than through its own row.
+
+## `linkdeep-directory/` and `linkdeep-directory-false/`
+
+Real pnpm **12.6.0** output, generated 2026-09-27 by the `linkdeep*` recipe,
+with `probe-a` carrying `publishConfig: { directory: "dist" }` (and a copy of
+its manifest at `packages/a/dist/package.json`) — the shape every savvy-web
+monorepo uses, and the tree effected#800 was reported from.
+
+- **`linkdeep-directory/`** — `directory` alone. pnpm records the importer
+  with `publishDirectory: dist` and the edge as `link:../a/dist`, INTO the
+  publish directory. A variant with `linkDirectory: true` produced a
+  byte-identical lockfile and oracle, so `linkDirectory` defaults to true and
+  is not committed separately. Oracle: `packages/b` missing `react`, parents
+  `probe-a@1.0.0`.
+- **`linkdeep-directory-false/`** — `linkDirectory: false`. pnpm records the
+  edge as `link:../a`, the package root. Same oracle row.
+
+## `linkchain-*/`
+
+Real pnpm **12.6.0** output, generated 2026-09-27 by the same recipe: how far
+a linked package's peers travel. Three chain variants have `probe-b` link
+`probe-a` and `probe-a` link `probe-c`, which peers on `react: ^18.0.0`:
+
+- **`linkchain-parent-provides/`** — `probe-a` has `react@18.3.1`. Oracle:
+  every importer clean.
+- **`linkchain-importer-provides/`** — only `probe-b` has `react@18.3.1`.
+  Oracle: `packages/a` reports the peer missing (parents `probe-c@1.0.0`) and
+  `packages/b` is clean.
+- **`linkchain-none/`** — nobody has react. Oracle byte-identical to the
+  previous one: the row lands on `packages/a` only.
+
+So a linked package's manifest peers are judged for its DIRECT consumer only,
+against that consumer's dependencies, and never surface one link further out.
+
+- **`linkchain-registry/`** — `probe-b` links `probe-c`, which depends on
+  `react-dom@18.3.1` with no react anywhere. Oracle: the missing `react` is
+  reported on `packages/c` (parents `react-dom@18.3.1`) and `packages/b` is
+  clean. A linked package's registry dependencies are its own importer's
+  business too, so attribution stops at a workspace package.
+
+## `filedep/`, `filedep-override/`, `filedep-tarball/` and `filedep-joined/`
+
+Real pnpm **12.6.0** output, generated 2026-09-27 by the `linkdeep*` recipe
+(`pnpm install --lockfile-only`, `autoInstallPeers: false`,
+`linkWorkspacePackages: deep`, `packages: ['packages/*']`, no root
+`package.json`). Every lockfile was re-generated with **pnpm 12.7.0** and came
+back byte-identical. The case is a peer whose PROVIDER resolved through
+`file:`, from a stub `react` at `vendor/react` (outside the globs):
+
+- **`filedep/`**: `packages/host` depends on `react-dom@18.3.1` and
+  `react: file:../../vendor/react`, a DIRECTORY whose manifest says `18.3.1`.
+  The lockfile records no version for a `file:` directory anywhere, and the
+  instance is keyed `react@file:vendor/react`. Oracle: a **bad** row with
+  `foundVersion: "file:vendor/react"`, **even though 18.3.1 satisfies
+  `^18.3.1`**. A `17.0.2` stub produced a byte-identical lockfile and the same
+  row, so it is not committed. pnpm 12.7.0 gives the same verdict.
+- **`filedep-override/`**: the same, with `react: ^18.0.0` in the manifest
+  and `overrides: { react: file:vendor/react }`. Oracle: the same bad row, on
+  12.6.0 and 12.7.0. This is the shape silk-update-action met on
+  savvy-web/systems.
+- **`filedep-tarball/`**: `react: file:../../vendor/react-18.3.1.tgz`, a
+  TARBALL, which the lockfile DOES record `version: 18.3.1` for. Here the
+  two pnpm versions disagree over one lockfile: 12.6.0 (`peers-check.json`)
+  reports the bad row with the tarball specifier as `foundVersion`, while
+  12.7.0 (`peers-check-pnpm-12.7.0.json`) reads the tarball's real version and
+  reports the workspace **clean**. A `17.0.2` tarball is bad on both versions,
+  with 12.7.0 reporting `foundVersion: "17.0.2"`.
+- **`filedep-joined/`**: `probe-a` (`packages/a`) peers on `react: ^18.0.0`,
+  and `packages/b` depends on `probe-a: workspace:*` and a `file:` directory
+  react at `17.0.2`. Oracle: a **bad** row for `packages/b` with
+  `foundVersion: "17.0.2"`. pnpm reads the directory's real version off disk
+  for a joined parent. The same workspace at `18.3.1` (identical lockfile) is
+  clean, on 12.6.0 and 12.7.0, for directories and tarballs alike.
+
+**`filedep-suffixed/`** is the real-tree shape (pnpm 12.6.0, same recipe):
+the stub `react` itself declares a `js-tokens: ^4.0.0` peer, so pnpm keys the
+instance `react@file:vendor/react(js-tokens@4.0.0)`, suffixed exactly like
+a registry version. Oracle, on 12.6.0 and 12.7.0: a **bad** `react` row for
+`packages/host` with `foundVersion: "file:vendor/react"`, the suffix
+stripped, which is the version the lockfile model must carry.
+
+Every `filedep*` workspace was also run under **pnpm 11.28.0**: the
+lockfiles came back byte-identical, and each directory carries that verdict
+as `peers-check-pnpm-11.json`. pnpm 11 is lenient where 12 is strict. It
+reports every `file:` directory provider **clean**, including the joined
+case at `17.0.2` against `^18.0.0` and an unsuffixed `17.0.2` directory
+against `^18.3.1` (not committed). Only a tarball's recorded version is
+compared (`17.0.2` is bad, `18.3.1` clean). The two majors therefore disagree
+over the same lockfile, which is the case for declining rather than
+answering.
+
+`@effected/lockfiles` passes the specifier through as the provider's
+version (`file:vendor/react`) for both directories and tarballs. The version
+pnpm compares is therefore not in the model in any of the four, and
+`PeerCheck` declines each peer with `peerVersionUnresolved`, fabricating no
+row. With `peerDependencyRules.allowAny: [react]` added to `filedep/`, pnpm
+12.6.0 reports the workspace clean. That was measured but is not committed,
+and the check does not consume it for this reason.
+
+## The catalog-peer variant, and why it is not a directory here
+
+`linkdeep/`'s probe workspace with one change — `packages/a` declaring
+`react: "catalog:peers"` instead of a literal range, with that range in
+`pnpm-workspace.yaml`'s `catalogs.peers` — was generated and checked with
+pnpm 12.5.1 and 12.6.0 (2026-09-26). Both artefacts come back
+**byte-identical to the ones in `linkdeep/`**: the lockfile records no peer
+declaration for a linked workspace project either way, and the verdict
+resolves the catalog to `wantedRange: "^18.0.0"`. Nothing in a
+lockfile-plus-oracle pair can record that a range was catalog-sourced, so a
+directory here would be a duplicate; the catalog dimension lives entirely on
+the MANIFEST side, where a caller-supplied `WorkspacePackage.peerDependencies`
+carries the raw `catalog:peers` string. That is an input-shape question for
+the join, not a new oracle.
+
+Two further facts from the same pass, both worth having on the record:
+
+- **A plain catalog does not reproduce the pnpm/pnpm#15049 abort.** `pnpm
+  peers check` reported normally on 12.5.1 with the catalog declared in
+  `pnpm-workspace.yaml`; the `ERR_PNPM_CATALOG_ENTRY_NOT_FOUND_FOR_SPEC`
+  failure needs the catalog to arrive through an `updateConfig` hook, which is
+  a config-dependency setup this directory does not have.
+- **A workspace-wide provider lookup is wrong.** With `react@17.0.2` in one
+  sibling and `react@18.3.1` in another, `packages/b` still reports the peer
+  missing rather than resolving either — consistent with
+  `linkdeep-sibling/`, and the reason the join reads the consumer's own
+  dependency set rather than searching the lockfile for the name.
+
 ## `npm-root/`
 
 Real npm 11.19.0 output, copied verbatim from `@effected/lockfiles`'

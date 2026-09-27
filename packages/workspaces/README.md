@@ -163,16 +163,21 @@ A specifier the workspace cannot answer fails typed as `UnresolvedDependencyErro
 `PeerCheck.run(lockfile, options?)` reports unsatisfied peer dependencies as a pure value: no IO, no error channel, nothing in `R`, and no per-manager traversal logic. It reads `lockfile.format` once, to reject a format whose lockfile does not record peer resolution; past that gate the walk is the same for every manager. The answer comes from the resolved graph `@effected/lockfiles` normalizes, not from shelling out to a package manager's own peer command — bun has none, so the subprocess route cannot answer for every manager the rest of this package supports.
 
 ```ts
-import { LockfileReader, PeerCheck, WorkspaceCatalogs } from "@effected/workspaces";
+import { LockfileReader, PeerCheck, WorkspaceCatalogs, WorkspaceDiscovery } from "@effected/workspaces";
 import { Effect } from "effect";
 
 const program = Effect.gen(function* () {
   const reader = yield* LockfileReader;
   const catalogs = yield* WorkspaceCatalogs;
+  const discovery = yield* WorkspaceDiscovery;
 
   const lockfile = yield* reader.read();
-  // Presence of the key is the assertion — see below.
-  const report = PeerCheck.run(lockfile, { peerDependencyRules: yield* catalogs.peerDependencyRules() });
+  // Presence of each key is the assertion — see below.
+  const report = PeerCheck.run(lockfile, {
+    peerDependencyRules: yield* catalogs.peerDependencyRules(),
+    workspacePackages: yield* discovery.listPackages(),
+    catalogs: yield* catalogs.set(),
+  });
 
   return {
     clean:
@@ -190,10 +195,20 @@ const program = Effect.gen(function* () {
 
 - `supported` is `false` for yarn, which resolves peers virtually and does not record which virtual instance satisfied which peer. The answer is unrecoverable, so it is not fabricated.
 - `unresolvedImporters` names importers that could not be joined to package instances — in practice the root importer under npm and bun, neither of which records a resolved version per importer dependency.
-- `unverified` says why the report is not a complete answer: `"peerRulesNotApplied"` when the suppression policy could not be applied, `"unresolvedEdge"` when an instance records an edge the model could not name. Both mean fail closed.
+- `unverified` says why the report is not a complete answer, and every reason means fail closed:
+  - `"peerRulesNotApplied"` — the `peerDependencyRules` key was omitted, so pnpm's suppression policy was not applied.
+  - `"unresolvedEdge"` — an instance records an edge the model could not name, or an importer dependency resolved through `link:` whose linked manifest's peers were not judged: its target was not supplied in `workspacePackages`, or the lockfile records no workspace row to walk. A linked parent's manifest peers are never in the lockfile, though `pnpm peers check` reads them from disk.
+  - `"peerRangeUnresolved"` — a linked manifest declares a peer as a protocol specifier that could not be turned into a range (`catalog:` with the `catalogs` key omitted or no matching entry, `workspace:*`), and something resolved for that peer, so the comparison never ran.
+  - `"peerVersionUnresolved"` — a peer resolved to a non-workspace provider whose version is a protocol specifier rather than a version: a `file:` directory or tarball, directly or through a `file:` override, which the lockfile records as `file:vendor/x` with no version for a directory, and a git or remote-tarball provider, which pnpm keys by its URL (`https://codeload.github.com/…`). The comparison never runs, so the peer is neither reported nor passed as satisfied; for a `file:` directory `pnpm peers check` reports it as a `bad` row even when the directory's manifest satisfies the range. It applies to peers declared by lockfile rows and by joined manifests alike.
 - `required` is the getter for the rows a gate should act on — the non-optional ones. An unsatisfied *optional* peer is normal, so `optional` travels with the row rather than being filtered out at the source.
 
-`WorkspaceCatalogs.peerDependencyRules()` returns the workspace's effective merged pnpm suppression rules, which the lockfile records nowhere; without them a checker reports findings pnpm itself calls clean. **Presence of the `peerDependencyRules` option key is the assertion, not its contents.** Passing `NoPeerDependencyRules` asserts the workspace has none, so the report carries no `"peerRulesNotApplied"` — though it can still be unverified for another reason, or unsupported; omitting the key says nobody looked, and always yields `"peerRulesNotApplied"`. Only `allowedVersions` is applied — rules populating `ignoreMissing` or `allowAny` describe a policy this package does not replicate, so they fail closed through the same reason rather than being silently ignored. All three key spellings pnpm accepts are honoured: `parent@version>peer` (what `pnpm:export` writes), `parent>peer` (what a config-dependency plugin injects) and a bare `peer`, which pnpm applies to every parent that declares it.
+`WorkspaceCatalogs.peerDependencyRules()` returns the workspace's effective merged pnpm suppression rules, which the lockfile records nowhere; without them a checker reports findings pnpm itself calls clean. **Presence of the `peerDependencyRules` option key is the assertion, not its contents.** Passing `NoPeerDependencyRules` asserts the workspace has none, so the report carries no `"peerRulesNotApplied"` — though it can still be unverified for another reason, or unsupported; omitting the key says nobody looked, and always yields `"peerRulesNotApplied"`. **All three axes of the supplied rules are applied**, with pnpm's measured semantics. `allowedVersions` hides a row whose resolved version a matching key's range permits, in all three key spellings pnpm accepts: `parent@version>peer` (what `pnpm:export` writes; the parent version is ignored, as pnpm ignores it), `parent>peer` (what a config-dependency plugin injects) and a bare `peer`, which pnpm applies to every parent that declares it. `ignoreMissing` hides a required peer nothing resolved for, and `allowAny` hides a peer that resolved outside its range; both are `@pnpm/matcher` patterns over the PEER name (`*` wildcard, leading `!` negates), never `parent>peer` keys, and the two never cross.
+
+The `workspacePackages` option takes the packages `WorkspaceDiscovery` already returned, and supplying it is what turns a `link:`-resolved parent from a refusal into an answer: the matched manifest's declared peers join the walk, named from the manifest (`probe-a@1.0.0`, not the row's `packages/a@0.0.0`) and judged against the **importer's own** dependency set, which is where pnpm resolves them from. Measured one variable at a time on the probe workspace, against pnpm 12.5.1 and 12.6.0: a consumer's own `react@18.3.1` satisfies the linked parent's `^18.0.0` peer, the same version installed only by a sibling importer does not, and a consumer's own `react@17.0.2` is a `bad` row carrying `foundVersion`. A target the set does not cover — every target, when the key is omitted — keeps `"unresolvedEdge"`, so the option answers only for what it covers and says so about the rest. A covered target the walk cannot reach — one the lockfile records no workspace row for — keeps the marker too; the root importer's linked targets are walked and judged against the root's own dependencies, as pnpm does.
+
+A `link:` target matches a supplied package by its directory or by its publish directory: pnpm links a workspace dependency into `publishConfig.directory` unless `publishConfig.linkDirectory` is `false` (it defaults to true), recording `link:../a/dist`. For such a link pnpm reads the built manifest at the target, while `PeerCheck` reads the source manifest and resolves its `catalog:` ranges through `catalogs`; the two agree when the build emits the ranges the source's specifiers resolve to. Attribution stops at a workspace package: a linked package's manifest peers are judged only for the importer that links it directly, and its own dependencies (registry or linked) only for its own importer, never for a consumer one link further out. Each `link:` edge is cleared only by the walk of the importer that records it.
+
+The `catalogs` option takes `WorkspaceCatalogs.set()`, which already includes hook-injected catalogs. A linked manifest may declare a peer as a catalog specifier (`"typescript": "catalog:build:peers"`) rather than a range; with the set supplied it is resolved, judged, and reported by the resolved range, which is what `pnpm peers check` reports as `wantedRange`. A specifier that stays unresolvable — the key omitted, a catalog naming nothing for the peer, or another protocol such as `workspace:*` — is never passed as satisfied: when something resolved for that peer the report carries `"peerRangeUnresolved"`, and when nothing did the `found: null` row is reported anyway, since a missing provider needs no range.
 
 ## The synchronous escape hatch
 
