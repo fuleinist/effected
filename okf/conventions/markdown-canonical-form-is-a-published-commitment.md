@@ -16,8 +16,8 @@ sources:
     resource: ../../packages/markdown/__test__/stringify.test.ts
 generated:
   by: "okfit/claude-code"
-  at: 2026-09-22T01:21:07Z
-  body_sha256: a6c0d5a1f61986a8fac71d28c5cad33e7621185a0f325669984a866c0e6ee926
+  at: 2026-09-27T19:59:34Z
+  body_sha256: 1e6ab3056ed5846bd8d569abfe4f3364772ab31b042bf05e31f7ab936751a2f0
 ---
 
 # The markdown canonical form is a published commitment — a row that moves is a breaking change
@@ -64,7 +64,18 @@ documented on the same surfaces rather than left to be rediscovered:
 - **`Mdast.fromMdast` strips fidelity fields**, being a spec-mdast admission
   boundary, so fidelity fields are settable only on the decoded tree; the
   drop is correct and silent, which is why both the boundary and the
-  emitter document it.
+  emitter document it. The single exception is `Text`'s `escapeStyle`, an
+  emitter instruction the boundary admits.
+
+## Adding an opt-out is additive; changing a default is not
+
+A per-node opt-out that a tree must set explicitly leaves every tree that
+does not set it byte-identical, so it is a minor change. `Text`'s
+`escapeStyle: "literal"` is the model: it drops inline-phase escaping for
+that node only, keeps the escapes that defend block structure, and is
+pinned against the canonical bytes by
+`packages/markdown/__test__/stringify-literal.test.ts`. Changing what the
+default escapes is still a breaking change.
 
 [^stringify-tsdoc]: `packages/markdown/src/Markdown.ts` — the "canonical form is a stability commitment" TSDoc on `stringifyResult` and `stringify`.
 [^readme-canonical]: `packages/markdown/README.md` — "The canonical form is stable", including "Representability wins over the table".

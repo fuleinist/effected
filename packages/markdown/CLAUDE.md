@@ -18,6 +18,8 @@ the concept a task needs:
 - `okf/conventions/markdown-canonical-form-is-a-published-commitment.md` —
   Load when: changing anything `Markdown.stringify` emits; a canonical row that
   moves is a breaking change and three copies of the table move together.
+  `Text.escapeStyle: "literal"` is the one escaping opt-out (block-structure
+  escapes kept) and the one fidelity field `Mdast.fromMdast` admits.
 - `okf/decisions/markdown-dialects-closed-set.md`,
   `okf/decisions/markdown-editing-is-offset-splice.md` — Load when: tempted to
   add a public extension API or a lossless CST; both were decided against.

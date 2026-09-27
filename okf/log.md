@@ -1,5 +1,20 @@
 # Log
 
+## 2026-09-27
+
+* Updated @effected/workspaces catalogs and the config-dependency seam
+* Updated @effected/workspaces discovery and detection
+* Updated @effected/workspaces snapshots
+* Updated A lockfile is a YAML stream, not always one document
+* Updated Publish a snapshot
+* Updated Under the no-op hooks layer, a hook-injected catalog's range bump between two refs is invisible to a snapshot diff
+* Updated actions-storage
+* Updated lockfiles
+* Updated npm
+* Updated package-json
+* Updated @effected/markdown
+* Updated The markdown canonical form is a published commitment — a row that moves is a breaking change
+
 ## 2026-09-25
 
 * Updated @effected/cli
@@ -8,6 +23,8 @@
 * Updated Carrier-only bins are recommended; shared bins are a supported choice
 * Updated savvy-web/systems
 * Updated spencerbeggs/okfit
+* Updated @effected/mcp
+* Updated @effected/workspaces: monorepo tooling
 
 ## 2026-09-24
 
