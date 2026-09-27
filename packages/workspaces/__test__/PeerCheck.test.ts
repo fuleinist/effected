@@ -18,6 +18,7 @@ import { NoPeerDependencyRules } from "../src/ConfigDependencyHooks.js";
 import { peerNameMatcher } from "../src/internal/peerPatterns.js";
 import type { UnsatisfiedPeer } from "../src/PeerCheck.js";
 import { PeerCheck } from "../src/PeerCheck.js";
+import { CatalogSet } from "../src/WorkspaceCatalogs.js";
 import { WorkspacePackage } from "../src/WorkspacePackage.js";
 
 const fixture = (relative: string): string => readFileSync(join(import.meta.dirname, "fixtures", relative), "utf8");
@@ -772,39 +773,122 @@ describe("PeerCheck.run — peerDependencyRules and the unverified states", () =
 		}),
 	);
 
-	it.effect("echoes a protocol specifier it cannot evaluate, and declines the comparison", () =>
-		Effect.gen(function* () {
-			// A manifest range that is a protocol specifier rather than a range
-			// — `catalog:peers` here, `catalog:effected:peers` in the repo that
-			// reported this — is carried through verbatim rather than resolved:
-			// resolving it needs the catalog map, which is not an input.
-			const catalog = probeA({ peerDependencies: { react: "catalog:peers" } });
+	// A joined manifest's peer range may be a protocol specifier rather than a
+	// range — `catalog:peers` here, `catalog:build:peers` in the workspace that
+	// reported effected#800. pnpm resolves it through the workspace's catalogs
+	// and reports the RESOLVED range as `wantedRange`; so do we, when the
+	// caller supplies the catalogs. Anything still unresolvable fails closed.
+	const catalogPeer = probeA({ peerDependencies: { react: "catalog:peers" } });
+	const peersCatalog = CatalogSet.make({ entries: { peers: { react: "^18.0.0" } } });
 
-			// With nothing resolved for the peer, the row needs no range
-			// arithmetic: "no provider" is a fact about the graph. The row is
-			// reported, only its `wanted` string differs from the range pnpm
-			// resolved the catalog to.
+	it.effect("resolves a catalog peer range that the provider satisfies", () =>
+		Effect.gen(function* () {
+			const report = PeerCheck.run(yield* parse("linkdeep-provided"), {
+				peerDependencyRules: NoPeerDependencyRules,
+				workspacePackages: [catalogPeer],
+				catalogs: peersCatalog,
+			});
+			assert.deepStrictEqual(ours(report.unsatisfied), theirs("linkdeep-provided"));
+			assert.deepStrictEqual(report.unverified, []);
+		}),
+	);
+
+	it.effect("resolves the DEFAULT catalog for a bare `catalog:` peer range", () =>
+		Effect.gen(function* () {
+			const report = PeerCheck.run(yield* parse("linkdeep-bad"), {
+				peerDependencyRules: NoPeerDependencyRules,
+				workspacePackages: [probeA({ peerDependencies: { react: "catalog:" } })],
+				catalogs: CatalogSet.make({ entries: { default: { react: "^18.0.0" } } }),
+			});
+			assert.deepStrictEqual(ours(report.unsatisfied), theirs("linkdeep-bad"));
+			assert.deepStrictEqual(report.unverified, []);
+		}),
+	);
+
+	it.effect("reports a catalog peer range the provider misses, with the RESOLVED range as wanted", () =>
+		Effect.gen(function* () {
+			// `linkdeep-bad/`: react@17.0.2 against the catalog's `^18.0.0` — the
+			// oracle's `bad` row, `wantedRange` included, agrees row for row.
+			const bad = PeerCheck.run(yield* parse("linkdeep-bad"), {
+				peerDependencyRules: NoPeerDependencyRules,
+				workspacePackages: [catalogPeer],
+				catalogs: peersCatalog,
+			});
+			assert.deepStrictEqual(ours(bad.unsatisfied), theirs("linkdeep-bad"));
+			assert.strictEqual(bad.unsatisfied[0]?.wanted, "^18.0.0");
+			assert.deepStrictEqual(bad.unverified, []);
+
+			// With no provider at all the row needs no range arithmetic, but its
+			// `wanted` is still the resolved range, as pnpm's is.
 			const missing = PeerCheck.run(yield* parse("linkdeep"), {
 				peerDependencyRules: NoPeerDependencyRules,
-				workspacePackages: [catalog],
+				workspacePackages: [catalogPeer],
+				catalogs: peersCatalog,
+			});
+			assert.deepStrictEqual(ours(missing.unsatisfied), theirs("linkdeep"));
+			assert.deepStrictEqual(missing.unverified, []);
+		}),
+	);
+
+	it.effect("fails closed on a catalog peer range the supplied catalogs do not name", () =>
+		Effect.gen(function* () {
+			const report = PeerCheck.run(yield* parse("linkdeep-bad"), {
+				peerDependencyRules: NoPeerDependencyRules,
+				workspacePackages: [catalogPeer],
+				catalogs: CatalogSet.make({ entries: { build: { react: "^18.0.0" } } }),
+			});
+			// Never judged, so neither a row nor a clean report.
+			assert.deepStrictEqual(report.unsatisfied, []);
+			assert.deepStrictEqual(report.unverified, ["peerRangeUnresolved"]);
+		}),
+	);
+
+	it.effect("fails closed on a catalog peer range when the catalogs key is omitted", () =>
+		Effect.gen(function* () {
+			// Presence is the assertion: with no catalogs supplied, nothing was
+			// looked up, so a provider present cannot be judged against the peer.
+			const report = PeerCheck.run(yield* parse("linkdeep-bad"), {
+				peerDependencyRules: NoPeerDependencyRules,
+				workspacePackages: [catalogPeer],
+			});
+			assert.deepStrictEqual(report.unsatisfied, []);
+			assert.deepStrictEqual(report.unverified, ["peerRangeUnresolved"]);
+
+			// A MISSING provider is still a fact about the graph, reportable
+			// without the range: the row stands, echoing the raw specifier, and
+			// the report is not marked because that peer WAS judged.
+			const missing = PeerCheck.run(yield* parse("linkdeep"), {
+				peerDependencyRules: NoPeerDependencyRules,
+				workspacePackages: [catalogPeer],
 			});
 			assert.strictEqual(missing.unsatisfied.length, 1);
 			assert.strictEqual(missing.unsatisfied[0]?.wanted, "catalog:peers");
+			assert.strictEqual(missing.unsatisfied[0]?.found, null);
 			assert.deepStrictEqual(missing.unverified, []);
+		}),
+	);
 
-			// With a provider present the comparison is declined rather than
-			// guessed, exactly as an unparseable range on a lockfile instance
-			// is. That is the KNOWN under-report: pnpm resolves the specifier
-			// and reports a `bad` row here (`linkdeep-bad/`'s oracle, whose
-			// `react@17.0.2` is outside the catalog's `^18.0.0`), and we say
-			// nothing. Pinned so the gap is a recorded decision rather than a
-			// surprise; closing it needs the catalog map as an input.
-			const declined = PeerCheck.run(yield* parse("linkdeep-bad"), {
+	it.effect("fails closed on a non-catalog protocol peer range such as `workspace:*`", () =>
+		Effect.gen(function* () {
+			const report = PeerCheck.run(yield* parse("linkdeep-bad"), {
 				peerDependencyRules: NoPeerDependencyRules,
-				workspacePackages: [catalog],
+				workspacePackages: [probeA({ peerDependencies: { react: "workspace:*" } })],
+				catalogs: peersCatalog,
 			});
-			assert.deepStrictEqual(declined.unsatisfied, []);
-			assert.deepStrictEqual(declined.unverified, []);
+			assert.deepStrictEqual(report.unsatisfied, []);
+			assert.deepStrictEqual(report.unverified, ["peerRangeUnresolved"]);
+		}),
+	);
+
+	it.effect("fails closed when a catalog entry itself resolves to a protocol specifier", () =>
+		Effect.gen(function* () {
+			const report = PeerCheck.run(yield* parse("linkdeep-bad"), {
+				peerDependencyRules: NoPeerDependencyRules,
+				workspacePackages: [catalogPeer],
+				catalogs: CatalogSet.make({ entries: { peers: { react: "workspace:^" } } }),
+			});
+			assert.deepStrictEqual(report.unsatisfied, []);
+			assert.deepStrictEqual(report.unverified, ["peerRangeUnresolved"]);
 		}),
 	);
 

@@ -15,19 +15,20 @@
 
 import type { Lockfile, ResolvedPackage } from "@effected/lockfiles";
 import { Range, SemVer } from "@effected/semver";
-import { Result, Schema } from "effect";
+import { Option, Result, Schema } from "effect";
 import type { PeerDependencyRules } from "./ConfigDependencyHooks.js";
 import type { PeerNameMatcher } from "./internal/peerPatterns.js";
 import { peerNameMatcher } from "./internal/peerPatterns.js";
 import type { ImporterRoots } from "./internal/roots.js";
 import { indexInstances, rootInstances } from "./internal/roots.js";
+import type { CatalogSet } from "./WorkspaceCatalogs.js";
 import type { WorkspacePackage } from "./WorkspacePackage.js";
 
 /**
  * Why a report is not a complete answer.
  *
  * @remarks
- * Closed at exactly two, by measurement rather than by guess:
+ * Closed at exactly three, by measurement rather than by guess:
  *
  * - `"peerRulesNotApplied"` — the effective suppression policy was not applied,
  *   so pnpm's post-hoc suppression could not be replicated and some reported
@@ -51,12 +52,21 @@ import type { WorkspacePackage } from "./WorkspacePackage.js";
  * does a covered target the lockfile records no workspace row for, since
  * there is nothing to walk and its peers were never judged.
  *
- * Both mean **fail closed**: a gate should treat an unverified report as "not
- * proven clean" rather than as a pass.
+ * - `"peerRangeUnresolved"` — a peer declared by a joined `link:` manifest has
+ *   a range that is a protocol specifier this check could not turn into a
+ *   range, while something resolved for that peer, so the comparison was
+ *   never performed. The trigger is a `catalog:` specifier with
+ *   {@link PeerCheckOptions.catalogs} omitted, a `catalog:` specifier the
+ *   supplied set names nothing for, or any other protocol (`workspace:*` and
+ *   friends). A peer with NOTHING resolved never produces it: "no provider"
+ *   is reportable without the range, so that row is emitted as usual.
+ *
+ * All three mean **fail closed**: a gate should treat an unverified report as
+ * "not proven clean" rather than as a pass.
  *
  * @public
  */
-export type UnverifiedReason = "peerRulesNotApplied" | "unresolvedEdge";
+export type UnverifiedReason = "peerRulesNotApplied" | "unresolvedEdge" | "peerRangeUnresolved";
 
 /**
  * Options for {@link PeerCheck.run}.
@@ -101,6 +111,22 @@ export interface PeerCheckOptions {
 	 * anything.
 	 */
 	readonly workspacePackages?: ReadonlyArray<WorkspacePackage>;
+	/**
+	 * The workspace's catalogs, from `WorkspaceCatalogs.set()` — which already
+	 * includes any catalogs a config-dependency hook injects.
+	 *
+	 * @remarks
+	 * A joined manifest may declare a peer as `catalog:` or `catalog:<name>`
+	 * rather than as a range. With this key supplied, such a specifier is
+	 * resolved through the set and the RESOLVED range is judged and reported
+	 * as `wanted`, which is what `pnpm peers check` reports as `wantedRange`.
+	 * A specifier the set names nothing for — and every `catalog:` specifier,
+	 * when the key is omitted — cannot be judged against a provider, and the
+	 * report carries `"peerRangeUnresolved"` rather than calling the peer
+	 * satisfied: the same presence-is-the-assertion rule as the other two
+	 * keys.
+	 */
+	readonly catalogs?: CatalogSet;
 }
 
 /**
@@ -278,6 +304,8 @@ interface Join {
 	readonly joinable: ReadonlySet<string>;
 	/** The importer's own dependency instances, by name. */
 	readonly context: ReadonlyMap<string, ResolvedPackage>;
+	/** The caller's catalogs, which a joined `catalog:` peer range resolves through. */
+	readonly catalogs: CatalogSet | undefined;
 }
 
 /**
@@ -385,6 +413,51 @@ const parentLabel = (join: Join, instance: ResolvedPackage): PeerParent => {
 };
 
 /**
+ * A range that is really a protocol specifier (`catalog:`, `workspace:`,
+ * `npm:`, `file:` …). A semver range never contains a colon.
+ *
+ * @internal
+ */
+const PROTOCOL_SPECIFIER = /^[A-Za-z][A-Za-z0-9+.-]*:/;
+
+/** @internal */
+const CATALOG_PREFIX = "catalog:";
+
+/**
+ * The range a joined manifest's declared peer specifier stands for, or
+ * `undefined` when it is a protocol specifier that cannot be resolved.
+ *
+ * @remarks
+ * A `catalog:` specifier resolves through the caller's catalogs; an omitted
+ * set resolves nothing, since nothing was looked up. A resolution that is
+ * itself a protocol specifier is no more a range than the input was. A plain
+ * range passes through untouched, parseable or not — an unparseable
+ * non-protocol range is declined as {@link judge} declines one.
+ *
+ * @internal
+ */
+const resolvePeerRange = (catalogs: CatalogSet | undefined, peer: string, wanted: string): string | undefined => {
+	let range = wanted;
+	if (wanted.startsWith(CATALOG_PREFIX)) {
+		const resolved = catalogs === undefined ? Option.none() : catalogs.resolveSpecifier(peer, wanted);
+		if (Option.isNone(resolved)) return undefined;
+		range = resolved.value;
+	}
+	return PROTOCOL_SPECIFIER.test(range) ? undefined : range;
+};
+
+/**
+ * What {@link judgeJoined} concluded: a row to report (with the range to
+ * report as `wanted`), nothing to report, or a peer it could not judge.
+ *
+ * @internal
+ */
+type JoinedVerdict =
+	| { readonly _tag: "unsatisfied"; readonly found: string | null; readonly wanted: string }
+	| { readonly _tag: "satisfied" }
+	| { readonly _tag: "unjudged" };
+
+/**
  * Decide whether one peer DECLARED BY A JOINED MANIFEST is unsatisfied.
  *
  * @remarks
@@ -394,39 +467,43 @@ const parentLabel = (join: Join, instance: ResolvedPackage): PeerParent => {
  * provider is whatever the importer's own dependency set gives that name —
  * see {@link providerContext}.
  *
- * One limitation is NOT papered over. A manifest range that is a protocol
- * specifier rather than a range — `catalog:effected:peers` in a repo that
- * sources peers from a catalog, `workspace:*` in a monorepo that pins peers to
- * its own version — cannot be evaluated here, and with a provider present the
- * comparison is declined rather than guessed, exactly as an unparseable range
- * on a lockfile instance is. `pnpm peers check` resolves those through the
- * workspace config, so this is a real gap: it under-reports by a peer whose
- * range the caller's own config would have resolved. Closing it needs the
- * catalog map as an input, which is the follow-up the issue tracks, not
- * something to invent from a manifest.
+ * A manifest range may be a protocol specifier rather than a range —
+ * `catalog:build:peers` in a repo that sources peers from a catalog,
+ * `workspace:*` in one that pins peers to its own version. A `catalog:`
+ * specifier is resolved through the supplied catalogs (see
+ * {@link resolvePeerRange}) and reported by its resolved range, as pnpm does.
+ * One that stays unresolvable with a non-workspace provider present is
+ * `"unjudged"`: the comparison was never performed, so the report is marked
+ * `"peerRangeUnresolved"` rather than calling the peer satisfied. With NO
+ * provider the row needs no range, so it is still reported, echoing whatever
+ * range could be named.
  *
  * @internal
  */
 const judgeJoined = (
 	context: ReadonlyMap<string, ResolvedPackage>,
+	catalogs: CatalogSet | undefined,
 	peer: string,
-	wanted: string,
+	declared: string,
 	optional: boolean,
-): { readonly found: string | null } | undefined => {
+): JoinedVerdict => {
+	const resolvedRange = resolvePeerRange(catalogs, peer, declared);
+	const wanted = resolvedRange ?? declared;
 	const provider = context.get(peer);
 	if (provider === undefined) {
-		if (optional) return undefined;
-		return { found: null };
+		if (optional) return { _tag: "satisfied" };
+		return { _tag: "unsatisfied", found: null, wanted };
 	}
 	// A workspace row carries the placeholder version `0.0.0`, so accepting it
 	// on name alone is the same decline {@link judge} makes: an edge exists and
 	// a provider exists, and nothing indicates dissatisfaction.
-	if (provider.isWorkspace) return undefined;
-	const range = Range.parseResult(wanted);
+	if (provider.isWorkspace) return { _tag: "satisfied" };
+	if (resolvedRange === undefined) return { _tag: "unjudged" };
+	const range = Range.parseResult(resolvedRange);
 	const version = SemVer.parseResult(provider.version);
-	if (Result.isFailure(range) || Result.isFailure(version)) return undefined;
-	if (Range.satisfies(version.success, range.success)) return undefined;
-	return { found: provider.version };
+	if (Result.isFailure(range) || Result.isFailure(version)) return { _tag: "satisfied" };
+	if (Range.satisfies(version.success, range.success)) return { _tag: "satisfied" };
+	return { _tag: "unsatisfied", found: provider.version, wanted };
 };
 
 /** The effective suppression policy, with both list axes compiled to predicates. */
@@ -496,10 +573,10 @@ export class PeerCheck extends Schema.Class<PeerCheck>("PeerCheck")({
 	 *
 	 * @remarks
 	 * See {@link UnverifiedReason}. A gate must treat a non-empty `unverified`
-	 * as **not proven clean** rather than as a pass: both reasons mean some
+	 * as **not proven clean** rather than as a pass: every reason means some
 	 * finding may be missing or spurious, and failing closed is the requirement.
 	 */
-	unverified: Schema.Array(Schema.Literals(["peerRulesNotApplied", "unresolvedEdge"])),
+	unverified: Schema.Array(Schema.Literals(["peerRulesNotApplied", "unresolvedEdge", "peerRangeUnresolved"])),
 }) {
 	/** The unsatisfied peers a gate should act on — the non-optional ones. */
 	get required(): ReadonlyArray<UnsatisfiedPeer> {
@@ -532,6 +609,8 @@ export class PeerCheck extends Schema.Class<PeerCheck>("PeerCheck")({
 	 * - **An unparseable range or version with something resolved is skipped.**
 	 *   The check cannot judge it, and asserting "unsatisfied" on a comparison
 	 *   that was never performed would be a wrong answer rather than a gap.
+	 *   A joined manifest's protocol-specifier range is the exception: it
+	 *   fails the report closed instead (see below).
 	 * - **A workspace-linked provider counts.** Resolution is followed through
 	 *   whatever the edge names, including a workspace row.
 	 *
@@ -550,14 +629,22 @@ export class PeerCheck extends Schema.Class<PeerCheck>("PeerCheck")({
 	 * every `link:` target the set covers — the root importer's included,
 	 * whose linked targets the walk seeds itself because the root has no
 	 * workspace row to reach them through: the claimed manifest's declared
-	 * peers are walked, judged against the importer's own dependency set (see
-	 * {@link providerContext}), and reported with the manifest's name and
+	 * peers are walked, judged against the importer's own dependency set
+	 * (never a sibling importer's), and reported with the manifest's name and
 	 * version in `parents` — the two facts a workspace row cannot carry, since
 	 * the lockfile names an importer by directory at the placeholder version
-	 * `0.0.0`. What it does not close: a manifest range that is a protocol
-	 * specifier (`catalog:`, `workspace:`) rather than a range is declined
-	 * rather than resolved, so a catalog-sourced peer with a provider present
-	 * can under-report until the catalog map arrives as an input.
+	 * `0.0.0`.
+	 *
+	 * A joined manifest's peer range may be a protocol specifier rather than a
+	 * range. A `catalog:` specifier is resolved through
+	 * {@link PeerCheckOptions.catalogs} and judged and reported by its
+	 * resolved range, as `pnpm peers check` reports `wantedRange`. One that
+	 * stays unresolvable — the catalogs key omitted, a catalog naming nothing
+	 * for the peer, or another protocol such as `workspace:*` — is not judged
+	 * against a provider that resolved for it, and the report carries
+	 * `"peerRangeUnresolved"` rather than passing the peer as satisfied. With
+	 * nothing resolved for it, the row is still reported, since "no provider"
+	 * needs no range.
 	 *
 	 * @param lockfile - a lockfile parsed by `@effected/lockfiles`
 	 * @returns the report; never fails
@@ -624,6 +711,7 @@ export class PeerCheck extends Schema.Class<PeerCheck>("PeerCheck")({
 
 		const rows: Array<UnsatisfiedPeer> = [];
 		const unresolved: Array<string> = [];
+		let rangeUnresolved = false;
 		const seen = new Set<string>();
 
 		for (const importer of lockfile.importers) {
@@ -638,9 +726,16 @@ export class PeerCheck extends Schema.Class<PeerCheck>("PeerCheck")({
 			// A joinable parent's peers are judged against the IMPORTER's own
 			// dependency set, which is where pnpm resolves them from; see
 			// {@link providerContext}.
-			const join: Join = { manifests, joinable, context: providerContext(roots, byId, links) };
+			const join: Join = {
+				manifests,
+				joinable,
+				context: providerContext(roots, byId, links),
+				catalogs: options?.catalogs,
+			};
 			const judged = new Set<string>();
-			collect(importer.path, walksFrom(roots, join), byId, rows, seen, policy, join, judged);
+			if (collect(importer.path, walksFrom(roots, join), byId, rows, seen, policy, join, judged)) {
+				rangeUnresolved = true;
+			}
 			// A covered edge clears the marker ONLY when the walk actually read
 			// the target's manifest peers for THIS importer. Covering the path
 			// is not judging it: a target with no lockfile row, or one the walk
@@ -671,6 +766,10 @@ export class PeerCheck extends Schema.Class<PeerCheck>("PeerCheck")({
 		if (unjoinedLink || lockfile.packages.some((pkg) => pkg.unresolvedEdges.length > 0)) {
 			unverified.push("unresolvedEdge");
 		}
+		// A joined peer whose range could not be named was never compared
+		// against the provider that resolved for it: neither satisfied nor
+		// unsatisfied, so the report cannot present its silence as clean.
+		if (rangeUnresolved) unverified.push("peerRangeUnresolved");
 
 		return PeerCheck.make({
 			supported: true,
@@ -699,6 +798,9 @@ const walksFrom = (roots: ImporterRoots, join: Join): ReadonlyArray<Walk> =>
  * Walk the resolution graph from an importer's roots, emitting a row for every
  * unsatisfied peer declared anywhere along the way.
  *
+ * Returns whether some joined peer could not be judged (see
+ * {@link judgeJoined}), which the caller turns into `"peerRangeUnresolved"`.
+ *
  * @internal
  */
 const collect = (
@@ -710,7 +812,8 @@ const collect = (
 	policy: Policy,
 	join: Join,
 	judged: Set<string>,
-): void => {
+): boolean => {
+	let unjudged = false;
 	const visited = new Set<string>();
 	const queue: Array<Walk> = [...roots];
 
@@ -739,10 +842,15 @@ const collect = (
 				optionalNames === undefined
 					? current.instance.peerDependenciesMeta[peer]?.optional === true
 					: optionalNames.has(peer);
-			const verdict =
-				linked === undefined
-					? judge(current.instance, peer, wanted, optional, byId)
-					: judgeJoined(join.context, peer, wanted, optional);
+			let verdict: { readonly found: string | null; readonly wanted: string } | undefined;
+			if (linked === undefined) {
+				const found = judge(current.instance, peer, wanted, optional, byId);
+				verdict = found === undefined ? undefined : { found: found.found, wanted };
+			} else {
+				const joined = judgeJoined(join.context, join.catalogs, peer, wanted, optional);
+				if (joined._tag === "unjudged") unjudged = true;
+				verdict = joined._tag === "unsatisfied" ? joined : undefined;
+			}
 			if (verdict === undefined) continue;
 			// pnpm computes the same violation and then SUPPRESSES it when a rule
 			// permits the version that resolved. Replicating that is the whole
@@ -769,7 +877,7 @@ const collect = (
 				UnsatisfiedPeer.make({
 					importer: importerPath,
 					dependency: peer,
-					wanted,
+					wanted: verdict.wanted,
 					found: verdict.found,
 					optional,
 					parents: current.path,
@@ -786,6 +894,7 @@ const collect = (
 			});
 		}
 	}
+	return unjudged;
 };
 
 /**
