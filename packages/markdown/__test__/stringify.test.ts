@@ -447,6 +447,72 @@ describe("Markdown.stringify", () => {
 			assert.strictEqual(reparsed.children[0]?.type, "table");
 		});
 
+		// The cell splitter reads `\\` as ONE escaped character, so a pipe
+		// after an even run of backslashes is a real column boundary. Raw
+		// emissions (a code span, inline HTML) carry backslashes verbatim, and
+		// the post-pass must count the run rather than peek one character back.
+		describe("a raw cell pipe after an escaped backslash stays in its cell", () => {
+			const rawCells = [
+				["inline code", (value: string) => InlineCode.make({ value, position: span() })],
+				["html", (value: string) => Html.make({ value: `<b title="${value}">`, position: span() })],
+			] as const;
+			const values = ["a|b", "a\\\\|b", "a\\\\\\\\|b", "\\\\|"];
+			for (const [kind, make] of rawCells) {
+				for (const value of values) {
+					it(`${kind} ${JSON.stringify(value)}`, () => {
+						const node = make(value);
+						const table = Table.make({
+							children: [
+								TableRow.make({
+									children: [
+										TableCell.make({ children: [node], position: span() }),
+										TableCell.make({ children: [text("x")], position: span() }),
+									],
+									position: span(),
+								}),
+							],
+							position: span(),
+						});
+						const emitted = out(rootOf(table));
+						const reparsed = Result.getOrThrow(Markdown.parseResult(emitted));
+						const first = reparsed.children[0];
+						assert.strictEqual(first?.type, "table", `emitted: ${JSON.stringify(emitted)}`);
+						if (first?.type !== "table") return;
+						const cells = first.children[0]?.children ?? [];
+						assert.strictEqual(cells.length, 2, `emitted: ${JSON.stringify(emitted)}`);
+						const [child] = cells[0]?.children ?? [];
+						assert.strictEqual(child?.type, node.type, `emitted: ${JSON.stringify(emitted)}`);
+						assert.strictEqual(
+							child !== undefined && "value" in child ? child.value : undefined,
+							node.value,
+							`emitted: ${JSON.stringify(emitted)}`,
+						);
+					});
+				}
+			}
+
+			it("pins the emitted bytes", () => {
+				const tableOf = (node: InlineCode | Html): Root =>
+					rootOf(
+						Table.make({
+							children: [
+								TableRow.make({
+									children: [TableCell.make({ children: [node], position: span() })],
+									position: span(),
+								}),
+							],
+							position: span(),
+						}),
+					);
+				const code = (value: string) => out(tableOf(InlineCode.make({ value, position: span() })));
+				const html = (value: string) => out(tableOf(Html.make({ value, position: span() })));
+				assert.strictEqual(code("a|b"), "| `a\\|b` |\n| --- |\n");
+				assert.strictEqual(code("a\\\\|b"), "| `a\\\\\\|b` |\n| --- |\n");
+				assert.strictEqual(code("a\\\\\\\\|b"), "| `a\\\\\\\\\\|b` |\n| --- |\n");
+				assert.strictEqual(html('<b title="a\\\\|b">'), '| <b title="a\\\\\\|b"> |\n| --- |\n');
+			});
+		});
+
 		it("footnote definition with continuation indentation", () => {
 			const definition = FootnoteDefinition.make({
 				identifier: "note",

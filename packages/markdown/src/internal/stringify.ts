@@ -397,6 +397,9 @@ const literalText = (
 			out += next === undefined && context.inTable && followed ? "\\\\" : "\\";
 			continue;
 		}
+		// Escaped here as well as by the `escapeCellPipes` post-pass: if a raw
+		// sibling ended on a lone backslash, a bare `|` would pair with it and
+		// eat it, while `\|` leaves an even run the post-pass repairs.
 		if (char === "|" && context.inTable) {
 			out += "\\|";
 			continue;
@@ -929,6 +932,24 @@ const alignCell = (align: "left" | "right" | "center" | null | undefined): strin
 	}
 };
 
+/**
+ * Escape every cell pipe the GFM cell splitter would read as a column
+ * boundary. The splitter consumes a backslash and the punctuation after it as
+ * one character, so `\\` is an escaped backslash: a pipe is escaped already
+ * iff the run of backslashes directly before it has odd length, and needs a
+ * `\` iff that run is even, zero included.
+ */
+const escapeCellPipes = (content: string): string => {
+	let out = "";
+	let backslashes = 0;
+	for (const char of content) {
+		if (char === "|" && backslashes % 2 === 0) out += "\\";
+		backslashes = char === "\\" ? backslashes + 1 : 0;
+		out += char;
+	}
+	return out;
+};
+
 const serializeTable = (table: Table, state: StringifyState): string => {
 	const columnCount = Math.max(1, ...table.children.map((row) => row.children.length));
 	const rows = table.children.map((row) => {
@@ -937,10 +958,9 @@ const serializeTable = (table: Table, state: StringifyState): string => {
 			guard(state, cell);
 			// Text-level pipes are escaped by the cell context; anything a
 			// nested emission smuggled through raw (a code span, raw HTML, a
-			// destination) gets caught here — the cell splitter unescapes
-			// `\|` everywhere in a cell, code spans included, so this is
-			// lossless.
-			const content = serializeInlines(cell.children, CELL_CONTEXT, state, false).replace(/(?<!\\)\|/g, "\\|");
+			// destination) gets caught here — the cell splitter unescapes `\|`
+			// everywhere in a cell, code spans included, so this is lossless.
+			const content = escapeCellPipes(serializeInlines(cell.children, CELL_CONTEXT, state, false));
 			unguard(state);
 			return content;
 		});
