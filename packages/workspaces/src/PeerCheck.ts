@@ -105,10 +105,21 @@ export interface PeerCheckOptions {
 	 * report's `"unresolvedEdge"` marker, on the same presence-is-the-
 	 * assertion rule as `peerDependencyRules`.
 	 *
-	 * Matching is by `relativePath`, the POSIX workspace-relative directory
-	 * the lockfile's importer paths and `link:` targets are also spelled in,
-	 * so the caller passes what discovery produced without re-spelling
+	 * A `link:` target matches a package when it names the package's
+	 * `relativePath` — the POSIX workspace-relative directory the lockfile's
+	 * importer paths are spelled in — or its publish directory: pnpm links a
+	 * workspace dependency INTO `publishConfig.directory` unless
+	 * `publishConfig.linkDirectory` is `false` (it defaults to true), so the
+	 * lockfile then records `link:../a/dist`. Both spellings are normalized,
+	 * and the caller passes what discovery produced without re-spelling
 	 * anything.
+	 *
+	 * For a publish-directory link, pnpm reads the peers from the manifest AT
+	 * the link target — the built one — while this check reads the supplied
+	 * source manifest and resolves its `catalog:` ranges through
+	 * {@link PeerCheckOptions.catalogs}. The two agree when the build emits the
+	 * peer ranges the source's specifiers resolve to, which is the contract a
+	 * publish-directory build keeps.
 	 */
 	readonly workspacePackages?: ReadonlyArray<WorkspacePackage>;
 	/**
@@ -289,6 +300,33 @@ const withLinkRoots = (
 		return { _tag: "dependencies", instances: rows };
 	}
 	return { _tag: "dependencies", instances: [...roots.instances, ...rows] };
+};
+
+/**
+ * The workspace-relative directories a `link:` to `pkg` can name.
+ *
+ * @remarks
+ * The package directory always, and — when `publishConfig.directory` is set
+ * and `publishConfig.linkDirectory` is not `false` — the publish directory
+ * inside it, because that is where pnpm links a workspace dependency then.
+ * Measured against pnpm 12.6.0, not assumed: `directory` alone records
+ * `link:../a/dist` (`linkdeep-directory/`, byte-identical with and without
+ * `linkDirectory: true`), and `linkDirectory: false` records `link:../a`
+ * (`linkdeep-directory-false/`). pnpm defaults `linkDirectory` to true.
+ *
+ * pnpm reads a publish-directory target's peers from the manifest AT that
+ * target — the built one — while the join reads the supplied source manifest
+ * and resolves `catalog:` ranges through the caller's catalogs. The two agree
+ * exactly when the build emits the peer ranges the source's specifiers
+ * resolve to, which is the contract a publish-directory build keeps.
+ *
+ * @internal
+ */
+const linkTargetsOf = (relativePath: string, pkg: WorkspacePackage): ReadonlyArray<string> => {
+	const directory = pkg.publishConfig?.directory;
+	if (directory === undefined || pkg.publishConfig?.linkDirectory === false) return [relativePath];
+	const published = linkTargetPath(relativePath, directory);
+	return published === relativePath ? [relativePath] : [relativePath, published];
 };
 
 /**
@@ -595,6 +633,11 @@ export class PeerCheck extends Schema.Class<PeerCheck>("PeerCheck")({
 	 * `resolved` edges, so a peer declared by a *transitive* dependency is
 	 * attributed to the importer that pulls it in, with the chain in
 	 * `parents` — matching how `pnpm peers check` attributes them.
+	 * Attribution stops at a workspace package: a linked package's own
+	 * dependencies — registry or linked — are judged by that package's own
+	 * importer, and a linked package's manifest peers are judged only for the
+	 * importer that links it DIRECTLY, against that importer's dependencies.
+	 * pnpm never surfaces them on a consumer one link further out.
 	 *
 	 * Three judgements are deliberate:
 	 *
@@ -677,8 +720,16 @@ export class PeerCheck extends Schema.Class<PeerCheck>("PeerCheck")({
 		// workspace-relative POSIX directory. Empty when the key is omitted,
 		// which is what keeps every `link:` edge on the fail-closed branch.
 		const manifests = new Map<string, WorkspacePackage>();
+		// The same manifests keyed by every directory a `link:` to them can
+		// name: the package directory, and its publish directory when pnpm
+		// links into it (see {@link linkTargetsOf}).
+		const byLinkTarget = new Map<string, WorkspacePackage>();
 		for (const pkg of options?.workspacePackages ?? []) {
-			if (!manifests.has(pkg.relativePath)) manifests.set(pkg.relativePath, pkg);
+			const relativePath = linkTargetPath(".", pkg.relativePath);
+			if (!manifests.has(relativePath)) manifests.set(relativePath, pkg);
+			for (const target of linkTargetsOf(relativePath, pkg)) {
+				if (!byLinkTarget.has(target)) byLinkTarget.set(target, pkg);
+			}
 		}
 
 		// The `link:` importer edges, classified ONCE, before the walk: a target
@@ -700,8 +751,12 @@ export class PeerCheck extends Schema.Class<PeerCheck>("PeerCheck")({
 				// all: `link:` can also point outside the workspace globs, in
 				// which case there is nothing to walk, its peers are never
 				// judged, and the post-walk check below keeps the marker.
-				const row = index.workspaceByPath.get(target);
-				const covered = manifests.has(target);
+				// A publish-directory target (`packages/a/dist`) stands for the
+				// package directory's row, which is what the lockfile model
+				// resolves the same edge to.
+				const pkg = byLinkTarget.get(target);
+				const row = index.workspaceByPath.get(pkg === undefined ? target : linkTargetPath(".", pkg.relativePath));
+				const covered = pkg !== undefined;
 				if (!covered) unjoinedLink = true;
 				if (covered && row !== undefined) joinable.add(row.instanceId);
 				edges.push({ name: dep.name, row, covered });
@@ -885,6 +940,16 @@ const collect = (
 			);
 		}
 
+		// Attribution STOPS at a workspace package the walk reached from the
+		// importer. Its dependencies — linked workspace packages and registry
+		// packages alike — are that package's own importer's business, and are
+		// judged by that importer's walk. Measured against pnpm 12.6.0: with `b`
+		// linking `a` and `a` linking `c`, `c`'s unmet peer is reported on `a`
+		// only, whoever provides it (`linkchain-*/`), and a registry dependency
+		// of a linked package reports its peers on that package's importer, never
+		// on the consumer (`linkchain-registry/`). Walking on would judge a
+		// deeper package's peers against the wrong importer's dependencies.
+		if (current.path.length > 0 && current.instance.isWorkspace) continue;
 		for (const targetId of Object.values(current.instance.resolved)) {
 			const next = byId.get(targetId);
 			if (next === undefined || visited.has(targetId)) continue;

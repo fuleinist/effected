@@ -19,7 +19,7 @@ import { peerNameMatcher } from "../src/internal/peerPatterns.js";
 import type { UnsatisfiedPeer } from "../src/PeerCheck.js";
 import { PeerCheck } from "../src/PeerCheck.js";
 import { CatalogSet } from "../src/WorkspaceCatalogs.js";
-import { WorkspacePackage } from "../src/WorkspacePackage.js";
+import { PublishConfig, WorkspacePackage } from "../src/WorkspacePackage.js";
 
 const fixture = (relative: string): string => readFileSync(join(import.meta.dirname, "fixtures", relative), "utf8");
 
@@ -40,6 +40,7 @@ const probeA = (overrides?: {
 	readonly version?: string;
 	readonly relativePath?: string;
 	readonly peerDependencies?: Record<string, string>;
+	readonly publishConfig?: PublishConfig;
 }): WorkspacePackage =>
 	WorkspacePackage.make({
 		name: overrides?.name ?? "probe-a",
@@ -49,6 +50,7 @@ const probeA = (overrides?: {
 		relativePath: overrides?.relativePath ?? "packages/a",
 		workspaceRoot: "C:/ws",
 		peerDependencies: overrides?.peerDependencies ?? { react: "^18.0.0" },
+		...(overrides?.publishConfig === undefined ? {} : { publishConfig: overrides.publishConfig }),
 	});
 
 /** One normalized row, comparable across both sides of the oracle. */
@@ -770,6 +772,146 @@ describe("PeerCheck.run — peerDependencyRules and the unverified states", () =
 			});
 			assert.deepStrictEqual(report.unsatisfied, []);
 			assert.include(report.unverified, "unresolvedEdge");
+		}),
+	);
+
+	// `publishConfig.directory` moves the link: pnpm records a workspace
+	// dependency as `link:../a/dist`, INTO the publish directory, unless
+	// `linkDirectory: false` (pnpm 12.6.0: `linkdeep-directory/` sets no
+	// `linkDirectory` and still links into `dist`; `linkdeep-directory-false/`
+	// links the package root). Every savvy-web monorepo links this way.
+	it.effect("covers a link: into a publish directory, and agrees with pnpm", () =>
+		Effect.gen(function* () {
+			const report = PeerCheck.run(yield* parse("linkdeep-directory"), {
+				peerDependencyRules: NoPeerDependencyRules,
+				workspacePackages: [probeA({ publishConfig: PublishConfig.make({ directory: "dist" }) })],
+			});
+			assert.strictEqual(theirs("linkdeep-directory").length, 1);
+			assert.deepStrictEqual(ours(report.unsatisfied), theirs("linkdeep-directory"));
+			assert.deepStrictEqual(report.unverified, []);
+		}),
+	);
+
+	it.effect("normalizes the publish directory spelling, and honours an explicit linkDirectory: true", () =>
+		Effect.gen(function* () {
+			const report = PeerCheck.run(yield* parse("linkdeep-directory"), {
+				peerDependencyRules: NoPeerDependencyRules,
+				workspacePackages: [
+					probeA({ publishConfig: PublishConfig.make({ directory: "./dist/", linkDirectory: true }) }),
+				],
+			});
+			assert.deepStrictEqual(ours(report.unsatisfied), theirs("linkdeep-directory"));
+			assert.deepStrictEqual(report.unverified, []);
+		}),
+	);
+
+	it.effect("keeps the marker for a publish-directory link: when the manifests are omitted", () =>
+		Effect.gen(function* () {
+			const report = PeerCheck.run(yield* parse("linkdeep-directory"), {
+				peerDependencyRules: NoPeerDependencyRules,
+			});
+			assert.deepStrictEqual(report.unsatisfied, []);
+			assert.deepStrictEqual(report.unverified, ["unresolvedEdge"]);
+		}),
+	);
+
+	it.effect("does not cover a publish-directory link: for a manifest that says linkDirectory: false", () =>
+		Effect.gen(function* () {
+			// The manifest disagrees with the lockfile about where the link
+			// lands, so the supplied manifest does not describe this edge.
+			const report = PeerCheck.run(yield* parse("linkdeep-directory"), {
+				peerDependencyRules: NoPeerDependencyRules,
+				workspacePackages: [probeA({ publishConfig: PublishConfig.make({ directory: "dist", linkDirectory: false }) })],
+			});
+			assert.deepStrictEqual(report.unverified, ["unresolvedEdge"]);
+		}),
+	);
+
+	it.effect("with linkDirectory: false, pnpm links the package root and the root spelling is covered", () =>
+		Effect.gen(function* () {
+			const report = PeerCheck.run(yield* parse("linkdeep-directory-false"), {
+				peerDependencyRules: NoPeerDependencyRules,
+				workspacePackages: [probeA({ publishConfig: PublishConfig.make({ directory: "dist", linkDirectory: false }) })],
+			});
+			assert.deepStrictEqual(ours(report.unsatisfied), theirs("linkdeep-directory-false"));
+			assert.deepStrictEqual(report.unverified, []);
+		}),
+	);
+
+	// Attribution stops at a linked workspace package. Measured against pnpm
+	// 12.6.0 on a chain `b` links `a`, `a` links `c`, `c` peers on react:
+	// pnpm judges `c`'s manifest peers for its DIRECT consumer `a` only, and
+	// reports nothing through `b` — whoever provides react. The same holds for
+	// a linked package's REGISTRY dependencies: `linkchain-registry/`'s
+	// react-dom peer is reported on `c`'s own importer, never on `b`.
+	const chainA = (peerDependencies: Record<string, string> = {}): WorkspacePackage => probeA({ peerDependencies });
+	const chainC = (): WorkspacePackage => probeA({ name: "probe-c", relativePath: "packages/c" });
+	const chainPackages = (): ReadonlyArray<WorkspacePackage> => [chainA(), chainC()];
+
+	it.effect("judges a linked package's peers for its DIRECT consumer only (consumer's parent provides)", () =>
+		Effect.gen(function* () {
+			const report = PeerCheck.run(yield* parse("linkchain-parent-provides"), {
+				peerDependencyRules: NoPeerDependencyRules,
+				workspacePackages: chainPackages(),
+			});
+			assert.deepStrictEqual(ours(report.unsatisfied), theirs("linkchain-parent-provides"));
+			assert.deepStrictEqual(report.unsatisfied, []);
+			assert.deepStrictEqual(report.unverified, []);
+		}),
+	);
+
+	it.effect("never surfaces a transitively linked package's peers on the outer consumer", () =>
+		Effect.gen(function* () {
+			// Only `b` has react: pnpm still reports the peer on `a`, whose own
+			// dependencies lack it, and calls `b` clean.
+			const provided = PeerCheck.run(yield* parse("linkchain-importer-provides"), {
+				peerDependencyRules: NoPeerDependencyRules,
+				workspacePackages: chainPackages(),
+			});
+			assert.strictEqual(theirs("linkchain-importer-provides").length, 1);
+			assert.deepStrictEqual(ours(provided.unsatisfied), theirs("linkchain-importer-provides"));
+			assert.deepStrictEqual(provided.unverified, []);
+
+			// Nobody has react: still one row, on `a`, not a second one on `b`.
+			const none = PeerCheck.run(yield* parse("linkchain-none"), {
+				peerDependencyRules: NoPeerDependencyRules,
+				workspacePackages: chainPackages(),
+			});
+			assert.deepStrictEqual(ours(none.unsatisfied), theirs("linkchain-none"));
+			assert.deepStrictEqual(none.unverified, []);
+		}),
+	);
+
+	it.effect("attributes a linked package's registry dependency peers to its own importer only", () =>
+		Effect.gen(function* () {
+			const report = PeerCheck.run(yield* parse("linkchain-registry"), {
+				peerDependencyRules: NoPeerDependencyRules,
+				workspacePackages: [probeA({ name: "probe-c", relativePath: "packages/c", peerDependencies: {} })],
+			});
+			assert.strictEqual(theirs("linkchain-registry").length, 1);
+			assert.deepStrictEqual(ours(report.unsatisfied), theirs("linkchain-registry"));
+			assert.deepStrictEqual(report.unverified, []);
+		}),
+	);
+
+	it.effect("a deeper link edge is judged by its own consumer's walk: uncovered, it keeps the marker", () =>
+		Effect.gen(function* () {
+			// `a` links `c`; supplying only `a` leaves that edge unjudged even
+			// though `b`'s edge to `a` is covered — the outer walk no longer
+			// reaches `c`, so nothing else can clear it.
+			const onlyA = PeerCheck.run(yield* parse("linkchain-none"), {
+				peerDependencyRules: NoPeerDependencyRules,
+				workspacePackages: [chainA()],
+			});
+			assert.deepStrictEqual(onlyA.unverified, ["unresolvedEdge"]);
+			// And supplying only `c` leaves `b`'s edge to `a` unjudged, while `a`'s
+			// own walk still reports `c`'s peer.
+			const onlyC = PeerCheck.run(yield* parse("linkchain-none"), {
+				peerDependencyRules: NoPeerDependencyRules,
+				workspacePackages: [chainC()],
+			});
+			assert.deepStrictEqual(ours(onlyC.unsatisfied), theirs("linkchain-none"));
+			assert.deepStrictEqual(onlyC.unverified, ["unresolvedEdge"]);
 		}),
 	);
 

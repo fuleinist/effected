@@ -188,6 +188,45 @@ The root has no workspace row under pnpm, so these are the fixtures that
 exercise a linked target reached from an importer that is answered through its
 dependency records rather than through its own row.
 
+## `linkdeep-directory/` and `linkdeep-directory-false/`
+
+Real pnpm **12.6.0** output, generated 2026-09-27 by the `linkdeep*` recipe,
+with `probe-a` carrying `publishConfig: { directory: "dist" }` (and a copy of
+its manifest at `packages/a/dist/package.json`) — the shape every savvy-web
+monorepo uses, and the tree effected#800 was reported from.
+
+- **`linkdeep-directory/`** — `directory` alone. pnpm records the importer
+  with `publishDirectory: dist` and the edge as `link:../a/dist`, INTO the
+  publish directory. A variant with `linkDirectory: true` produced a
+  byte-identical lockfile and oracle, so `linkDirectory` defaults to true and
+  is not committed separately. Oracle: `packages/b` missing `react`, parents
+  `probe-a@1.0.0`.
+- **`linkdeep-directory-false/`** — `linkDirectory: false`. pnpm records the
+  edge as `link:../a`, the package root. Same oracle row.
+
+## `linkchain-*/`
+
+Real pnpm **12.6.0** output, generated 2026-09-27 by the same recipe: how far
+a linked package's peers travel. Three chain variants have `probe-b` link
+`probe-a` and `probe-a` link `probe-c`, which peers on `react: ^18.0.0`:
+
+- **`linkchain-parent-provides/`** — `probe-a` has `react@18.3.1`. Oracle:
+  every importer clean.
+- **`linkchain-importer-provides/`** — only `probe-b` has `react@18.3.1`.
+  Oracle: `packages/a` reports the peer missing (parents `probe-c@1.0.0`) and
+  `packages/b` is clean.
+- **`linkchain-none/`** — nobody has react. Oracle byte-identical to the
+  previous one: the row lands on `packages/a` only.
+
+So a linked package's manifest peers are judged for its DIRECT consumer only,
+against that consumer's dependencies, and never surface one link further out.
+
+- **`linkchain-registry/`** — `probe-b` links `probe-c`, which depends on
+  `react-dom@18.3.1` with no react anywhere. Oracle: the missing `react` is
+  reported on `packages/c` (parents `react-dom@18.3.1`) and `packages/b` is
+  clean. A linked package's registry dependencies are its own importer's
+  business too, so attribution stops at a workspace package.
+
 ## The catalog-peer variant, and why it is not a directory here
 
 `linkdeep/`'s probe workspace with one change — `packages/a` declaring
