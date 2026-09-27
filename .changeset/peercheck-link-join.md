@@ -4,10 +4,20 @@
 
 ## Features
 
-- `PeerCheck.run` accepts `workspacePackages` — the packages `WorkspaceDiscovery` already returns — and joins a `link:`-resolved parent's manifest peers into the walk, closing the joining side of effected#800's option 1 without reading the disk: `PeerCheck` stays a pure value over its inputs. A matched manifest's declared peers are walked, named from the manifest in `parents` (`probe-a@1.0.0`, not the row's `packages/a@0.0.0`, which is the only place those two facts exist), and judged against the **importer's own** dependency set. Measured one variable at a time against pnpm 12.5.1 and 12.6.0 — see `__test__/fixtures/peers/README.md`: the consumer's own `react@18.3.1` satisfies a linked parent's `^18.0.0` peer, the same version installed only by a sibling importer does not, and the consumer's own `react@17.0.2` is a `bad` row carrying the version that resolved.
-- **Presence of the key is the assertion**, the same rule `peerDependencyRules` follows: `"unresolvedEdge"` fires for every `link:` target the supplied set does not cover, and for every target when the key is omitted, so the option answers only for what it covers and a gate can still tell "clean" from "unchecked".
+`PeerCheck.run` accepts two new options that close the `link:` blind spot in peer verification (effected#800): under pnpm, every `workspace:` dependency resolves through `link:`, and pnpm records no peer declarations for a workspace project, so a linked parent's peers were invisible to the report even though `pnpm peers check` reads them from the manifest on disk. Without these options, a pnpm monorepo with internal dependencies now reports `unverified` where it previously reported clean — pass both to restore a "proven clean" answer:
+
+```ts
+const report = PeerCheck.run(lockfile, {
+	peerDependencyRules: yield* catalogs.peerDependencyRules(),
+	workspacePackages: yield* discovery.listPackages(),
+	catalogs: yield* catalogs.set(),
+});
+```
+
+- `workspacePackages` — the packages `WorkspaceDiscovery` already returns. Joins a `link:`-resolved parent's manifest peers into the walk (the root importer's linked targets included), naming the parent from its manifest (`probe-a@1.0.0`, not the lockfile row's `packages/a@0.0.0`) and judging its peers against the *importer's own* dependency set, which is where pnpm resolves them from. Presence of the key is the assertion: `"unresolvedEdge"` still fires for any `link:` target the supplied set does not cover, and for every target when the key is omitted, so the option answers only for what it covers.
+- `catalogs` — the workspace's `CatalogSet`, from `WorkspaceCatalogs.set()`. A joined manifest may declare a peer as `catalog:` or `catalog:<name>` rather than a plain range; with this key supplied, the specifier resolves through the set and the resolved range is judged and reported as `wanted` — the same value `pnpm peers check` reports as `wantedRange`.
+- A new `UnverifiedReason`, `"peerRangeUnresolved"`, fires when a joined peer's range is a protocol specifier (a `catalog:` entry the supplied set names nothing for, `catalogs` omitted, or any other protocol such as `workspace:*`) while something resolved for that peer, so the comparison was never performed. A peer with no provider at all is unaffected and is still reported as usual.
 
 ## Other
 
-- A supplied manifest range that is a protocol specifier rather than a range (`catalog:effected:peers`, `workspace:*`) is carried through verbatim and, with a provider present, declined rather than resolved — resolving it needs the workspace catalog map, which is not an input yet. `pnpm peers check` resolves those through the workspace config, so a catalog-sourced peer with a provider outside the catalog's range under-reports here until that input lands. Named rather than papered over: the alternative would be guessing a range no input supplied.
-- Three committed oracle fixtures — `__test__/fixtures/peers/linkdeep-provided/`, `linkdeep-sibling/` and `linkdeep-bad/` — record the provider rule in real pnpm 12.5.1 output, and the fixtures README records the catalog-peer measurement pass (byte-identical lockfile and verdict to `linkdeep/`, so no duplicate directory) alongside the abort that a plain catalog does NOT reproduce.
+- New committed oracle fixtures under `__test__/fixtures/peers/` (`linkdeep`, `linkdeep-provided`, `linkdeep-sibling`, `linkdeep-bad`, `linkdeep-root`, `linkdeep-root-bad`) recording real pnpm 12.5.1/12.6.0 `peers check --json` output alongside the lockfile, including the root importer's own linked-dependency case.
