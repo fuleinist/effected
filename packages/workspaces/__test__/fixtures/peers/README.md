@@ -261,6 +261,13 @@ back byte-identical. The case is a peer whose PROVIDER resolved through
   for a joined parent. The same workspace at `18.3.1` (identical lockfile) is
   clean, on 12.6.0 and 12.7.0, for directories and tarballs alike.
 
+**`filedep-suffixed/`** is the real-tree shape (pnpm 12.6.0, same recipe):
+the stub `react` itself declares a `js-tokens: ^4.0.0` peer, so pnpm keys the
+instance `react@file:vendor/react(js-tokens@4.0.0)`, suffixed exactly like
+a registry version. Oracle, on 12.6.0 and 12.7.0: a **bad** `react` row for
+`packages/host` with `foundVersion: "file:vendor/react"`, the suffix
+stripped, which is the version the lockfile model must carry.
+
 `@effected/lockfiles` passes the specifier through as the provider's
 version (`file:vendor/react`) for both directories and tarballs. The version
 pnpm compares is therefore not in the model in any of the four, and

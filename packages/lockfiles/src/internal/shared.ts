@@ -47,24 +47,59 @@ export const toIntegrityHash = (
 const decodeSpecifier = Schema.decodeUnknownExit(DependencySpecifier.FromString);
 
 /**
- * Split pnpm's peer-disambiguation suffix off a recorded string: everything
- * from the first `(` on is suffix, since package names and versions never
- * contain `(`. Handles both shapes pnpm records — a bare version
- * (`"1.0.0(effect@4.0.0)"`, importer entries) and a `name@version` snapshot key
- * (`"fdir@6.5.0(picomatch@4.0.4)"`). A string with no `(` — including
- * `link:...` / `file:...` resolutions — passes through untouched. So does a
- * protocol-bearing string (a `:` ahead of the first `(`), where a parenthesis
- * is path or URL text rather than a peer suffix: pnpm attaches suffixes to
- * registry versions only. This is the single stripping implementation — do not
- * hand-roll an `indexOf("(")` split elsewhere.
+ * Split pnpm's peer-disambiguation suffix off a recorded string: the suffix is
+ * the maximal TRAILING run of balanced parenthesized groups, found by scanning
+ * back from the end, which is `@pnpm/dependency-path`'s own
+ * `indexOfDepPathSuffix` rule. Handles both shapes pnpm records — a bare
+ * version (`"1.0.0(effect@4.0.0)"`, importer entries) and a `name@version`
+ * snapshot key (`"fdir@6.5.0(picomatch@4.0.4)"`) — and nested chains
+ * (`"(a@1(b@2))(c@3)"`) as one suffix.
+ *
+ * pnpm suffixes a `file:` resolution exactly as it suffixes a registry
+ * version whenever the package declares peers, directory and tarball alike
+ * (`file:vendor/lib(react@18.3.1)`, measured against pnpm 12.6.0), so the rule
+ * applies to protocol versions too. The one exception is `link:`, which pnpm
+ * never suffixes, even when the target declares peers: a trailing group there
+ * is path text and the string passes through untouched.
+ *
+ * A parenthesis INSIDE a path is followed by more path, so it is never part of
+ * the trailing run (`file:vendor/a(b)/c(react@1.0.0)` splits after `c`). A path
+ * that itself ENDS in a group is ambiguous, and it is read the way pnpm reads
+ * it: pnpm writes `file:vendor/paren(lib)`'s `packages:` key as
+ * `parenlib@file:vendor/paren`, so taking the group as suffix is what keeps the
+ * snapshot joined to its own metadata. A string that is nothing but groups
+ * yields an empty `plain`, and an unbalanced one passes through untouched.
+ *
+ * This is the single stripping implementation — do not hand-roll a
+ * parenthesis split elsewhere.
  *
  * @internal
  */
 export const splitPeerSuffix = (raw: string): { readonly plain: string; readonly peerSuffix?: string } => {
-	const parenIndex = raw.indexOf("(");
-	if (parenIndex === -1) return { plain: raw };
-	if (raw.lastIndexOf(":", parenIndex) !== -1) return { plain: raw };
-	return { plain: raw.slice(0, parenIndex), peerSuffix: raw.slice(parenIndex) };
+	if (raw.startsWith("link:") || !raw.endsWith(")")) return { plain: raw };
+	let open = 1;
+	for (let i = raw.length - 2; i >= 0; i--) {
+		const char = raw[i];
+		if (char === "(") open--;
+		else if (char === ")") open++;
+		else if (open === 0) return { plain: raw.slice(0, i + 1), peerSuffix: raw.slice(i + 1) };
+	}
+	return open === 0 ? { plain: "", peerSuffix: raw } : { plain: raw };
+};
+
+/**
+ * Split a `name@version` key at the separator: the first `@` after a scoped
+ * name's leading one. A package name holds no other `@`, while the version
+ * part may (`file:../@scope/lib`), so the LAST `@` is the wrong boundary.
+ * Returns `undefined` for a key with no separator after its first character
+ * (`"@"`, `"@scope/"`, a bare name).
+ *
+ * @internal
+ */
+export const splitNameVersion = (key: string): { readonly name: string; readonly version: string } | undefined => {
+	const at = key.indexOf("@", 1);
+	if (at === -1) return undefined;
+	return { name: key.slice(0, at), version: key.slice(at + 1) };
 };
 
 /**

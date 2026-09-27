@@ -1335,6 +1335,25 @@ describe("PeerCheck.run — protocol-specifier provider versions", () => {
 		}),
 	);
 
+	it.effect("fails closed on a `file:` provider whose own peers give it a suffixed key", () =>
+		Effect.gen(function* () {
+			// The real-tree shape: the linked package declares peers, so pnpm keys
+			// it `react@file:vendor/react(js-tokens@4.0.0)`. The model must split
+			// that suffix like a registry one — pnpm's own found version is
+			// `file:vendor/react`, suffix-free — or the provider reads as a garbled
+			// non-protocol version and is skipped as merely unparseable.
+			const lockfile = yield* parse("filedep-suffixed");
+			const provider = lockfile.packages.find((p) => p.instanceId === "react@file:vendor/react(js-tokens@4.0.0)");
+			assert.strictEqual(provider?.name, "react");
+			assert.strictEqual(provider?.version, "file:vendor/react");
+			assert.strictEqual(theirs("filedep-suffixed")[0]?.found, provider?.version);
+
+			const report = PeerCheck.run(lockfile, { peerDependencyRules: NoPeerDependencyRules });
+			assert.deepStrictEqual(report.unsatisfied, []);
+			assert.deepStrictEqual(report.unverified, ["peerVersionUnresolved"]);
+		}),
+	);
+
 	it.effect("fails closed on a peer provided through a `file:` override", () =>
 		Effect.gen(function* () {
 			const lockfile = yield* parse("filedep-override");

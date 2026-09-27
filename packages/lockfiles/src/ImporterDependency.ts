@@ -15,8 +15,10 @@ import { Schema } from "effect";
  *   comparable across refs and printable. pnpm records `{ specifier, version }`
  *   per importer dependency, and the parser splits pnpm's peer-disambiguation
  *   suffix off into `peerSuffix`, so `version` is always the plain version — or
- *   a non-registry resolution (`link:../utils`, `file:...`), passed through
- *   verbatim. bun and npm record resolved versions on their package entries
+ *   a non-registry resolution (`link:../utils`, `file:...`). A `file:`
+ *   resolution is suffixed like a registry version when the package declares
+ *   peers and is split the same way; a `link:` is never suffixed and passes
+ *   through verbatim. bun and npm record resolved versions on their package entries
  *   instead, so for those formats `version` is absent and a consumer joins by
  *   `name` against `Lockfile.packages`.
  * - `peerSuffix` — pnpm's peer-disambiguation context: the raw parenthesized
