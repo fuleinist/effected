@@ -285,6 +285,7 @@ describe("the uniform-tuple collapse against the real engine (#818)", () => {
 			items: [{ type: "string" }],
 			additionalItems: { type: "string" },
 		});
-		assert.isAtLeast(findings.length, 1);
+		assert.strictEqual(findings.length, 1);
+		assert.include(findings[0]?.message ?? "", "is 1-tuple");
 	});
 });

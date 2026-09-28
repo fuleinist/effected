@@ -302,12 +302,30 @@ describe("StoreDocument", () => {
 			assert.isFalse("additionalItems" in properties.plugins);
 		});
 
-		it("collapses a uniform multi-element head, flooring minItems at the tuple length", () => {
+		it("collapses a uniform multi-element head, keeping core's minItems", () => {
 			const source = Schema.TupleWithRest(Schema.Tuple([Schema.String, Schema.String]), [Schema.String]);
 			const document = Result.getOrThrow(
 				StoreDocument.fromSchemaResult(source, { $id: "https://example.com/two.json" }),
 			);
 			assert.deepStrictEqual(document.root, { type: "array", minItems: 2, items: { type: "string" } });
+		});
+
+		it("does not raise minItems past what optional head elements require", () => {
+			const source = Schema.TupleWithRest(Schema.Tuple([Schema.String, Schema.optionalKey(Schema.String)]), [
+				Schema.String,
+			]);
+			const document = Result.getOrThrow(
+				StoreDocument.fromSchemaResult(source, { $id: "https://example.com/optional.json" }),
+			);
+			assert.deepStrictEqual(document.root, { type: "array", minItems: 1, items: { type: "string" } });
+		});
+
+		it("adds no minItems when every head element is optional", () => {
+			const source = Schema.TupleWithRest(Schema.Tuple([Schema.optionalKey(Schema.String)]), [Schema.String]);
+			const document = Result.getOrThrow(
+				StoreDocument.fromSchemaResult(source, { $id: "https://example.com/all-optional.json" }),
+			);
+			assert.deepStrictEqual(document.root, { type: "array", items: { type: "string" } });
 		});
 
 		it("keeps the tuple form for a heterogeneous head with an open rest", () => {

@@ -298,8 +298,8 @@ const restoreDefsRefs = (node: unknown, depth: number): unknown => {
 //
 // When every tuple element is content-equal to the rest element (the
 // `NonEmptyArray` case, and any `TupleWithRest` with a uniform head), the
-// tuple form carries no information beyond `{ items: X, minItems: n }`,
-// which strict ajv accepts. This walk collapses exactly that case, after
+// tuple form carries no information beyond `{ items: X }` plus whatever
+// `minItems` core already emitted, which strict ajv accepts. This walk collapses exactly that case, after
 // `restoreDefsRefs`, on the freshly assembled root and `$defs` (both are
 // this call's own accumulators, never the caller's schema AST). A
 // heterogeneous head keeps the tuple form — what the strict gate should do
@@ -340,13 +340,11 @@ const collapseUniformTuples = (node: unknown, depth: number): unknown => {
 		!Array.isArray(rest) &&
 		tuple.every((element) => CanonicalJson.equals(element, rest))
 	) {
-		// `minItems` floors at the tuple length: the collapsed form must keep
-		// asserting at least the head the tuple form pinned. Core already
-		// emits `minItems` for `NonEmptyArray` and `TupleWithRest`; the max()
-		// covers a lowering that emits the tuple without it.
-		const floor = typeof out.minItems === "number" ? out.minItems : 0;
+		// `minItems` stays exactly as core emitted it: a Draft-07 tuple asserts
+		// no length on its own (optional elements lower `minItems` below the
+		// tuple length, or omit it), so the collapse is equivalent only if it
+		// adds no length bound either.
 		out.items = rest;
-		out.minItems = Math.max(floor, tuple.length);
 		delete out.additionalItems;
 	}
 	return out;
@@ -377,8 +375,9 @@ const collapseUniformTuples = (node: unknown, depth: number): unknown => {
  * opaque payloads. The one structural normalization it does own is the
  * uniform-tuple collapse: when every tuple element is content-equal to the
  * open rest schema — always true for `NonEmptyArray` — the tuple is
- * rewritten to `{ items, minItems }`, the shape ajv's strictTuples rule
- * accepts; a heterogeneous head keeps the tuple form.
+ * rewritten to a single-schema `items` with core's `minItems` untouched,
+ * the shape ajv's strictTuples rule accepts; a heterogeneous head keeps the
+ * tuple form.
  *
  * @public
  */
