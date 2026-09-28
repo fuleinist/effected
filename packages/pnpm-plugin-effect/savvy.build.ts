@@ -205,7 +205,7 @@ await build({
 							source: "workspace",
 						},
 						"@effected/git": {
-							range: "^0.18.0",
+							range: "^0.18.1",
 							peer: "^0.18.0",
 							strategy: "lock-minor",
 							source: "workspace",
@@ -217,7 +217,7 @@ await build({
 							source: "workspace",
 						},
 						"@effected/github-actions": {
-							range: "^0.18.0",
+							range: "^0.18.1",
 							peer: "^0.18.0",
 							strategy: "lock-minor",
 							source: "workspace",
@@ -277,7 +277,7 @@ await build({
 							source: "workspace",
 						},
 						"@effected/package-json": {
-							range: "^0.19.0",
+							range: "^0.19.1",
 							peer: "^0.19.0",
 							strategy: "lock-minor",
 							source: "workspace",
@@ -289,7 +289,7 @@ await build({
 							source: "workspace",
 						},
 						"@effected/sbom": {
-							range: "^0.9.0",
+							range: "^0.9.1",
 							peer: "^0.9.0",
 							strategy: "lock-minor",
 							source: "workspace",
@@ -313,7 +313,7 @@ await build({
 							source: "workspace",
 						},
 						"@effected/semver": {
-							range: "^0.10.0",
+							range: "^0.10.1",
 							peer: "^0.10.0",
 							strategy: "lock-minor",
 							source: "workspace",
@@ -331,7 +331,7 @@ await build({
 							source: "workspace",
 						},
 						"@effected/templates": {
-							range: "^0.9.0",
+							range: "^0.9.1",
 							peer: "^0.9.0",
 							strategy: "lock-minor",
 							source: "workspace",
@@ -355,7 +355,7 @@ await build({
 							source: "workspace",
 						},
 						"@effected/workspaces": {
-							range: "^0.30.0",
+							range: "^0.30.1",
 							peer: "^0.30.0",
 							strategy: "lock-minor",
 							source: "workspace",
