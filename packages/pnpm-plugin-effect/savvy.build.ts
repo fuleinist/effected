@@ -301,13 +301,13 @@ await build({
 							source: "workspace",
 						},
 						"@effected/schemastore": {
-							range: "^0.16.0",
+							range: "^0.16.1",
 							peer: "^0.16.0",
 							strategy: "lock-minor",
 							source: "workspace",
 						},
 						"@effected/schemastore-cli": {
-							range: "^0.16.0",
+							range: "^0.16.1",
 							peer: "^0.16.0",
 							strategy: "lock-minor",
 							source: "workspace",
