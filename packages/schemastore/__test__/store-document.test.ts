@@ -285,6 +285,105 @@ describe("StoreDocument", () => {
 		);
 	});
 
+	// #818 — core's Draft-07 lowering renders an open-ended tuple as an
+	// `items` array plus a schema-shaped `additionalItems`, which ajv's
+	// strictTuples rule rejects by construction. A uniform head (every
+	// element equal to the rest schema, as `NonEmptyArray` always lowers)
+	// collapses to `items` + `minItems`; everything else keeps its shape.
+	describe("uniform-tuple collapse", () => {
+		it("lowers NonEmptyArray to items+minItems, the shape the strict gate accepts", () => {
+			const source = Schema.Struct({ plugins: Schema.NonEmptyArray(Schema.String) }).annotate({ identifier: "Probe" });
+			const document = Result.getOrThrow(
+				StoreDocument.fromSchemaResult(source, { $id: "https://example.com/probe.json" }),
+			);
+			const entry = document.defs.Probe as Record<string, unknown>;
+			const properties = entry.properties as Record<string, Record<string, unknown>>;
+			assert.deepStrictEqual(properties.plugins, { type: "array", minItems: 1, items: { type: "string" } });
+			assert.isFalse("additionalItems" in properties.plugins);
+		});
+
+		it("leaves tuple-shaped annotation values untouched", () => {
+			const tupleLike = { items: [{ type: "string" }], additionalItems: { type: "string" } };
+			const source = Schema.Struct({
+				value: Schema.Record(Schema.String, Schema.Unknown).annotate({ default: tupleLike, examples: [tupleLike] }),
+			});
+			const document = Result.getOrThrow(
+				StoreDocument.fromSchemaResult(source, { $id: "https://example.com/annotations.json" }),
+			);
+			const properties = document.root.properties as Record<string, Record<string, unknown>>;
+			assert.deepStrictEqual(properties.value?.default, tupleLike);
+			assert.deepStrictEqual(properties.value?.examples, [tupleLike]);
+		});
+
+		it("collapses a uniform multi-element head, keeping core's minItems", () => {
+			const source = Schema.TupleWithRest(Schema.Tuple([Schema.String, Schema.String]), [Schema.String]);
+			const document = Result.getOrThrow(
+				StoreDocument.fromSchemaResult(source, { $id: "https://example.com/two.json" }),
+			);
+			assert.deepStrictEqual(document.root, { type: "array", minItems: 2, items: { type: "string" } });
+		});
+
+		it("does not raise minItems past what optional head elements require", () => {
+			const source = Schema.TupleWithRest(Schema.Tuple([Schema.String, Schema.optionalKey(Schema.String)]), [
+				Schema.String,
+			]);
+			const document = Result.getOrThrow(
+				StoreDocument.fromSchemaResult(source, { $id: "https://example.com/optional.json" }),
+			);
+			assert.deepStrictEqual(document.root, { type: "array", minItems: 1, items: { type: "string" } });
+		});
+
+		it("adds no minItems when every head element is optional", () => {
+			const source = Schema.TupleWithRest(Schema.Tuple([Schema.optionalKey(Schema.String)]), [Schema.String]);
+			const document = Result.getOrThrow(
+				StoreDocument.fromSchemaResult(source, { $id: "https://example.com/all-optional.json" }),
+			);
+			assert.deepStrictEqual(document.root, { type: "array", items: { type: "string" } });
+		});
+
+		it("keeps the tuple form for a heterogeneous head with an open rest", () => {
+			const source = Schema.TupleWithRest(Schema.Tuple([Schema.String]), [Schema.Boolean]);
+			const document = Result.getOrThrow(
+				StoreDocument.fromSchemaResult(source, { $id: "https://example.com/hetero.json" }),
+			);
+			assert.deepStrictEqual(document.root.items, [{ type: "string" }]);
+			assert.deepStrictEqual(document.root.additionalItems, { type: "boolean" });
+		});
+
+		it("leaves a closed tuple alone", () => {
+			const source = Schema.Tuple([Schema.String, Schema.Boolean]);
+			const document = Result.getOrThrow(
+				StoreDocument.fromSchemaResult(source, { $id: "https://example.com/closed.json" }),
+			);
+			// Core pins a closed tuple with maxItems/minItems at the tuple
+			// length and no `additionalItems` at all — the shape strictTuples
+			// already accepts, so the collapse must not touch it.
+			assert.deepStrictEqual(document.root, {
+				type: "array",
+				maxItems: 2,
+				minItems: 2,
+				items: [{ type: "string" }, { type: "boolean" }],
+			});
+			assert.isFalse("additionalItems" in document.root);
+		});
+
+		it("leaves a plain Schema.Array alone", () => {
+			const document = Result.getOrThrow(
+				StoreDocument.fromSchemaResult(Schema.Array(Schema.String), { $id: "https://example.com/plain.json" }),
+			);
+			assert.deepStrictEqual(document.root, { type: "array", items: { type: "string" } });
+		});
+
+		it("carries a declared-family annotation on the collapsed items", () => {
+			const source = Schema.NonEmptyArray(Schema.String.annotate({ "x-taplo": { hidden: true } }));
+			const document = Result.getOrThrow(
+				StoreDocument.fromSchemaResult(source, { $id: "https://example.com/annotated.json" }),
+			);
+			assert.deepStrictEqual(document.root.items, { type: "string", "x-taplo": { hidden: true } });
+			assert.strictEqual(document.root.minItems, 1);
+		});
+	});
+
 	describe("serializeResult", () => {
 		it("produces canonical text ending in a newline", () => {
 			const document = Result.getOrThrow(StoreDocument.fromSchemaResult(Team, { $id }));

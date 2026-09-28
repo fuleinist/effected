@@ -253,3 +253,39 @@ describe("the x-ai- machine-annotation family against the real engine", () => {
 		}),
 	);
 });
+
+// #818 — end to end through StoreDocument.fromSchema: the uniform-tuple
+// collapse keeps a NonEmptyArray document publishable through the default
+// strict gate, and the raw pre-collapse shape the lowering used to emit
+// genuinely fails that gate — so the collapse is load-bearing, not cosmetic.
+describe("the uniform-tuple collapse against the real engine (#818)", () => {
+	const validate = (document: Record<string, unknown>) =>
+		Effect.runSync(
+			Effect.provide(
+				Effect.gen(function* () {
+					const validator = yield* SchemaValidator;
+					return yield* validator.validate(document);
+				}),
+				AjvValidator.layer,
+			),
+		);
+
+	it("reports no findings for a NonEmptyArray document under the default strict gate", () => {
+		const source = Schema.Struct({ plugins: Schema.NonEmptyArray(Schema.String) });
+		const document = Effect.runSync(StoreDocument.fromSchema(source, { $id: "https://example.com/plugins.json" }));
+		assert.deepStrictEqual(validate(document.toJson()), []);
+	});
+
+	it("rejects the raw 1-tuple-with-open-tail shape the collapse replaces", () => {
+		const findings = validate({
+			$schema: "http://json-schema.org/draft-07/schema#",
+			$id: "https://example.com/raw-tuple.json",
+			type: "array",
+			minItems: 1,
+			items: [{ type: "string" }],
+			additionalItems: { type: "string" },
+		});
+		assert.strictEqual(findings.length, 1);
+		assert.include(findings[0]?.message ?? "", "is 1-tuple");
+	});
+});

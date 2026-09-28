@@ -286,6 +286,112 @@ const restoreDefsRefs = (node: unknown, depth: number): unknown => {
 	return node;
 };
 
+// Core's Draft-07 lowering renders an open-ended tuple as an `items` array
+// plus a schema-shaped `additionalItems` (2020-12 `prefixItems[i]` →
+// `items[i]`, trailing `items` → `additionalItems`). That is valid Draft-07,
+// but ajv's strictTuples rule — the gate `schemastore build`/`check` runs
+// under — accepts a tuple only when `minItems` equals the tuple length AND
+// either `additionalItems: false` or `maxItems` equals it. An open tail
+// given as `additionalItems: <schema>` fails that rule by construction, so
+// `Schema.NonEmptyArray(X)` — which always lowers to a uniform 1-tuple with
+// an open tail — could not be published through the CLI at all (#818).
+//
+// When every tuple element is content-equal to the rest element (the
+// `NonEmptyArray` case, and any `TupleWithRest` with a uniform head), the
+// tuple form carries no information beyond `{ items: X }` plus whatever
+// `minItems` core already emitted, which strict ajv accepts. This walk
+// collapses exactly that case, after `restoreDefsRefs`, on the freshly assembled root and `$defs` (both are
+// this call's own accumulators, never the caller's schema AST). A
+// heterogeneous head keeps the tuple form — what the strict gate should do
+// with that shape is a gate-policy question, not a lowering one.
+//
+// The comparison uses `CanonicalJson.equals`, so an element and a rest
+// schema that differ only in key order still collapse, and an annotation
+// carried on the uniform elements survives on the collapsed `items` (it is
+// the rest element's own schema).
+//
+// The walk descends only through Draft-07 schema-bearing keywords. Every
+// other value — `default`, `examples`, `const`, `enum`, declared-family
+// payloads, unknown keywords — is instance data or an opaque annotation and
+// is copied by reference, so an object that merely looks like a tuple
+// schema is never rewritten. Map keywords (`properties` and kin) walk their
+// values, never the map itself, so a property named `items` is safe too.
+const SCHEMA_KEYWORDS: ReadonlySet<string> = new Set([
+	"items",
+	"additionalItems",
+	"contains",
+	"additionalProperties",
+	"propertyNames",
+	"not",
+	"if",
+	"then",
+	"else",
+]);
+const SCHEMA_ARRAY_KEYWORDS: ReadonlySet<string> = new Set(["allOf", "anyOf", "oneOf"]);
+const SCHEMA_MAP_KEYWORDS: ReadonlySet<string> = new Set([
+	"properties",
+	"patternProperties",
+	"definitions",
+	"$defs",
+	"dependencies",
+]);
+
+const isPlainObject = (value: unknown): value is Record<string, unknown> =>
+	typeof value === "object" && value !== null && !Array.isArray(value);
+
+const collapseSchemaMap = (node: unknown, depth: number): unknown => {
+	if (!isPlainObject(node)) {
+		return node;
+	}
+	// Null-prototype accumulator: the same `__proto__` hardening as
+	// `restoreDefsRefs` — the walk must stay safe on its own terms.
+	const out: Record<string, unknown> = Object.create(null);
+	for (const [key, value] of Object.entries(node)) {
+		// `dependencies` values may be property-name arrays; only a schema is walked.
+		out[key] = isPlainObject(value) ? collapseUniformTuples(value, depth + 1) : value;
+	}
+	return out;
+};
+
+const collapseUniformTuples = (node: unknown, depth: number): unknown => {
+	if (depth >= MAX_NESTING_DEPTH) {
+		throw new RewriteDepthExceeded();
+	}
+	if (!isPlainObject(node)) {
+		return node;
+	}
+	const out: Record<string, unknown> = Object.create(null);
+	for (const [key, value] of Object.entries(node)) {
+		if (SCHEMA_KEYWORDS.has(key)) {
+			out[key] = Array.isArray(value)
+				? value.map((item) => collapseUniformTuples(item, depth + 1))
+				: collapseUniformTuples(value, depth + 1);
+		} else if (SCHEMA_ARRAY_KEYWORDS.has(key) && Array.isArray(value)) {
+			out[key] = value.map((item) => collapseUniformTuples(item, depth + 1));
+		} else if (SCHEMA_MAP_KEYWORDS.has(key)) {
+			out[key] = collapseSchemaMap(value, depth + 1);
+		} else {
+			out[key] = value;
+		}
+	}
+	const tuple = out.items;
+	const rest = out.additionalItems;
+	if (
+		Array.isArray(tuple) &&
+		tuple.length > 0 &&
+		isPlainObject(rest) &&
+		tuple.every((element) => CanonicalJson.equals(element, rest))
+	) {
+		// `minItems` stays exactly as core emitted it: a Draft-07 tuple asserts
+		// no length on its own (optional elements lower `minItems` below the
+		// tuple length, or omit it), so the collapse is equivalent only if it
+		// adds no length bound either.
+		out.items = rest;
+		delete out.additionalItems;
+	}
+	return out;
+};
+
 /**
  * A SchemaStore-shaped Draft-07 JSON Schema document assembled from an
  * Effect Schema source: `$schema` (the Draft-07 meta-schema) + `$id` + the
@@ -295,9 +401,11 @@ const restoreDefsRefs = (node: unknown, depth: number): unknown => {
  * `Schema.toJsonSchemaDocument` (Draft 2020-12), core's
  * `JsonSchema.toDocumentDraft07` lowering, the `#/definitions` →
  * `#/$defs` `$ref` rewrite the lowering makes necessary — so every `$ref`
- * in a built document already resolves against the `$defs` pool — and the
- * gate that holds the document's non-standard surface to the declared
- * keyword families ({@link KeywordFamilies}). The package owns assembly and
+ * in a built document already resolves against the `$defs` pool — the
+ * uniform-tuple collapse that keeps open-ended `NonEmptyArray`-shaped
+ * arrays publishable through the strict ajv gate (#818), and the gate that
+ * holds the document's non-standard surface to the declared keyword
+ * families ({@link KeywordFamilies}). The package owns assembly and
  * publication shape, not a JSON Schema engine.
  *
  * Annotated declared-family keys survive into the built document because
@@ -306,7 +414,12 @@ const restoreDefsRefs = (node: unknown, depth: number): unknown => {
  * (2020-12 `prefixItems[i]` → Draft-07 `items[i]`, trailing `items` →
  * `additionalItems`). This package therefore does no re-grafting of its
  * own; it only declines to rewrite `$ref`-shaped strings *inside* those
- * opaque payloads.
+ * opaque payloads. The one structural normalization it does own is the
+ * uniform-tuple collapse: when every tuple element is content-equal to the
+ * open rest schema — always true for `NonEmptyArray` — the tuple is
+ * rewritten to a single-schema `items` with core's `minItems` untouched,
+ * the shape ajv's strictTuples rule accepts; a heterogeneous head keeps the
+ * tuple form.
  *
  * @public
  */
@@ -401,12 +514,12 @@ export class StoreDocument extends Schema.Class<StoreDocument>("StoreDocument")(
 				return Result.fail(UndeclaredAnnotationKeyError.make({ $id: options.$id, keys: [...undeclared].sort() }));
 			}
 			const lowered = JsonSchema.toDocumentDraft07(document);
-			const root = restoreDefsRefs(lowered.schema, 0) as Record<string, unknown>;
+			const root = collapseUniformTuples(restoreDefsRefs(lowered.schema, 0), 0) as Record<string, unknown>;
 			// Null-prototype for the same `__proto__` hardening as the rewrite
 			// walk: a definition named `__proto__` must land as an own key.
 			const defs: Record<string, unknown> = Object.create(null);
 			for (const [name, definition] of Object.entries(lowered.definitions)) {
-				defs[name] = restoreDefsRefs(definition, 1);
+				defs[name] = collapseUniformTuples(restoreDefsRefs(definition, 1), 1);
 			}
 			if (options.rootAnnotations !== undefined) {
 				applyRootAnnotations(root, defs, options.rootAnnotations);
