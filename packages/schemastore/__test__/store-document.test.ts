@@ -305,7 +305,7 @@ describe("StoreDocument", () => {
 		it("leaves tuple-shaped annotation values untouched", () => {
 			const tupleLike = { items: [{ type: "string" }], additionalItems: { type: "string" } };
 			const source = Schema.Struct({
-				value: Schema.Struct({ x: Schema.String }).annotate({ default: tupleLike, examples: [tupleLike] }),
+				value: Schema.Record(Schema.String, Schema.Unknown).annotate({ default: tupleLike, examples: [tupleLike] }),
 			});
 			const document = Result.getOrThrow(
 				StoreDocument.fromSchemaResult(source, { $id: "https://example.com/annotations.json" }),
