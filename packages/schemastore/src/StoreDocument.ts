@@ -299,8 +299,8 @@ const restoreDefsRefs = (node: unknown, depth: number): unknown => {
 // When every tuple element is content-equal to the rest element (the
 // `NonEmptyArray` case, and any `TupleWithRest` with a uniform head), the
 // tuple form carries no information beyond `{ items: X }` plus whatever
-// `minItems` core already emitted, which strict ajv accepts. This walk collapses exactly that case, after
-// `restoreDefsRefs`, on the freshly assembled root and `$defs` (both are
+// `minItems` core already emitted, which strict ajv accepts. This walk
+// collapses exactly that case, after `restoreDefsRefs`, on the freshly assembled root and `$defs` (both are
 // this call's own accumulators, never the caller's schema AST). A
 // heterogeneous head keeps the tuple form — what the strict gate should do
 // with that shape is a gate-policy question, not a lowering one.
@@ -308,36 +308,78 @@ const restoreDefsRefs = (node: unknown, depth: number): unknown => {
 // The comparison uses `CanonicalJson.equals`, so an element and a rest
 // schema that differ only in key order still collapse, and an annotation
 // carried on the uniform elements survives on the collapsed `items` (it is
-// the rest element's own schema). Declared-family values stay opaque —
-// copied by reference, never descended into — matching `restoreDefsRefs`.
-const collapseUniformTuples = (node: unknown, depth: number): unknown => {
-	if (depth >= MAX_NESTING_DEPTH) {
-		throw new RewriteDepthExceeded();
-	}
-	if (Array.isArray(node)) {
-		return node.map((item) => collapseUniformTuples(item, depth + 1));
-	}
-	if (typeof node !== "object" || node === null) {
+// the rest element's own schema).
+//
+// The walk descends only through Draft-07 schema-bearing keywords. Every
+// other value — `default`, `examples`, `const`, `enum`, declared-family
+// payloads, unknown keywords — is instance data or an opaque annotation and
+// is copied by reference, so an object that merely looks like a tuple
+// schema is never rewritten. Map keywords (`properties` and kin) walk their
+// values, never the map itself, so a property named `items` is safe too.
+const SCHEMA_KEYWORDS: ReadonlySet<string> = new Set([
+	"items",
+	"additionalItems",
+	"contains",
+	"additionalProperties",
+	"propertyNames",
+	"not",
+	"if",
+	"then",
+	"else",
+]);
+const SCHEMA_ARRAY_KEYWORDS: ReadonlySet<string> = new Set(["allOf", "anyOf", "oneOf"]);
+const SCHEMA_MAP_KEYWORDS: ReadonlySet<string> = new Set([
+	"properties",
+	"patternProperties",
+	"definitions",
+	"$defs",
+	"dependencies",
+]);
+
+const isPlainObject = (value: unknown): value is Record<string, unknown> =>
+	typeof value === "object" && value !== null && !Array.isArray(value);
+
+const collapseSchemaMap = (node: unknown, depth: number): unknown => {
+	if (!isPlainObject(node)) {
 		return node;
 	}
 	// Null-prototype accumulator: the same `__proto__` hardening as
 	// `restoreDefsRefs` — the walk must stay safe on its own terms.
 	const out: Record<string, unknown> = Object.create(null);
 	for (const [key, value] of Object.entries(node)) {
-		if (KeywordFamilies.isDeclared(key)) {
+		// `dependencies` values may be property-name arrays; only a schema is walked.
+		out[key] = isPlainObject(value) ? collapseUniformTuples(value, depth + 1) : value;
+	}
+	return out;
+};
+
+const collapseUniformTuples = (node: unknown, depth: number): unknown => {
+	if (depth >= MAX_NESTING_DEPTH) {
+		throw new RewriteDepthExceeded();
+	}
+	if (!isPlainObject(node)) {
+		return node;
+	}
+	const out: Record<string, unknown> = Object.create(null);
+	for (const [key, value] of Object.entries(node)) {
+		if (SCHEMA_KEYWORDS.has(key)) {
+			out[key] = Array.isArray(value)
+				? value.map((item) => collapseUniformTuples(item, depth + 1))
+				: collapseUniformTuples(value, depth + 1);
+		} else if (SCHEMA_ARRAY_KEYWORDS.has(key) && Array.isArray(value)) {
+			out[key] = value.map((item) => collapseUniformTuples(item, depth + 1));
+		} else if (SCHEMA_MAP_KEYWORDS.has(key)) {
+			out[key] = collapseSchemaMap(value, depth + 1);
+		} else {
 			out[key] = value;
-			continue;
 		}
-		out[key] = collapseUniformTuples(value, depth + 1);
 	}
 	const tuple = out.items;
 	const rest = out.additionalItems;
 	if (
 		Array.isArray(tuple) &&
 		tuple.length > 0 &&
-		typeof rest === "object" &&
-		rest !== null &&
-		!Array.isArray(rest) &&
+		isPlainObject(rest) &&
 		tuple.every((element) => CanonicalJson.equals(element, rest))
 	) {
 		// `minItems` stays exactly as core emitted it: a Draft-07 tuple asserts

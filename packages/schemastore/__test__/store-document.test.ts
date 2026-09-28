@@ -302,6 +302,19 @@ describe("StoreDocument", () => {
 			assert.isFalse("additionalItems" in properties.plugins);
 		});
 
+		it("leaves tuple-shaped annotation values untouched", () => {
+			const tupleLike = { items: [{ type: "string" }], additionalItems: { type: "string" } };
+			const source = Schema.Struct({
+				value: Schema.Struct({ x: Schema.String }).annotate({ default: tupleLike, examples: [tupleLike] }),
+			});
+			const document = Result.getOrThrow(
+				StoreDocument.fromSchemaResult(source, { $id: "https://example.com/annotations.json" }),
+			);
+			const properties = document.root.properties as Record<string, Record<string, unknown>>;
+			assert.deepStrictEqual(properties.value?.default, tupleLike);
+			assert.deepStrictEqual(properties.value?.examples, [tupleLike]);
+		});
+
 		it("collapses a uniform multi-element head, keeping core's minItems", () => {
 			const source = Schema.TupleWithRest(Schema.Tuple([Schema.String, Schema.String]), [Schema.String]);
 			const document = Result.getOrThrow(
