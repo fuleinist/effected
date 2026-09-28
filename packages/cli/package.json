@@ -1,8 +1,8 @@
 {
 	"name": "@effected/cli",
-	"version": "0.9.0",
+	"version": "0.10.0",
 	"private": true,
-	"description": "The boundary layer of an effect/unstable/cli program: plain CLI output, failure reporting, and schema-issue rendering",
+	"description": "The boundary layer of an effect/cli program: plain CLI output, failure reporting, and schema-issue rendering",
 	"keywords": ["effect", "cli", "logger", "terminal"],
 	"homepage": "https://github.com/spencerbeggs/effected/tree/main/packages/cli#readme",
 	"bugs": {
@@ -42,7 +42,7 @@
 		"@effected/walker": "workspace:*",
 		"@effected/workspaces": "workspace:*",
 		"@effected/yaml": "workspace:*",
-		"@savvy-web/bundler": "^2.4.13",
+		"@savvy-web/bundler": "^2.4.15",
 		"@types/node": "catalog:build",
 		"effect": "catalog:effect",
 		"typescript": "catalog:build"
