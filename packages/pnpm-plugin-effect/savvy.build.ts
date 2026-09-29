@@ -217,8 +217,8 @@ await build({
 							source: "workspace",
 						},
 						"@effected/github-actions": {
-							range: "^0.18.1",
-							peer: "^0.18.0",
+							range: "^0.19.0",
+							peer: "^0.19.0",
 							strategy: "lock-minor",
 							source: "workspace",
 						},
