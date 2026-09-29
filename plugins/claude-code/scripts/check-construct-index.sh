@@ -104,8 +104,12 @@ echo "construct-index: verifying the generated index is current..." >&2
 out="$(node "$GEN" check --require-intent 2>&1)"
 status=$?
 
-if [ "$status" -eq 2 ]; then
-	echo "construct-index: doc models absent — building (turbo-cached)..." >&2
+# Exit 2 is a missing doc model, 3 a stale one (src/ newer than the model);
+# a build answers both. If a model is still stale after the build (a source
+# file was touched without changing and turbo left its outputs on disk), the
+# generator's own message names the --force rebuild.
+if [ "$status" -eq 2 ] || [ "$status" -eq 3 ]; then
+	echo "construct-index: doc models absent or stale — building (turbo-cached)..." >&2
 	if ! pnpm build >/dev/null 2>&1; then
 		echo "construct-index: pnpm build failed; cannot verify the index." >&2
 		echo "  Run 'pnpm build' and read its output." >&2
@@ -113,6 +117,11 @@ if [ "$status" -eq 2 ]; then
 	fi
 	out="$(node "$GEN" check --require-intent 2>&1)"
 	status=$?
+	if [ "$status" -eq 3 ]; then
+		echo "construct-index: doc models still stale after build — push blocked." >&2
+		echo "$out" >&2
+		exit 2
+	fi
 fi
 
 if [ "$status" -ne 0 ]; then
