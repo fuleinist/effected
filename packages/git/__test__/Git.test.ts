@@ -875,6 +875,69 @@ describe("Git", () => {
 		);
 	});
 
+	describe("commonDir", () => {
+		it.effect("returns the trimmed absolute common directory", () =>
+			Effect.gen(function* () {
+				const program = Effect.gen(function* () {
+					const git = yield* Git;
+					return yield* git.commonDir(cwd);
+				});
+				const result = yield* run(program, (args) => {
+					assert.deepStrictEqual(args, ["rev-parse", "--path-format=absolute", "--git-common-dir"]);
+					return { stdout: "/repo/.git\n", exit: 0 };
+				});
+				assert.strictEqual(result, "/repo/.git");
+			}),
+		);
+
+		// Only git's terminating newline is removed: a path is an identity, and a
+		// directory name may legitimately end in whitespace.
+		it.effect("keeps trailing whitespace that belongs to the path", () =>
+			Effect.gen(function* () {
+				const program = Effect.gen(function* () {
+					const git = yield* Git;
+					return yield* git.commonDir(cwd);
+				});
+				const result = yield* run(program, () => ({ stdout: "/repos/bare.git \n", exit: 0 }));
+				assert.strictEqual(result, "/repos/bare.git ");
+			}),
+		);
+
+		// git before 2.31 does not know --path-format: rev-parse echoes the flag to
+		// stdout, answers the relative form, and exits 0. That must not pass as an
+		// identity.
+		it.effect("fails typed when git echoes --path-format back (git older than 2.31)", () =>
+			Effect.gen(function* () {
+				const program = Effect.gen(function* () {
+					const git = yield* Git;
+					return yield* git.commonDir(cwd);
+				});
+				const failure = yield* Effect.flip(run(program, () => ({ stdout: "--path-format=absolute\n.git\n", exit: 0 })));
+				assert.instanceOf(failure, GitCommandError);
+				if (failure instanceof GitCommandError) {
+					assert.strictEqual(failure.kind, "failed");
+					assert.include(failure.detail ?? "", "2.31");
+				}
+			}),
+		);
+
+		it.effect("surfaces NotARepositoryError when cwd is not a repository", () =>
+			Effect.gen(function* () {
+				const program = Effect.gen(function* () {
+					const git = yield* Git;
+					return yield* git.commonDir(cwd);
+				});
+				const failure = yield* Effect.flip(
+					run(program, () => ({
+						stderr: "fatal: not a git repository (or any of the parent directories): .git\n",
+						exit: 128,
+					})),
+				);
+				assert.instanceOf(failure, NotARepositoryError);
+			}),
+		);
+	});
+
 	describe("configGet", () => {
 		it.effect("returns the trimmed value", () =>
 			Effect.gen(function* () {
