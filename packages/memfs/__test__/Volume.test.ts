@@ -4,21 +4,15 @@
 // routing every assertion through an Effect read.
 
 import { assert, describe, it } from "@effect/vitest";
-import { Effect, FileSystem, Layer, Option, PlatformError } from "effect";
+import { Effect, FileSystem, Layer, Option } from "effect";
 import { TestClock } from "effect/testing";
 import { MemoryFileSystem } from "../src/index.js";
+import * as internal from "../src/internal/volume.js";
+import { denied } from "./helpers.js";
 
 const encoder = new TextEncoder();
 
-const denied = (method: string, path: string) =>
-	PlatformError.systemError({
-		_tag: "PermissionDenied",
-		module: "FileSystem",
-		method,
-		pathOrDescriptor: path,
-	});
-
-describe("MemoryFileSystem.layerInspectable", () => {
+describe("MemoryFileSystem.layer — Volume", () => {
 	it.effect("THE INVARIANT: within one build, Volume inspects the same volume backing FileSystem", () =>
 		Effect.gen(function* () {
 			const fs = yield* FileSystem.FileSystem;
@@ -35,7 +29,7 @@ describe("MemoryFileSystem.layerInspectable", () => {
 			yield* fs.remove("/managed/output.txt");
 			assert.isUndefined(volume.text("/managed/output.txt"));
 			assert.isFalse(volume.has("/managed/output.txt"));
-		}).pipe(Effect.provide(MemoryFileSystem.layerInspectable)),
+		}).pipe(Effect.provide(MemoryFileSystem.layer)),
 	);
 
 	it.effect("per-build semantics hold — two provides are two volumes, each pair internally consistent", () =>
@@ -50,27 +44,14 @@ describe("MemoryFileSystem.layerInspectable", () => {
 				assert.strictEqual(volume.text("/scratch.txt"), "mine");
 			});
 
-			yield* probe.pipe(Effect.provide(MemoryFileSystem.layerInspectable));
-			yield* probe.pipe(Effect.provide(MemoryFileSystem.layerInspectable));
+			yield* probe.pipe(Effect.provide(MemoryFileSystem.layer));
+			yield* probe.pipe(Effect.provide(MemoryFileSystem.layer));
 		}),
-	);
-
-	it.effect("existing constructors are untouched — layerWith provides FileSystem only", () =>
-		Effect.gen(function* () {
-			// Type-level guard: the un-inspectable layers still annotate exactly
-			// as before. Widening any of them would break consumer annotations.
-			const plain: Layer.Layer<FileSystem.FileSystem> = MemoryFileSystem.layerWith({ "/seed.txt": "s" });
-			const empty: Layer.Layer<FileSystem.FileSystem> = MemoryFileSystem.layer;
-			assert.isDefined(plain);
-			assert.isDefined(empty);
-			const fs = yield* FileSystem.FileSystem;
-			assert.strictEqual(yield* fs.readFileString("/seed.txt"), "s");
-		}).pipe(Effect.provide(MemoryFileSystem.layerWith({ "/seed.txt": "s" }))),
 	);
 });
 
-describe("MemoryFileSystem.layerInspectableWith", () => {
-	const Seeded = MemoryFileSystem.layerInspectableWith({
+describe("MemoryFileSystem.layerWith — Volume", () => {
+	const Seeded = MemoryFileSystem.layerWith({
 		"/repo/package.json": `{ "name": "fixture" }`,
 		"/repo/bin/run.sh": MemoryFileSystem.file("#!/bin/sh\n", { mode: 0o755 }),
 		"/repo/empty": MemoryFileSystem.directory(),
@@ -138,7 +119,7 @@ describe("MemoryFileSystem.layerInspectableWith", () => {
 			yield* fs.writeFileString("/empty.txt", "");
 			assert.strictEqual(volume.text("/empty.txt"), "");
 			assert.deepStrictEqual(volume.bytes("/empty.txt"), new Uint8Array());
-		}).pipe(Effect.provide(MemoryFileSystem.layerInspectable)),
+		}).pipe(Effect.provide(MemoryFileSystem.layer)),
 	);
 
 	it.effect("queries normalize lexically — '//', '.', '..' and relative paths resolve, symlinks stay literal", () =>
@@ -152,7 +133,15 @@ describe("MemoryFileSystem.layerInspectableWith", () => {
 			assert.strictEqual(volume.text("/a/x/../b/c.txt"), "found");
 			// Relative paths resolve from the virtual root, matching the engine.
 			assert.strictEqual(volume.text("a/b/c.txt"), "found");
-		}).pipe(Effect.provide(MemoryFileSystem.layerInspectable)),
+			// Symlinks stay literal — never followed, not even mid-path: the link
+			// itself is present, but nothing lives "under" it in this view.
+			yield* fs.symlink("/a/b", "/link");
+			assert.isTrue(volume.has("/link"));
+			assert.isFalse(volume.isDirectory("/link"));
+			assert.isFalse(volume.has("/link/c.txt"));
+			assert.isUndefined(volume.text("/link/c.txt"));
+			assert.isUndefined(volume.readDirectory("/link"));
+		}).pipe(Effect.provide(MemoryFileSystem.layer)),
 	);
 
 	it.effect("returned byte arrays are defensive copies — mutating them cannot corrupt the volume", () =>
@@ -166,7 +155,7 @@ describe("MemoryFileSystem.layerInspectableWith", () => {
 			stolen?.fill(0);
 			assert.strictEqual(volume.text("/data.bin"), "abc");
 			assert.strictEqual(yield* fs.readFileString("/data.bin"), "abc");
-		}).pipe(Effect.provide(MemoryFileSystem.layerInspectable)),
+		}).pipe(Effect.provide(MemoryFileSystem.layer)),
 	);
 
 	it.effect("a contradictory seed dies — a wiring bug, mirroring layerWith", () =>
@@ -175,33 +164,9 @@ describe("MemoryFileSystem.layerInspectableWith", () => {
 				Effect.gen(function* () {
 					const volume = yield* MemoryFileSystem.Volume;
 					return volume.paths();
-				}).pipe(Effect.provide(MemoryFileSystem.layerInspectableWith({ "/a": "file", "/a/b": "child" }))),
+				}).pipe(Effect.provide(MemoryFileSystem.layerWith({ "/a": "file", "/a/b": "child" }))),
 			);
 			assert.isTrue(exit._tag === "Failure");
-		}),
-	);
-});
-
-describe("MemoryFileSystem.makeInspectable", () => {
-	it.effect("the value-level pair shares one volume, seeded or bare", () =>
-		Effect.gen(function* () {
-			const bare = yield* MemoryFileSystem.makeInspectable;
-			yield* bare.fileSystem.writeFileString("/direct.txt", "by value");
-			assert.strictEqual(bare.volume.text("/direct.txt"), "by value");
-
-			const seeded = yield* MemoryFileSystem.makeInspectableWith({ "/seed.txt": "seeded" });
-			assert.strictEqual(seeded.volume.text("/seed.txt"), "seeded");
-			// The two pairs are independent volumes.
-			assert.isFalse(seeded.volume.has("/direct.txt"));
-			assert.isFalse(bare.volume.has("/seed.txt"));
-		}),
-	);
-
-	it.effect("makeInspectableWith fails typed on a contradictory seed", () =>
-		Effect.gen(function* () {
-			const error = yield* Effect.flip(MemoryFileSystem.makeInspectableWith({ "/a": "file", "/a/b": "child" }));
-			assert.strictEqual(error._tag, "PlatformError");
-			assert.strictEqual(error.reason._tag, "AlreadyExists");
 		}),
 	);
 });
@@ -227,7 +192,7 @@ describe("inspection composed under fault injection", () => {
 				MemoryFileSystem.layerFaulty({
 					writeFileString: (path) =>
 						path === "/blocked.txt" ? Effect.fail(denied("writeFileString", path)) : undefined,
-				}).pipe(Layer.provideMerge(MemoryFileSystem.layerInspectableWith({ "/seed.txt": "seeded" }))),
+				}).pipe(Layer.provideMerge(MemoryFileSystem.layerWith({ "/seed.txt": "seeded" }))),
 			),
 		),
 	);
@@ -249,163 +214,7 @@ describe("the templates-fixture acceptance sketch", () => {
 			assert.strictEqual(vol.text(path), "# BEGIN managed\njobs: {}\n# END managed\n");
 			assert.isTrue(vol.has("/repo/.github"));
 			assert.deepStrictEqual(vol.paths(), [path]);
-		}).pipe(Effect.provide(MemoryFileSystem.layerInspectable)),
-	);
-});
-
-// The sync filesystem port (effected#396 item 1b): the volume exposed through
-// the four-operation `node:fs` sync subset, for code that takes an injected
-// port instead of requiring `FileSystem` from the environment. Structural
-// satisfaction only — this package imports nothing from the kit.
-describe("MemoryFileSystem.syncFileSystem", () => {
-	const seed = {
-		"/repo/package.json": `{ "name": "root" }`,
-		"/repo/pnpm-workspace.yaml": "packages:\n  - packages/*\n",
-		"/repo/packages": MemoryFileSystem.directory(),
-		"/repo/latest": MemoryFileSystem.symlink("/repo/package.json"),
-	} as const;
-
-	const withSync = <A>(use: (sync: ReturnType<typeof MemoryFileSystem.syncFileSystem>) => A) =>
-		Effect.map(MemoryFileSystem.makeInspectableWith(seed), ({ volume }) =>
-			use(MemoryFileSystem.syncFileSystem(volume)),
-		);
-
-	it.effect("reads files and lists directories by name, sorted", () =>
-		Effect.gen(function* () {
-			yield* withSync((sync) => {
-				assert.strictEqual(sync.readFile("/repo/package.json"), `{ "name": "root" }`);
-				assert.deepStrictEqual(sync.readDirectory("/repo"), [
-					"latest",
-					"package.json",
-					"packages",
-					"pnpm-workspace.yaml",
-				]);
-				assert.isTrue(sync.exists("/repo/package.json"));
-				assert.isTrue(sync.isDirectory("/repo/packages"));
-				assert.isFalse(sync.isDirectory("/repo/package.json"));
-			});
-		}),
-	);
-
-	it.effect("an empty directory lists [] — never confused with an absent one", () =>
-		Effect.gen(function* () {
-			yield* withSync((sync) => {
-				assert.deepStrictEqual(sync.readDirectory("/repo/packages"), []);
-				assert.throws(() => sync.readDirectory("/repo/absent"), /ENOENT/);
-			});
-		}),
-	);
-
-	it.effect('HONEST ABSENCE: an unseeded path throws rather than answering ""', () =>
-		Effect.gen(function* () {
-			yield* withSync((sync) => {
-				assert.isFalse(sync.exists("/repo/absent"));
-				assert.throws(() => sync.readFile("/repo/absent"), /ENOENT/);
-				// Reading a directory as a file is EISDIR in readFileSync — verified
-				// against real node:fs — not ENOTDIR, and certainly not "".
-				assert.throws(() => sync.readFile("/repo/packages"), /EISDIR/);
-			});
-		}),
-	);
-
-	it.effect("a symbolic link is listed by its own name and reads through to its target", () =>
-		Effect.gen(function* () {
-			yield* withSync((sync) => {
-				assert.isTrue(sync.exists("/repo/latest"));
-				// The PORT follows links even though the view under it is literal:
-				// this one points at a file, so it is not a directory but IS readable.
-				assert.isFalse(sync.isDirectory("/repo/latest"));
-				assert.strictEqual(sync.readFile("/repo/latest"), `{ "name": "root" }`);
-			});
-		}),
-	);
-
-	// THE REGRESSION THIS PORT SHIPPED WITH (caught in review of #445): the view
-	// underneath is deliberately literal, and answering literally here made a
-	// symlinked package directory invisible to any consumer enumerating a
-	// workspace — the exact failure a naive dirent fast path causes, reached
-	// through the test double instead. Verified against real node:fs, which
-	// resolves all four operations through links.
-	it.effect("FOLLOWS LINKS like stat: a link to a directory is a directory and lists its target", () =>
-		Effect.gen(function* () {
-			const { volume } = yield* MemoryFileSystem.makeInspectableWith({
-				"/real/pkg/package.json": `{ "name": "@x/a" }`,
-				"/links/pkg": MemoryFileSystem.symlink("/real/pkg"),
-			});
-			const sync = MemoryFileSystem.syncFileSystem(volume);
-
-			assert.isTrue(sync.isDirectory("/links/pkg"), "a link to a directory must read as a directory");
-			assert.deepStrictEqual(sync.readDirectory("/links/pkg"), ["package.json"]);
-			assert.strictEqual(sync.readFile("/links/pkg/package.json"), `{ "name": "@x/a" }`);
-
-			// The literal view keeps its own contract underneath, unchanged.
-			assert.isFalse(volume.isDirectory("/links/pkg"));
-			assert.strictEqual(volume.readLink("/links/pkg"), "/real/pkg");
-		}),
-	);
-
-	it.effect("a dangling link is ABSENT to the port, though the literal view still sees it", () =>
-		Effect.gen(function* () {
-			const { volume } = yield* MemoryFileSystem.makeInspectableWith({
-				"/dangling": MemoryFileSystem.symlink("/nowhere"),
-			});
-			const sync = MemoryFileSystem.syncFileSystem(volume);
-
-			// existsSync answers false for a dangling link; the port matches it.
-			assert.isFalse(sync.exists("/dangling"));
-			assert.isFalse(sync.isDirectory("/dangling"));
-			assert.throws(() => sync.readFile("/dangling"), /ENOENT/);
-			// …while the view, being literal, reports the link itself as present.
-			assert.isTrue(volume.has("/dangling"));
-		}),
-	);
-
-	it.effect("a relative link target resolves against the link's own directory", () =>
-		Effect.gen(function* () {
-			const { volume } = yield* MemoryFileSystem.makeInspectableWith({
-				"/a/b/target.txt": "found",
-				"/a/b/rel": MemoryFileSystem.symlink("target.txt"),
-			});
-			const sync = MemoryFileSystem.syncFileSystem(volume);
-			assert.strictEqual(sync.readFile("/a/b/rel"), "found");
-		}),
-	);
-
-	it.effect("a link cycle resolves to absence rather than spinning", () =>
-		Effect.gen(function* () {
-			const { volume } = yield* MemoryFileSystem.makeInspectableWith({
-				"/loop/a": MemoryFileSystem.symlink("/loop/b"),
-				"/loop/b": MemoryFileSystem.symlink("/loop/a"),
-			});
-			const sync = MemoryFileSystem.syncFileSystem(volume);
-			assert.isFalse(sync.exists("/loop/a"));
-			assert.throws(() => sync.readFile("/loop/a"), /ENOENT/);
-		}),
-	);
-
-	it.effect("the virtual root lists its top-level entries", () =>
-		Effect.gen(function* () {
-			yield* withSync((sync) => {
-				// "/" must not build the prefix "//", which would match nothing.
-				assert.include(sync.readDirectory("/"), "repo");
-				assert.isTrue(sync.isDirectory("/"));
-			});
-		}),
-	);
-
-	it.effect("thrown absence carries the node:fs errno fields a port consumer may inspect", () =>
-		Effect.gen(function* () {
-			yield* withSync((sync) => {
-				try {
-					sync.readFile("/repo/absent");
-					assert.fail("readFile should have thrown on an unseeded path");
-				} catch (error) {
-					assert.strictEqual((error as { code?: string }).code, "ENOENT");
-					assert.strictEqual((error as { syscall?: string }).syscall, "readFile");
-					assert.strictEqual((error as { path?: string }).path, "/repo/absent");
-				}
-			});
-		}),
+		}).pipe(Effect.provide(MemoryFileSystem.layer)),
 	);
 });
 
@@ -415,7 +224,7 @@ describe("MemoryFileSystem.syncFileSystem", () => {
 describe("MemoryFileSystemVolume.mtime", () => {
 	it.effect("a seeded mtime is readable, and distinct files keep distinct times", () =>
 		Effect.gen(function* () {
-			const { volume } = yield* MemoryFileSystem.makeInspectableWith({
+			const { volume } = yield* MemoryFileSystem.makeHandle({
 				"/pkg/src/old.ts": MemoryFileSystem.file("old", { mtime: 1_000 }),
 				"/pkg/src/new.ts": MemoryFileSystem.file("new", { mtime: 9_000 }),
 			});
@@ -426,7 +235,7 @@ describe("MemoryFileSystemVolume.mtime", () => {
 
 	it.effect("HONEST ABSENCE: an absent path is undefined, never a 1970 timestamp", () =>
 		Effect.gen(function* () {
-			const { volume } = yield* MemoryFileSystem.makeInspectableWith({
+			const { volume } = yield* MemoryFileSystem.makeHandle({
 				"/epoch.txt": MemoryFileSystem.file("at the epoch", { mtime: 0 }),
 			});
 			// 0 is a REAL modification time. A signature over mtimes must be able to
@@ -439,7 +248,7 @@ describe("MemoryFileSystemVolume.mtime", () => {
 
 	it.effect("a write restamps the entry from the Effect Clock — which under test starts at the epoch", () =>
 		Effect.gen(function* () {
-			const { fileSystem, volume } = yield* MemoryFileSystem.makeInspectableWith({
+			const { fileSystem, volume } = yield* MemoryFileSystem.makeHandle({
 				"/tracked.txt": MemoryFileSystem.file("before", { mtime: 1_000 }),
 			});
 			assert.strictEqual(volume.mtime("/tracked.txt"), 1_000);
@@ -461,7 +270,7 @@ describe("MemoryFileSystemVolume.mtime", () => {
 
 	it.effect("utimes through the FileSystem is visible to the view", () =>
 		Effect.gen(function* () {
-			const { fileSystem, volume } = yield* MemoryFileSystem.makeInspectableWith({
+			const { fileSystem, volume } = yield* MemoryFileSystem.makeHandle({
 				"/a.txt": "contents",
 			});
 			// `utimes` reads a NUMBER as Unix seconds, so 5_000 there means
@@ -477,7 +286,7 @@ describe("MemoryFileSystemVolume.mtime", () => {
 
 	it.effect("mtime agrees with what stat reports through the FileSystem", () =>
 		Effect.gen(function* () {
-			const { fileSystem, volume } = yield* MemoryFileSystem.makeInspectableWith({
+			const { fileSystem, volume } = yield* MemoryFileSystem.makeHandle({
 				"/a.txt": MemoryFileSystem.file("contents", { mtime: 4_242 }),
 			});
 			const info = yield* fileSystem.stat("/a.txt");
@@ -489,10 +298,25 @@ describe("MemoryFileSystemVolume.mtime", () => {
 
 	it.effect("directories carry an mtime too", () =>
 		Effect.gen(function* () {
-			const { volume } = yield* MemoryFileSystem.makeInspectableWith({
+			const { volume } = yield* MemoryFileSystem.makeHandle({
 				"/dir": MemoryFileSystem.directory(),
 			});
 			assert.isDefined(volume.mtime("/dir"));
+		}),
+	);
+});
+
+describe("engine snapshot size", () => {
+	it.effect("reports file bytes, symlink target length and 0 for directories", () =>
+		Effect.gen(function* () {
+			const { fileSystem, entries } = yield* internal.makeInspectableWith({ caseSensitive: true });
+			yield* fileSystem.makeDirectory("/d");
+			yield* fileSystem.writeFileString("/d/f.txt", "héllo");
+			yield* fileSystem.symlink("/d/f.txt", "/d/l");
+			const byPath = new Map(entries().map((e) => [e.path, e]));
+			assert.strictEqual(byPath.get("/d/f.txt")?.size, 6);
+			assert.strictEqual(byPath.get("/d/l")?.size, 8);
+			assert.strictEqual(byPath.get("/d")?.size, 0);
 		}),
 	);
 });

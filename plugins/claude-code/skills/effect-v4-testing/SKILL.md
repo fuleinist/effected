@@ -392,21 +392,32 @@ needing `FileSystem` provides `@effected/memfs`, never a hand-rolled
 `layerNoop` double, because `layerNoop` is deny-by-default and a stub encodes
 only what its author remembered. `MemoryFileSystem` implements all three rows
 honestly — a directory really is created, a removal really removes — so
-misbehaviour is injected as a **fault handler**, not as a stub body. Keep
-`layerNoop` for the one-trivially-stubbed-member case only. Same tier:
+misbehaviour is injected as a **fault handler**, not as a stub body. The rule
+has no carve-out: a `FileSystem` double is `@effected/memfs`, never
+`FileSystem.layerNoop`. Same tier:
 **`readFileString` strips a leading BOM** (`FileSystem.ts:508` decodes
 `impl.readFile` through `TextDecoder` at `:511`, default `ignoreBOM: false`)
 → [references/false-greens.md](./references/false-greens.md).
 
-**Beyond a single trivially-stubbed member, prefer `@effected/memfs` over a
-hand-rolled `layerNoop` stub.** `MemoryFileSystem.layerWith(seed)` — seed:
-absolute POSIX path → `string` | `Uint8Array`, parents auto-created — provides
-a real in-memory `FileSystem` whose unseeded reads fail typed `NotFound`,
-where a hand stub answering unarranged reads with `""` produces exactly the
-silent false green above (a phantom file parsing as empty; that stub shipped
-a real dropped-changeset bug, which is why the package exists).
-`layerWith` is a parameterized layer factory: bind the result to a `const`
-(memoization discipline), `Layer.fresh` for per-test isolation.
+**A `FileSystem` double is `@effected/memfs` — never a `layerNoop` stub, and
+never a hand-rolled `node:fs` port stub.**
+`MemoryFileSystem.layerWith(seed)` — seed: absolute POSIX path → `string` |
+`Uint8Array` | tagged `file`/`directory`/`symlink`, parents auto-created —
+provides a real in-memory `FileSystem` whose unseeded reads fail typed
+`NotFound`, where a hand stub answering unarranged reads with `""` produces
+exactly the silent false green above (a phantom file parsing as empty; that
+stub shipped a real dropped-changeset bug, which is why the package exists).
+Bind each layer to a `const`.
+
+**Every `Effect.provide` of a memfs layer re-seeds a fresh volume** — even the
+same bound `const` — so a `MemoryFileSystem.Volume` read under a second provide
+inspects a volume nobody wrote to, and "nothing was written" passes vacuously.
+Assert inside the one provide, or build a handle (`MemoryFileSystem.makeHandle`
+/ `makeSync`) and provide its pinned `handle.layer`. Pick the form by where the
+assertion runs, seed with a `root`, fault the service or an injected port,
+build a case-insensitive volume, and the rest of the traps (literal view vs
+link-following ports, `..` after links, mtime units) →
+**[references/memfs.md](./references/memfs.md)**.
 
 A suite-boundary layer cannot vary per test, so several filesystem fixtures need
 **one `layer(...)` block per fixture** — the house shape in

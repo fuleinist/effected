@@ -1,10 +1,24 @@
-// The facade over the vendored engine (see internal/volume.ts for the port
-// header and the adaptation ledger pointer). Everything in this file — the
-// seeding API and the fault-injection wrapper — is a kit extension, not part
-// of the vendored port.
+// The public surface over the vendored engine (see internal/volume.ts for the
+// port header and the adaptation ledger pointer): the public types and the
+// MemoryFileSystem class. The machinery lives in internal/ — seeding (seed.ts),
+// the inspection view (view.ts), the node-shaped ports (ports.ts), fault
+// injection (faults.ts) and errno (errno.ts) — all kit extensions, not part of
+// the vendored port.
 
 import type { PlatformError } from "effect";
-import { Context, Effect, FileSystem, Layer } from "effect";
+import { Context, Effect, FileSystem, Layer, Path } from "effect";
+import { nodeErrno } from "./internal/errno.js";
+import { wrapFaulty } from "./internal/faults.js";
+import {
+	makePromisesFileSystem,
+	makeSyncFileSystem,
+	runMutation,
+	runNode,
+	syscallForMethod,
+	withFaults,
+} from "./internal/ports.js";
+import { applyRoot, normalizeAbsolute, seedWith } from "./internal/seed.js";
+import { makeVolumeService } from "./internal/view.js";
 import * as internal from "./internal/volume.js";
 
 /**
@@ -13,10 +27,10 @@ import * as internal from "./internal/volume.js";
  * without routing every assertion through an `Effect` read.
  *
  * @remarks
- * Resolved from context via the {@link MemoryFileSystem.Volume} key, published
- * only by {@link MemoryFileSystem.layerInspectable} and
- * {@link MemoryFileSystem.layerInspectableWith} (or obtained value-level from
- * {@link MemoryFileSystem.makeInspectable}). Every read walks the volume's
+ * Resolved from context via the {@link MemoryFileSystem.Volume} key, which
+ * every memory layer publishes ({@link MemoryFileSystem.layer},
+ * {@link MemoryFileSystem.layerWith}, a handle's `layer`), or obtained
+ * value-level from {@link MemoryFileSystem.makeHandle}. Every read walks the volume's
  * live state at call time — never a copy taken at build — so a read after a
  * write observes the write.
  *
@@ -111,16 +125,61 @@ export interface MemoryFileSystemVolume {
 	 * follows links, because the port it implements is defined in `stat` terms.
 	 */
 	readonly readLink: (path: string) => string | undefined;
+	/**
+	 * A literal `lstat` of `path`, or `undefined` when nothing lives there.
+	 *
+	 * @remarks
+	 * Literal like the rest of this view: a symbolic link reports as
+	 * `"symlink"`, never as its target, and its `size` is the UTF-8 byte length
+	 * of the stored target. A file's `size` is its byte length; a directory's
+	 * is `0`. `mtimeMs` is the same clock {@link MemoryFileSystemVolume.mtime}
+	 * reads.
+	 */
+	readonly lstat: (path: string) => MemoryFileSystemVolumeStat | undefined;
 }
 
 /**
- * The four synchronous file operations a consumer-supplied filesystem port
- * needs, as {@link MemoryFileSystem.syncFileSystem} exposes them over a
+ * The answer of {@link MemoryFileSystemVolume.lstat}.
+ *
+ * @public
+ */
+export interface MemoryFileSystemVolumeStat {
+	/** What lives at the path — a link is `"symlink"`, never its target's kind. */
+	readonly kind: "file" | "directory" | "symlink";
+	/** The entry's modification time as epoch milliseconds. */
+	readonly mtimeMs: number;
+	/** File byte length, symlink target UTF-8 byte length, or `0` for a directory. */
+	readonly size: number;
+}
+
+/**
+ * The error a synchronous `node:fs` call throws: an `Error` carrying `code`,
+ * `syscall` and — for a path-based syscall — `path`, with node's message
+ * format (`"ENOENT: no such file or directory, open '/x'"`). Built by
+ * {@link MemoryFileSystem.errno}.
+ *
+ * @remarks
+ * `path` is absent for a descriptor-based syscall such as `read`, exactly as
+ * on node's own error (reading a directory as a file is
+ * `"EISDIR: illegal operation on a directory, read"`, no path).
+ *
+ * @public
+ */
+export type MemoryFileSystemErrnoError = Error & {
+	readonly code: string;
+	readonly syscall: string;
+	readonly path?: string;
+};
+
+/**
+ * The six synchronous file operations a consumer-supplied filesystem port
+ * needs — `exists`, `readFile`, `readDirectory`, `isDirectory`, `stat`,
+ * `lstat` — as {@link MemoryFileSystem.syncFileSystem} exposes them over a
  * volume.
  *
  * @remarks
  * The shape is the `node:fs` synchronous subset — `existsSync`,
- * `readFileSync(p, "utf8")`, `readdirSync`, `statSync(p).isDirectory()` — which
+ * `readFileSync(p, "utf8")`, `readdirSync`, `statSync`/`lstatSync` — which
  * is also the port `@effected/workspaces` asks its sync entry points for.
  * Satisfaction is **structural**: this package declares its own type and
  * imports nothing, so no kit edge is created in either direction.
@@ -138,32 +197,237 @@ export interface MemoryFileSystemVolume {
  * that fabricated-content case is the bug this package exists to prevent.
  * Errors carry the `code` the Node binding would raise: `ENOENT` for an absent
  * path, `EISDIR` for reading a directory as a file, `ENOTDIR` for listing a
- * non-directory.
+ * non-directory, `ELOOP` for a link cycle. The `syscall` matches node's for the
+ * same call (`open`, `read`, `scandir`, `stat`, `lstat`).
+ *
+ * Members are standalone functions, not methods: pass them as callbacks
+ * without binding.
  *
  * @public
  */
 export interface MemoryFileSystemSyncFileSystem {
 	/** Whether anything exists at `path`, following links. A dangling link is absent. Never throws. */
 	readonly exists: (path: string) => boolean;
-	/** The UTF-8 contents of the file at `path`, following links. Throws `ENOENT`/`EISDIR`/`ENOTDIR`. */
+	/** The UTF-8 contents of the file at `path`, following links. Throws `ENOENT`/`EISDIR`/`ENOTDIR`/`ELOOP`. */
 	readonly readFile: (path: string) => string;
-	/** The entry names inside the directory at `path`, following links. Throws `ENOENT`/`ENOTDIR`. */
+	/** The entry names inside the directory at `path`, following links. Throws `ENOENT`/`ENOTDIR`/`ELOOP`. */
 	readonly readDirectory: (path: string) => ReadonlyArray<string>;
 	/** Whether `path` resolves to a directory, following links — as `statSync(p).isDirectory()` does. */
 	readonly isDirectory: (path: string) => boolean;
+	/** `statSync`: follows links. Throws `ENOENT`/`ENOTDIR`/`ELOOP` with `syscall: "stat"`. */
+	readonly stat: (path: string) => MemoryFileSystemPortStats;
+	/** `lstatSync`: does not follow a final link. Throws `ENOENT`/`ENOTDIR`/`ELOOP` with `syscall: "lstat"`. */
+	readonly lstat: (path: string) => MemoryFileSystemPortStats;
 }
 
 /**
- * The `FileSystem` service and the {@link MemoryFileSystemVolume} inspecting
- * the same underlying volume — the value-level pair returned by
- * {@link MemoryFileSystem.makeInspectable} and
- * {@link MemoryFileSystem.makeInspectableWith}.
+ * The stats a {@link MemoryFileSystemSyncFileSystem} `stat`/`lstat` answers —
+ * the `node:fs` `Stats` subset a port consumer reads.
  *
  * @public
  */
-export interface MemoryFileSystemInspectable {
+export interface MemoryFileSystemPortStats {
+	/** Whether the entry is a regular file. */
+	isFile(): boolean;
+	/** Whether the entry is a directory. */
+	isDirectory(): boolean;
+	/** Whether the entry is a symbolic link (only ever true for `lstat`). */
+	isSymbolicLink(): boolean;
+	/** The modification time as epoch milliseconds. */
+	readonly mtimeMs: number;
+	/** File byte length, symlink target UTF-8 byte length, or `0` for a directory. */
+	readonly size: number;
+}
+
+/**
+ * A directory entry as `readdir(path, { withFileTypes: true })` answers it.
+ * Literal: a symbolic link is a symbolic link, never its target's kind.
+ *
+ * @public
+ */
+export interface MemoryFileSystemDirent {
+	/** The entry name (not the path). */
+	readonly name: string;
+	/** Whether the entry is a regular file. */
+	isFile(): boolean;
+	/** Whether the entry is a directory. */
+	isDirectory(): boolean;
+	/** Whether the entry is a symbolic link. */
+	isSymbolicLink(): boolean;
+}
+
+/**
+ * The read-only `node:fs/promises` subset an injected async walker needs, as
+ * {@link MemoryFileSystem.promisesFileSystem} exposes it over a volume.
+ *
+ * @remarks
+ * Same semantics and node-shaped rejections as
+ * {@link MemoryFileSystemSyncFileSystem}: `stat` and `readFile` follow links,
+ * `lstat` and dirents do not. Members are standalone functions, not methods:
+ * pass them as callbacks without binding.
+ *
+ * @public
+ */
+export interface MemoryFileSystemPromisesFileSystem {
+	/** The entry names inside the directory at `path`. */
+	readdir(path: string): Promise<ReadonlyArray<string>>;
+	/** The entries inside the directory at `path`, with their (literal) kinds. */
+	readdir(path: string, options: { readonly withFileTypes: true }): Promise<ReadonlyArray<MemoryFileSystemDirent>>;
+	/** `stat`: follows links. */
+	stat(path: string): Promise<MemoryFileSystemPortStats>;
+	/** `lstat`: does not follow a final link. */
+	lstat(path: string): Promise<MemoryFileSystemPortStats>;
+	/** The raw contents of the file at `path`, following links — node's Buffer-returning form. */
+	readFile(path: string): Promise<Uint8Array>;
+	/** The UTF-8 contents of the file at `path`, following links. */
+	readFile(path: string, encoding: MemoryFileSystemReadFileEncoding): Promise<string>;
+}
+
+/**
+ * The encodings `MemoryFileSystemPromisesFileSystem.readFile` accepts:
+ * UTF-8, spelled either way, bare or as node's `{ encoding }` options object.
+ *
+ * @public
+ */
+export type MemoryFileSystemReadFileEncoding = "utf8" | "utf-8" | { readonly encoding: "utf8" | "utf-8" };
+
+/**
+ * Fault handlers for a {@link MemoryFileSystemPromisesFileSystem}: each may
+ * return a replacement promise, throw (an errno built with
+ * {@link MemoryFileSystem.errno}), or return `undefined` to delegate. A
+ * handler that throws synchronously makes the call REJECT, as a real
+ * `fs/promises` call does; it never throws at the call site.
+ *
+ * @public
+ */
+export type MemoryFileSystemPromisesFaults = {
+	readonly [K in Exclude<keyof MemoryFileSystemPromisesFileSystem, "readdir" | "readFile">]?: (
+		...args: Parameters<MemoryFileSystemPromisesFileSystem[K]>
+	) => ReturnType<MemoryFileSystemPromisesFileSystem[K]> | undefined;
+} & {
+	/**
+	 * Receives `options` as given; a replacement should match them (names
+	 * without `withFileTypes`, dirents with it).
+	 */
+	readonly readdir?: (
+		path: string,
+		options?: { readonly withFileTypes: true },
+	) => Promise<ReadonlyArray<string> | ReadonlyArray<MemoryFileSystemDirent>> | undefined;
+	/** Receives `encoding` as given; a replacement should match it (bytes without, a string with). */
+	readonly readFile?: (
+		path: string,
+		encoding?: MemoryFileSystemReadFileEncoding,
+	) => Promise<Uint8Array | string> | undefined;
+};
+
+/**
+ * A synchronously built memory volume with every view over it: the `FileSystem`
+ * service, the inspection {@link MemoryFileSystemVolume}, a stable layer, the
+ * two read-only ports, and synchronous mutators — for Promise-style suites
+ * that never touch `Effect`.
+ *
+ * @remarks
+ * All members share ONE volume. `layer` is a fixed value built over that
+ * volume, so every `Effect.provide(handle.layer)` — in one program or many —
+ * sees the same state; it is not rebuilt per provide.
+ *
+ * `sync` and `promises` are read-only views. Mutate through `write`, `mkdir`,
+ * `remove` and `symlink`, which throw node-shaped errors (`code`, `syscall`,
+ * `path`) on failure, as the `node:fs` calls they stand in for do.
+ *
+ * `write` and `symlink` create a parent only when it is ABSENT, so their
+ * failures match the single node call they stand in for: writing under a
+ * parent that is a file fails `ENOTDIR` (as `writeFileSync` does), while
+ * `mkdir` — recursive, like `mkdirSync(p, { recursive: true })` — over an
+ * existing file fails `EEXIST`. A contradictory seed fails the same way,
+ * with node's syscall for the failing step (`mkdir`, `open`, `symlink`,
+ * `chmod`, `utime`).
+ *
+ * @public
+ */
+export interface MemoryFileSystemHandle {
+	/** The `FileSystem` service over the volume. */
 	readonly fileSystem: FileSystem.FileSystem;
+	/** The synchronous inspection view of the same volume. */
 	readonly volume: MemoryFileSystemVolume;
+	/**
+	 * Provides `FileSystem` (this volume, faulted when `options.faults` was
+	 * given), {@link MemoryFileSystem.Volume} and `Path`; stable across
+	 * provides. Unlike {@link MemoryFileSystem.layer} it includes `Path`, for
+	 * Promise-style suites that never compose layers.
+	 */
+	readonly layer: Layer.Layer<FileSystem.FileSystem | MemoryFileSystemVolume | Path.Path>;
+	/** The read-only `node:fs` sync port over the volume. */
+	readonly sync: MemoryFileSystemSyncFileSystem;
+	/** The read-only `node:fs/promises` port over the volume. */
+	readonly promises: MemoryFileSystemPromisesFileSystem;
+	/**
+	 * The normalized `options.root` the handle was built with, or `undefined`.
+	 * The mutators join a relative path to it.
+	 *
+	 * @remarks
+	 * Seed keys and mutator paths join the root differently, on purpose. A
+	 * seed key is plain data and joins LEXICALLY (`"../x"` under `/ws/repo` is
+	 * `/ws/x`, whatever links exist). A mutator path is a filesystem call and
+	 * is handed to the engine unnormalized, so `.` and `..` resolve AFTER
+	 * following links, POSIX-style: with `/r/link` pointing at `/elsewhere/dir`,
+	 * `write("link/../x")` lands at `/elsewhere/x`, exactly as
+	 * `write("/r/link/../x")` and the host's `writeFileSync` do.
+	 */
+	readonly root: string | undefined;
+	/**
+	 * Read-only ports over the same volume with faults injected — the same
+	 * machinery (and unknown-key `RangeError`) as
+	 * {@link MemoryFileSystem.syncFileSystem} and
+	 * {@link MemoryFileSystem.promisesFileSystem}. The handle's own `sync` and
+	 * `promises` stay unfaulted, and `options.faults` never reaches them: it
+	 * faults the `FileSystem` service only.
+	 */
+	readonly withFaults: (faults: {
+		readonly sync?: MemoryFileSystemSyncFaults | undefined;
+		readonly promises?: MemoryFileSystemPromisesFaults | undefined;
+	}) => {
+		readonly sync: MemoryFileSystemSyncFileSystem;
+		readonly promises: MemoryFileSystemPromisesFileSystem;
+	};
+	/**
+	 * Writes `content` at `path`, creating a missing parent. A relative `path`
+	 * joins {@link MemoryFileSystemHandle.root} (or `/` without one).
+	 */
+	readonly write: (path: string, content: string | Uint8Array) => void;
+	/** Creates the directory at `path` (recursively); a relative `path` joins the root. */
+	readonly mkdir: (path: string) => void;
+	/** Removes `path` (recursively); a relative `path` joins the root. */
+	readonly remove: (path: string) => void;
+	/**
+	 * Creates a symbolic link at `path` pointing at `target`, creating a missing
+	 * parent. A relative `path` joins the root; `target` is stored verbatim.
+	 */
+	readonly symlink: (target: string, path: string) => void;
+}
+
+/**
+ * Fault handlers for a {@link MemoryFileSystemSyncFileSystem}: each receives
+ * the real call arguments and may throw (an errno built with
+ * {@link MemoryFileSystem.errno}), return a replacement, or return `undefined`
+ * to delegate to the volume.
+ *
+ * @public
+ */
+export type MemoryFileSystemSyncFaults = {
+	readonly [K in keyof MemoryFileSystemSyncFileSystem]?: (
+		...args: Parameters<MemoryFileSystemSyncFileSystem[K]>
+	) => ReturnType<MemoryFileSystemSyncFileSystem[K]> | undefined;
+};
+
+/**
+ * Options for a synchronous port built over a volume.
+ *
+ * @public
+ */
+export interface MemoryFileSystemPortOptions<Faults> {
+	/** Handlers that intercept individual port members. */
+	readonly faults?: Faults | undefined;
 }
 
 /**
@@ -245,6 +509,66 @@ export type MemoryFileSystemSeedEntry =
 export interface MemoryFileSystemSeed {
 	readonly [path: string]: MemoryFileSystemSeedEntry;
 }
+
+/**
+ * Options shared by every seeded constructor.
+ *
+ * @public
+ */
+export interface MemoryFileSystemOptions {
+	/**
+	 * An absolute directory the seed is rooted at. Seed keys are then relative
+	 * to it, and the empty key `""` addresses the root itself. The root is
+	 * normalized lexically (`//`, `.`, `..`) and is always created, even for an
+	 * empty seed.
+	 *
+	 * @remarks
+	 * The root is a join base, not a jail: a key is joined to it lexically, as
+	 * `path.posix.join` does, so `"../extra/a.ts"` under `root: "/ws/repo"`
+	 * lands at `/ws/extra/a.ts`. A handle's mutators join relative paths to it
+	 * too, but UNNORMALIZED, so `.` and `..` resolve after links are followed
+	 * (see {@link MemoryFileSystemHandle.root}). A relative root, or an
+	 * absolute seed key alongside a root,
+	 * is a typed `BadArgument` naming the offending value (`makeSync` throws
+	 * `EINVAL` with it in the path slot).
+	 */
+	readonly root?: string | undefined;
+	/**
+	 * Whether path lookups are case-sensitive. Defaults to `true`; `false`
+	 * models a case-insensitive, case-PRESERVING volume such as default APFS.
+	 *
+	 * @remarks
+	 * Semantics are taken from a real APFS volume (the adaptation ledger has
+	 * the table): a lookup in any spelling finds the stored entry, and
+	 * listings, `paths()` and `snapshot()` keep the stored spelling. `realPath`
+	 * keeps the QUERIED spelling (only a link's target text supplies its own),
+	 * as the node adapter's `realPath` does. Renaming or `copyFile`-ing onto a
+	 * differently-cased existing entry keeps the destination's stored spelling,
+	 * while `copy` (unlink-then-create) takes the requested one; a case-only
+	 * rename rekeys the entry. Folding is `toLowerCase` per UTF-16 unit, so a
+	 * character whose case mapping changes length or is locale-specific (`İ`,
+	 * `ß`) does not fold as a regex `i` flag would, and names are not
+	 * Unicode-normalized (APFS treats NFC and NFD spellings as one name; this
+	 * volume does not).
+	 */
+	readonly caseSensitive?: boolean | undefined;
+	/**
+	 * Faults to inject into the built `FileSystem` — the same registration map
+	 * (or factory) {@link MemoryFileSystem.makeFaulty} takes. The seed is
+	 * written beneath the faults, and {@link MemoryFileSystem.Volume} inspects
+	 * the raw volume, so a test can inject a failure and still assert on what
+	 * actually landed.
+	 *
+	 * @remarks
+	 * `FileSystem`-scoped: it does not reach a handle's `sync` or `promises`
+	 * ports. Fault those with {@link MemoryFileSystemHandle.withFaults}.
+	 */
+	readonly faults?: MemoryFileSystemFaults | MemoryFileSystemFaultsFactory | undefined;
+}
+
+const engineOptions = (options: MemoryFileSystemOptions | undefined): internal.EngineOptions => ({
+	caseSensitive: options?.caseSensitive ?? true,
+});
 
 /**
  * The members of `FileSystem.FileSystem` that a fault handler can intercept:
@@ -332,332 +656,97 @@ export type MemoryFileSystemFaults = {
  */
 export type MemoryFileSystemFaultsFactory = (base: FileSystem.FileSystem) => MemoryFileSystemFaults;
 
-const encoder = new TextEncoder();
-
-const seedVolume = (
-	fs: FileSystem.FileSystem,
-	seed: MemoryFileSystemSeed,
-): Effect.Effect<void, PlatformError.PlatformError> =>
-	Effect.gen(function* () {
-		for (const [path, entry] of Object.entries(seed)) {
-			const separator = path.lastIndexOf("/");
-			const parent = separator <= 0 ? "/" : path.slice(0, separator);
-			if (parent !== "/") {
-				yield* fs.makeDirectory(parent, { recursive: true });
-			}
-			if (typeof entry === "string" || entry instanceof Uint8Array) {
-				yield* fs.writeFile(path, typeof entry === "string" ? encoder.encode(entry) : entry);
-				continue;
-			}
-			switch (entry._tag) {
-				case "MemoryFileSystemSeedFile": {
-					const data = typeof entry.content === "string" ? encoder.encode(entry.content) : entry.content;
-					yield* fs.writeFile(path, data, entry.mode !== undefined ? { mode: entry.mode } : undefined);
-					// Applied after the write, which stamps the volume's clock. Both
-					// times are set together because `utimes` takes the pair; a seed
-					// that pins mtime without pinning atime would leave the two
-					// disagreeing for no stated reason.
-					//
-					// A `Date`, NOT the bare number: `utimes` reads a numeric
-					// argument as Unix SECONDS (as `fs.utimesSync` does), while this
-					// option is epoch milliseconds — passing it through unconverted
-					// silently multiplies every seeded time by 1000.
-					if (entry.mtime !== undefined) {
-						const stamp = new Date(entry.mtime);
-						yield* fs.utimes(path, stamp, stamp);
-					}
-					break;
-				}
-				case "MemoryFileSystemSeedDirectory": {
-					yield* fs.makeDirectory(path, { recursive: true });
-					// Applied via chmod rather than makeDirectory's mode option so the
-					// mode also lands when the directory already exists — e.g. created
-					// implicitly as an earlier entry's parent.
-					if (entry.mode !== undefined) {
-						yield* fs.chmod(path, entry.mode);
-					}
-					break;
-				}
-				case "MemoryFileSystemSeedSymlink": {
-					yield* fs.symlink(entry.target, path);
-					break;
-				}
-			}
-		}
-	});
-
-const decoder = new TextDecoder();
-
-// Lexical-only normalization for inspection queries: collapses "//" and ".",
-// applies "..", resolves relative paths from the virtual root — matching the
-// engine's canonical "/a/b" spelling. Deliberately does NOT follow symlinks:
-// the inspection view is literal.
-const normalizeQueryPath = (path: string): string => {
-	const segments: Array<string> = [];
-	for (const segment of path.split("/")) {
-		if (segment === "" || segment === ".") {
-			continue;
-		}
-		if (segment === "..") {
-			segments.pop();
-			continue;
-		}
-		segments.push(segment);
-	}
-	return `/${segments.join("/")}`;
-};
-
-const findEntryAt = (
-	entries: ReadonlyArray<internal.VolumeEntrySnapshot>,
-	path: string,
-): internal.VolumeEntrySnapshot | undefined => {
-	const normalized = normalizeQueryPath(path);
-	return entries.find((entry) => entry.path === normalized);
-};
-
-const makeVolumeService = (entries: () => Array<internal.VolumeEntrySnapshot>): MemoryFileSystemVolume => ({
-	snapshot: () => {
-		const record: Record<string, Uint8Array> = {};
-		for (const entry of entries()) {
-			if (entry.data !== undefined) {
-				record[entry.path] = entry.data.slice();
-			}
-		}
-		return record;
-	},
-	text: (path) => {
-		const data = findEntryAt(entries(), path)?.data;
-		return data === undefined ? undefined : decoder.decode(data);
-	},
-	bytes: (path) => findEntryAt(entries(), path)?.data?.slice(),
-	has: (path) => findEntryAt(entries(), path) !== undefined,
-	paths: () =>
-		entries()
-			.filter((entry) => entry.data !== undefined)
-			.map((entry) => entry.path)
-			.sort(),
-	readDirectory: (path) => {
-		const snapshot = entries();
-		const normalized = normalizeQueryPath(path);
-		if (findEntryAt(snapshot, normalized)?.type !== "Directory") {
-			return undefined;
-		}
-		// "/" would otherwise build the prefix "//" and match nothing.
-		const prefix = normalized === "/" ? "/" : `${normalized}/`;
-		return snapshot
-			.filter(
-				(entry) =>
-					entry.path !== normalized && entry.path.startsWith(prefix) && !entry.path.slice(prefix.length).includes("/"),
-			)
-			.map((entry) => entry.path.slice(prefix.length))
-			.sort();
-	},
-	isDirectory: (path) => findEntryAt(entries(), path)?.type === "Directory",
-	mtime: (path) => findEntryAt(entries(), path)?.mtime,
-	readLink: (path) => {
-		const entry = findEntryAt(entries(), path);
-		return entry?.type === "SymbolicLink" ? entry.target : undefined;
-	},
-});
-
-// Absence in a synchronous, non-`Effect` signature can only be reported by
-// throwing — the honest-absence contract's sync form. `code` mirrors the
-// `node:fs` errno a consumer written against the Node binding may inspect.
-const syncAbsence = (code: "ENOENT" | "ENOTDIR" | "EISDIR", syscall: string, path: string): Error =>
-	Object.assign(new Error(`${code}: ${syscall} '${path}'`), { code, syscall, path });
-
-// The port is defined in `stat` terms, so it FOLLOWS symbolic links — unlike
-// the literal inspection view it is built on. `MAX_LINK_HOPS` mirrors the
-// ELOOP guard a real filesystem applies; a cycle resolves to absence rather
-// than spinning.
-const MAX_LINK_HOPS = 40;
-
-const resolveLinks = (volume: MemoryFileSystemVolume, path: string): string | undefined => {
-	// Resolution is per COMPONENT, not just the final one: `/links/pkg/a.json`
-	// has to follow the link at `/links/pkg` before it can see `a.json`, exactly
-	// as a real filesystem walks a path. Resolving only the last component makes
-	// every path *underneath* a symlinked directory read as absent.
-	let current = "";
-	let hops = 0;
-	for (const part of path.split("/")) {
-		if (part === "" || part === ".") continue;
-		if (part === "..") {
-			// Applied to the RESOLVED location, so ".." after a link ascends from
-			// the target rather than from the link's own parent.
-			current = current.slice(0, Math.max(0, current.lastIndexOf("/")));
-			continue;
-		}
-		let candidate = `${current}/${part}`;
-		for (;;) {
-			const target = volume.readLink(candidate);
-			if (target === undefined) break;
-			hops += 1;
-			if (hops > MAX_LINK_HOPS) return undefined;
-			candidate = target.startsWith("/") ? target : `${current}/${target}`;
-		}
-		if (!volume.has(candidate)) return undefined;
-		current = candidate;
-	}
-	const final = current === "" ? "/" : current;
-	return volume.has(final) ? final : undefined;
-};
-
-const makeSyncFileSystem = (volume: MemoryFileSystemVolume): MemoryFileSystemSyncFileSystem => {
-	// A dangling link is ABSENT to this port, matching `existsSync`, even though
-	// the literal view reports the link itself as present.
-	const resolved = (path: string) => resolveLinks(volume, path);
-	return {
-		exists: (path) => resolved(path) !== undefined,
-		readFile: (path) => {
-			const target = resolved(path);
-			if (target === undefined) {
-				throw syncAbsence("ENOENT", "readFile", path);
-			}
-			const text = volume.text(target);
-			if (text === undefined) {
-				// Reading a directory as a file is EISDIR in `readFileSync`;
-				// anything else that is not a regular file is ENOTDIR.
-				throw syncAbsence(volume.isDirectory(target) ? "EISDIR" : "ENOTDIR", "readFile", path);
-			}
-			return text;
-		},
-		readDirectory: (path) => {
-			const target = resolved(path);
-			if (target === undefined) {
-				throw syncAbsence("ENOENT", "readDirectory", path);
-			}
-			const names = volume.readDirectory(target);
-			if (names === undefined) {
-				throw syncAbsence("ENOTDIR", "readDirectory", path);
-			}
-			return names;
-		},
-		isDirectory: (path) => {
-			const target = resolved(path);
-			return target !== undefined && volume.isDirectory(target);
-		},
-	};
-};
-
-const inspectableContext = ({
+const handleContext = ({
 	fileSystem,
 	volume,
-}: MemoryFileSystemInspectable): Context.Context<FileSystem.FileSystem | MemoryFileSystemVolume> =>
-	Context.make(FileSystem.FileSystem, fileSystem).pipe(Context.add(MemoryFileSystem.Volume, volume));
+}: Pick<MemoryFileSystemHandle, "fileSystem" | "volume">): Context.Context<
+	FileSystem.FileSystem | MemoryFileSystemVolume
+> => Context.make(FileSystem.FileSystem, fileSystem).pipe(Context.add(MemoryFileSystem.Volume, volume));
 
-// The armed form of a fault: per-method parameter and return typing is erased
-// for storage in the method → handler map (a handler may return an Effect, a
-// Stream, a Sink, or undefined); `wrapFaulty` restores it at each call site.
-type ArmedHandler = (...args: ReadonlyArray<unknown>) => unknown;
-
-const armFault = (fault: NonNullable<MemoryFileSystemFaults[MemoryFileSystemFaultMethod]>): ArmedHandler => {
-	if (typeof fault === "function") {
-		return fault as ArmedHandler;
-	}
-	let remaining = fault.times;
-	return () => {
-		if (remaining <= 0) {
-			return undefined;
-		}
-		remaining -= 1;
-		return Effect.fail(fault.error);
-	};
-};
-
-const wrapFaulty = (
-	base: FileSystem.FileSystem,
-	registration: MemoryFileSystemFaults | MemoryFileSystemFaultsFactory,
-): FileSystem.FileSystem => {
-	const faults = typeof registration === "function" ? registration(base) : registration;
-	const armed = new Map<MemoryFileSystemFaultMethod, ArmedHandler>();
-	for (const method of Object.keys(faults) as Array<MemoryFileSystemFaultMethod>) {
-		const fault = faults[method];
-		if (fault !== undefined) {
-			armed.set(method, armFault(fault));
-		}
-	}
-	// Effect-returning methods defer through Effect.suspend so each EXECUTION
-	// re-consults its handler — a retried effect re-decides, which is what lets
-	// failTimes count Effect.retry attempts rather than method invocations.
-	const intercept = <Method extends MemoryFileSystemFaultMethod>(
-		method: Method,
-		target: FileSystem.FileSystem[Method],
-	): FileSystem.FileSystem[Method] => {
-		const handler = armed.get(method);
-		if (handler === undefined) {
-			return target;
-		}
-		const delegate = target as (...args: ReadonlyArray<unknown>) => Effect.Effect<unknown, unknown, unknown>;
-		const intercepted = (...args: ReadonlyArray<unknown>) =>
-			Effect.suspend(() => (handler(...args) ?? delegate(...args)) as Effect.Effect<unknown, unknown, unknown>);
-		return intercepted as FileSystem.FileSystem[Method];
-	};
-	// `stream`, `sink` and `watch` return Streams/Sinks — lazy by construction
-	// — so their handlers are consulted when the method is called; the value
-	// the handler returns (or the delegate's) carries its own per-run laziness.
-	const interceptLazy = <Method extends "sink" | "stream" | "watch">(
-		method: Method,
-		target: FileSystem.FileSystem[Method],
-	): FileSystem.FileSystem[Method] => {
-		const handler = armed.get(method);
-		if (handler === undefined) {
-			return target;
-		}
-		const delegate = target as (...args: ReadonlyArray<unknown>) => unknown;
-		const intercepted = (...args: ReadonlyArray<unknown>) => handler(...args) ?? delegate(...args);
-		return intercepted as FileSystem.FileSystem[Method];
-	};
-	// Rebuilding through FileSystem.make re-derives `exists`, `readFileString`,
-	// `writeFileString`, `stream` and `sink` from the intercepted core methods,
-	// so a fault registered on e.g. `readFile` or `open` propagates coherently
-	// into the members derived from it — exactly as an OS-level failure would.
-	// The five derived members are destructured out of the spread so the
-	// contract is explicit rather than relying on `make` to overwrite them.
-	const {
-		exists: _exists,
-		readFileString: _readFileString,
-		sink: _sink,
-		stream: _stream,
-		writeFileString: _writeFileString,
-		...primitives
-	} = base;
-	const core = FileSystem.make({
-		...primitives,
-		access: intercept("access", base.access),
-		chmod: intercept("chmod", base.chmod),
-		chown: intercept("chown", base.chown),
-		copy: intercept("copy", base.copy),
-		copyFile: intercept("copyFile", base.copyFile),
-		glob: intercept("glob", base.glob),
-		link: intercept("link", base.link),
-		makeDirectory: intercept("makeDirectory", base.makeDirectory),
-		makeTempDirectory: intercept("makeTempDirectory", base.makeTempDirectory),
-		makeTempDirectoryScoped: intercept("makeTempDirectoryScoped", base.makeTempDirectoryScoped),
-		makeTempFile: intercept("makeTempFile", base.makeTempFile),
-		makeTempFileScoped: intercept("makeTempFileScoped", base.makeTempFileScoped),
-		open: intercept("open", base.open),
-		readDirectory: intercept("readDirectory", base.readDirectory),
-		readFile: intercept("readFile", base.readFile),
-		readLink: intercept("readLink", base.readLink),
-		realPath: intercept("realPath", base.realPath),
-		remove: intercept("remove", base.remove),
-		rename: intercept("rename", base.rename),
-		stat: intercept("stat", base.stat),
-		symlink: intercept("symlink", base.symlink),
-		truncate: intercept("truncate", base.truncate),
-		utimes: intercept("utimes", base.utimes),
-		watch: interceptLazy("watch", base.watch),
-		writeFile: intercept("writeFile", base.writeFile),
+// The one build path behind every seeded constructor: engine, seed (written
+// beneath any faults), view, then the optional fault wrapper over the service.
+// The mutators and ports use the RAW filesystem and view — they are setup and
+// inspection, not the code under test.
+const buildHandle = (
+	seed: MemoryFileSystemSeed,
+	options: MemoryFileSystemOptions | undefined,
+): Effect.Effect<MemoryFileSystemHandle, PlatformError.PlatformError> =>
+	Effect.gen(function* () {
+		const engine = yield* internal.makeInspectableWith(engineOptions(options));
+		const raw = engine.fileSystem;
+		yield* seedWith(raw, seed, options);
+		const volume = makeVolumeService(engine);
+		const fileSystem = options?.faults === undefined ? raw : wrapFaulty(raw, options.faults);
+		// `seedWith` has already rejected a relative root, so this is the normalized join base.
+		const root = options?.root === undefined ? undefined : normalizeAbsolute(options.root);
+		// A mutator path: absolute as given; relative joined to the root (or to
+		// "/" without one). The join is deliberately NOT normalized: the engine
+		// resolves "." and ".." AFTER following links, POSIX-style, so
+		// "link/../x" lands where the link leads — as the host and the absolute
+		// spelling do. (Seed keys, by contrast, join lexically.) Errors still
+		// report the caller's own path.
+		const at = (path: string) => (path.startsWith("/") ? path : `${root ?? ""}/${path}`);
+		const parentOf = (path: string) => path.slice(0, Math.max(1, path.lastIndexOf("/")));
+		const sync = makeSyncFileSystem(volume);
+		// Only creates a parent that is absent: an existing parent that is a file
+		// must reach the write itself, which fails ENOTDIR as `writeFileSync` does
+		// (a recursive mkdir over an existing file would say EEXIST instead).
+		// Presence is checked with the port's `lstat`: intermediate links and
+		// ".." resolve (so it agrees with the engine on an unnormalized path —
+		// never the lexical view), but the FINAL component is not followed. A
+		// dangling or looping link AS the parent is therefore present, so the
+		// write itself fails ENOENT / ELOOP, as `writeFileSync` does — never a
+		// mkdir over the link (EEXIST).
+		const present = (path: string) => {
+			try {
+				sync.lstat(path);
+				return true;
+			} catch {
+				return false;
+			}
+		};
+		// A dangling or looping link HIGHER up makes `lstat` of the parent fail
+		// too, and the recursive mkdir then trips over that link with EEXIST
+		// (where the host says ENOENT / ELOOP). EEXIST from a recursive mkdir
+		// only ever means some component exists as a non-directory, so the call
+		// that follows is bound to fail on it: swallow it and let that call
+		// report node's own errno and syscall.
+		const ensureParent = (path: string) => {
+			const parent = parentOf(path);
+			return present(parent)
+				? Effect.void
+				: raw
+						.makeDirectory(parent, { recursive: true })
+						.pipe(Effect.catch((error) => (error.reason._tag === "AlreadyExists" ? Effect.void : Effect.fail(error))));
+		};
+		const handle: MemoryFileSystemHandle = {
+			fileSystem,
+			volume,
+			layer: Layer.merge(Layer.succeedContext(handleContext({ fileSystem, volume })), Path.layer),
+			sync,
+			promises: makePromisesFileSystem(volume),
+			root,
+			withFaults: (faults) => ({
+				sync: MemoryFileSystem.syncFileSystem(volume, { faults: faults.sync }),
+				promises: MemoryFileSystem.promisesFileSystem(volume, { faults: faults.promises }),
+			}),
+			write: (path, content) =>
+				runMutation(
+					Effect.andThen(
+						ensureParent(at(path)),
+						typeof content === "string" ? raw.writeFileString(at(path), content) : raw.writeFile(at(path), content),
+					),
+					"writeFile",
+					path,
+				),
+			mkdir: (path) => runMutation(raw.makeDirectory(at(path), { recursive: true }), "makeDirectory", path),
+			remove: (path) => runMutation(raw.remove(at(path), { recursive: true }), "remove", path),
+			// Only the link's own path resolves against the root; the target text is stored verbatim.
+			symlink: (target, path) =>
+				runMutation(Effect.andThen(ensureParent(at(path)), raw.symlink(target, at(path))), "symlink", path),
+		};
+		return handle;
 	});
-	return {
-		...core,
-		exists: intercept("exists", core.exists),
-		readFileString: intercept("readFileString", core.readFileString),
-		sink: interceptLazy("sink", core.sink),
-		stream: interceptLazy("stream", core.stream),
-		writeFileString: intercept("writeFileString", core.writeFileString),
-	};
-};
 
 /**
  * An in-memory implementation of core Effect's `FileSystem` service: an
@@ -690,8 +779,9 @@ const wrapFaulty = (
  *   removal ever fails `PermissionDenied` on its own. Likewise `access`
  *   checks existence only, deliberately ignoring its
  *   `readable`/`writable`/`ok` options. To exercise a permission-failure code
- *   path, inject the failure with {@link MemoryFileSystem.layerFaulty}
- *   instead.
+ *   path, inject the failure with `options.faults` on
+ *   {@link MemoryFileSystem.layerWith} instead (or
+ *   {@link MemoryFileSystem.layerFaulty} over any other filesystem).
  * - Relative paths resolve from the virtual root `/`: the `FileSystem`
  *   contract has no working-directory operation.
  * - Malformed input fails through the typed `PlatformError` channel, never as
@@ -746,8 +836,8 @@ export class MemoryFileSystem {
 	static readonly make: Effect.Effect<FileSystem.FileSystem> = internal.make;
 
 	/**
-	 * Builds a `FileSystem` service backed by a fresh volume pre-populated from
-	 * `seed`.
+	 * Builds a `FileSystem` service backed by a fresh volume, optionally
+	 * pre-populated from `seed` and configured by `options`.
 	 *
 	 * @remarks
 	 * Fails typed when the seed contradicts itself — for example a file seeded
@@ -755,16 +845,19 @@ export class MemoryFileSystem {
 	 * an invalid mode. Everything absent from the seed stays absent: reads of
 	 * unseeded paths fail `NotFound`.
 	 *
-	 * @param seed - Absolute POSIX paths mapped to seed entries.
+	 * With `options.faults`, the returned filesystem is the faulted one; the
+	 * seed is written beneath the faults, never through them. Each call arms its
+	 * own transient-fault counters.
+	 *
+	 * @param seed - Absolute POSIX paths mapped to seed entries (relative keys
+	 *   when `options.root` is given). Defaults to an empty seed.
+	 * @param options - See {@link MemoryFileSystemOptions}.
 	 */
 	static readonly makeWith = (
-		seed: MemoryFileSystemSeed,
+		seed: MemoryFileSystemSeed = {},
+		options?: MemoryFileSystemOptions,
 	): Effect.Effect<FileSystem.FileSystem, PlatformError.PlatformError> =>
-		Effect.gen(function* () {
-			const fs = yield* internal.make;
-			yield* seedVolume(fs, seed);
-			return fs;
-		});
+		Effect.map(buildHandle(seed, options), (handle) => handle.fileSystem);
 
 	/**
 	 * Wraps an existing `FileSystem` so that registered faults can intercept
@@ -772,12 +865,18 @@ export class MemoryFileSystem {
 	 * wrapped filesystem.
 	 *
 	 * @remarks
-	 * The pure core of {@link MemoryFileSystem.layerFaulty} — most tests want
-	 * that layer form (or {@link MemoryFileSystem.layerFaultyWith}) and its
-	 * `Layer.provide` composition; see there for the interception semantics.
-	 * Reach for `makeFaulty` directly when composing a filesystem *value* by
-	 * hand (e.g. over {@link MemoryFileSystem.makeWith}). Each call arms its
-	 * own transient-fault counters.
+	 * The pure core of {@link MemoryFileSystem.layerFaulty}; see there for the
+	 * interception semantics. For a MEMORY volume with faults, pass
+	 * `options.faults` to {@link MemoryFileSystem.makeWith} or
+	 * {@link MemoryFileSystem.layerWith} instead. Reach for `makeFaulty` to
+	 * decorate any other filesystem value by hand. Each call arms its own
+	 * transient-fault counters.
+	 *
+	 * Fault keys are checked against the OWN enumerable function members of
+	 * `base` (a `RangeError` names any other key). Every `FileSystem.make`-built
+	 * service — memfs, the node adapter — has them; a class instance whose
+	 * methods live on its prototype is rejected, so wrap such a value in
+	 * `FileSystem.make({ ... })` first.
 	 *
 	 * @param base - The filesystem to wrap; any implementation works.
 	 * @param faults - The fault registration map, or a
@@ -797,11 +896,11 @@ export class MemoryFileSystem {
 	 * deny-by-default.
 	 *
 	 * @remarks
-	 * Note the naming points the opposite way from the `R` types: `layerFaulty`
-	 * wraps a base and so leaves `FileSystem` in `R`, while
-	 * {@link MemoryFileSystem.layerFaultyWith} is self-contained (`R = never`)
-	 * — for the no-seed case, reach for `layerFaultyWith({}, faults)`, not
-	 * this.
+	 * `layerFaulty` decorates whatever `FileSystem` is provided to it — the
+	 * node adapter, a hand-built double — and so leaves `FileSystem` in `R`.
+	 * For a memory volume with faults, use
+	 * `MemoryFileSystem.layerWith(seed, { faults })`, which is self-contained
+	 * and also publishes {@link MemoryFileSystem.Volume} over the raw volume.
 	 *
 	 * Handlers receive the real call arguments, so a fault can key on the path
 	 * or mode of one specific call. Injected failures should be genuine
@@ -875,27 +974,6 @@ export class MemoryFileSystem {
 		);
 
 	/**
-	 * The seeded convenience form of {@link MemoryFileSystem.layerFaulty}: a
-	 * self-contained layer wrapping a fresh volume seeded from `seed`.
-	 *
-	 * @remarks
-	 * Equivalent to `layerFaulty(faults)` provided with `layerWith(seed)`. All
-	 * of {@link MemoryFileSystem.layerFaulty}'s interception semantics and
-	 * {@link MemoryFileSystem.layerWith}'s seeding and memoization semantics
-	 * apply.
-	 *
-	 * @param seed - Absolute POSIX paths mapped to seed entries.
-	 * @param faults - The fault registration map, or a
-	 *   {@link MemoryFileSystemFaultsFactory} that builds it from the wrapped
-	 *   filesystem.
-	 */
-	static readonly layerFaultyWith = (
-		seed: MemoryFileSystemSeed,
-		faults: MemoryFileSystemFaults | MemoryFileSystemFaultsFactory,
-	): Layer.Layer<FileSystem.FileSystem> =>
-		Layer.provide(MemoryFileSystem.layerFaulty(faults), MemoryFileSystem.layerWith(seed));
-
-	/**
 	 * A transient fault: fails the first `times` intercepted calls with `error`,
 	 * then delegates to the wrapped filesystem forever after — the shape a
 	 * retry-policy test needs.
@@ -903,7 +981,7 @@ export class MemoryFileSystem {
 	 * @remarks
 	 * Usable as any value of the fault registration map. The countdown is
 	 * **armed per volume build**: each `makeFaulty` call — and each build of a
-	 * `layerFaulty`/`layerFaultyWith` layer — starts a fresh counter from
+	 * `layerFaulty` layer or `options.faults` build — starts a fresh counter from
 	 * `times`. Layer memoization is per-build, so consumers within one provided
 	 * layer graph share one counter, while a separate `Effect.provide` of the
 	 * same layer value re-arms it. In particular, a suite-boundary
@@ -926,18 +1004,20 @@ export class MemoryFileSystem {
 	 * import { MemoryFileSystem } from "@effected/memfs";
 	 * import { PlatformError } from "effect";
 	 *
-	 * const flaky = MemoryFileSystem.layerFaultyWith(
+	 * const flaky = MemoryFileSystem.layerWith(
 	 *   { "/config.json": "{}" },
 	 *   {
-	 *     readFileString: MemoryFileSystem.failTimes(
-	 *       2,
-	 *       PlatformError.systemError({
-	 *         _tag: "Busy",
-	 *         module: "FileSystem",
-	 *         method: "readFileString",
-	 *         pathOrDescriptor: "/config.json",
-	 *       }),
-	 *     ),
+	 *     faults: {
+	 *       readFileString: MemoryFileSystem.failTimes(
+	 *         2,
+	 *         PlatformError.systemError({
+	 *           _tag: "Busy",
+	 *           module: "FileSystem",
+	 *           method: "readFileString",
+	 *           pathOrDescriptor: "/config.json",
+	 *         }),
+	 *       ),
+	 *     },
 	 *   },
 	 * );
 	 * ```
@@ -976,10 +1056,9 @@ export class MemoryFileSystem {
 	 * ```ts
 	 * import { MemoryFileSystem } from "@effected/memfs";
 	 *
-	 * const layer = MemoryFileSystem.layerFaultyWith(
-	 *   {},
-	 *   { makeDirectory: MemoryFileSystem.die(new Error("makeDirectory is not stubbed")) },
-	 * );
+	 * const layer = MemoryFileSystem.layerWith(undefined, {
+	 *   faults: { makeDirectory: MemoryFileSystem.die(new Error("makeDirectory is not stubbed")) },
+	 * });
 	 * ```
 	 *
 	 * @param defect - The defect every intercepted call dies with.
@@ -1041,13 +1120,18 @@ export class MemoryFileSystem {
 	});
 
 	/**
-	 * Provides `FileSystem.FileSystem` backed by a fresh, empty volume.
+	 * Provides `FileSystem.FileSystem` backed by a fresh, empty volume, and
+	 * {@link MemoryFileSystem.Volume} inspecting it.
 	 *
 	 * @remarks
 	 * Layer memoization is per-build: consumers within one provided layer graph
-	 * share one volume; each separate `Effect.provide` builds a new one.
+	 * share one volume; each separate `Effect.provide` builds a new one. The
+	 * extra `Volume` service is harmless where only `FileSystem` is needed — a
+	 * layer providing more is assignable to `Layer<FileSystem.FileSystem>`.
 	 */
-	static readonly layer: Layer.Layer<FileSystem.FileSystem> = internal.layer;
+	static readonly layer: Layer.Layer<FileSystem.FileSystem | MemoryFileSystemVolume> = Layer.effectContext(
+		Effect.map(Effect.orDie(buildHandle({}, undefined)), handleContext),
+	);
 
 	/**
 	 * Provides `FileSystem.FileSystem` backed by a fresh volume pre-populated
@@ -1094,10 +1178,15 @@ export class MemoryFileSystem {
 	 * const reseeded = Effect.andThen(Effect.provide(write, Volume), Effect.provide(read, Volume));
 	 * ```
 	 *
-	 * @param seed - Absolute POSIX paths mapped to seed entries.
+	 * @param seed - Absolute POSIX paths mapped to seed entries (relative keys
+	 *   when `options.root` is given).
+	 * @param options - See {@link MemoryFileSystemOptions}.
 	 */
-	static readonly layerWith = (seed: MemoryFileSystemSeed): Layer.Layer<FileSystem.FileSystem> =>
-		Layer.effect(FileSystem.FileSystem, Effect.orDie(MemoryFileSystem.makeWith(seed)));
+	static readonly layerWith = (
+		seed: MemoryFileSystemSeed = {},
+		options?: MemoryFileSystemOptions,
+	): Layer.Layer<FileSystem.FileSystem | MemoryFileSystemVolume> =>
+		Layer.effectContext(Effect.map(Effect.orDie(buildHandle(seed, options)), handleContext));
 
 	/**
 	 * The context key for {@link MemoryFileSystemVolume}, mirroring the shape
@@ -1105,10 +1194,11 @@ export class MemoryFileSystem {
 	 * shape).
 	 *
 	 * @remarks
-	 * Published only by the opt-in {@link MemoryFileSystem.layerInspectable}
-	 * and {@link MemoryFileSystem.layerInspectableWith} — no other constructor
-	 * provides it, and none of them changed shape to carry it. Resolve it in a
-	 * test with `yield* MemoryFileSystem.Volume`.
+	 * Published by every memory layer — {@link MemoryFileSystem.layer},
+	 * {@link MemoryFileSystem.layerWith} and a handle's `layer` — beside the
+	 * `FileSystem` it inspects; under `options.faults` it inspects the raw
+	 * volume beneath the faults. Resolve it in a test with
+	 * `yield* MemoryFileSystem.Volume`.
 	 */
 	static readonly Volume: Context.Service<MemoryFileSystemVolume, MemoryFileSystemVolume> = Context.Service(
 		"@effected/memfs/MemoryFileSystemVolume",
@@ -1116,17 +1206,18 @@ export class MemoryFileSystem {
 
 	/**
 	 * Adapts a {@link MemoryFileSystemVolume} to the synchronous `node:fs`
-	 * subset — `exists`, `readFile`, `readDirectory`, `isDirectory` — for code
+	 * subset — `exists`, `readFile`, `readDirectory`, `isDirectory`, `stat`,
+	 * `lstat` — for code
 	 * that takes a consumer-supplied sync filesystem port rather than requiring
 	 * `FileSystem` from the environment.
 	 *
 	 * @remarks
 	 * A pure adapter over the inspection view: no service, no layer, no
 	 * `Effect`. Get a volume from
-	 * {@link MemoryFileSystem.makeInspectableWith} (or resolve
+	 * {@link MemoryFileSystem.makeHandle} (or resolve
 	 * {@link MemoryFileSystem.Volume}) and pass the result wherever the port is
 	 * expected. The shape is structural, so `@effected/workspaces`'s
-	 * `SyncFileSystem` — and anything else asking for the same four operations —
+	 * `SyncFileSystem` — and anything else asking for a subset of these operations —
 	 * is satisfied without either package importing the other.
 	 *
 	 * This is deliberately NOT a general escape hatch from the `FileSystem`
@@ -1142,7 +1233,7 @@ export class MemoryFileSystem {
 	 *
 	 * @example
 	 * ```ts
-	 * const { fileSystem, volume } = yield* MemoryFileSystem.makeInspectableWith({
+	 * const { fileSystem, volume } = yield* MemoryFileSystem.makeHandle({
 	 * 	"/repo/package.json": `{ "name": "root" }`,
 	 * 	"/repo/packages": MemoryFileSystem.directory(),
 	 * });
@@ -1150,101 +1241,117 @@ export class MemoryFileSystem {
 	 * sync.readDirectory("/repo"); // => ["package.json", "packages"]
 	 * ```
 	 */
-	static readonly syncFileSystem = (volume: MemoryFileSystemVolume): MemoryFileSystemSyncFileSystem =>
-		makeSyncFileSystem(volume);
+	static readonly syncFileSystem = (
+		volume: MemoryFileSystemVolume,
+		options?: MemoryFileSystemPortOptions<MemoryFileSystemSyncFaults>,
+	): MemoryFileSystemSyncFileSystem =>
+		withFaults(
+			makeSyncFileSystem(volume),
+			options?.faults as
+				| Partial<Record<keyof MemoryFileSystemSyncFileSystem, (...args: ReadonlyArray<unknown>) => unknown>>
+				| undefined,
+			"MemoryFileSystem.syncFileSystem faults",
+		);
 
 	/**
-	 * Builds a fresh, empty volume exposed twice: as the `FileSystem` service
-	 * and as the {@link MemoryFileSystemVolume} inspecting it.
+	 * Adapts a {@link MemoryFileSystemVolume} to the read-only
+	 * `node:fs/promises` subset — `readdir` (with `withFileTypes`), `stat`,
+	 * `lstat`, `readFile` — for code that takes an injected async filesystem.
 	 *
 	 * @remarks
-	 * The two halves of the pair observe the SAME volume — a write through
-	 * `fileSystem` is immediately visible to `volume`. The value-level
-	 * primitive beneath {@link MemoryFileSystem.layerInspectable}, for tests
-	 * composing a filesystem by hand.
+	 * The async twin of {@link MemoryFileSystem.syncFileSystem}: identical
+	 * resolution, link-following and node-shaped errors, surfaced as rejected
+	 * promises.
 	 *
-	 * Reach for the make forms when assertions run AFTER the effect: the layer
-	 * forms build (and re-seed) a fresh pair per provide, so a post-run
-	 * assertion would read a different volume than the code under test wrote
-	 * to. Build the pair once, wrap the filesystem in
-	 * `Layer.succeed(FileSystem.FileSystem, pair.fileSystem)` (optionally
-	 * decorated by {@link MemoryFileSystem.makeFaulty} first), and let the
-	 * assertion read `pair.volume` — the identity is pinned. The layer forms
-	 * are for tests that resolve `Volume` and assert INSIDE the provided
-	 * effect.
+	 * @param volume - The volume to adapt.
+	 * @param options - Optional fault handlers.
 	 */
-	static readonly makeInspectable: Effect.Effect<MemoryFileSystemInspectable> = Effect.map(
-		internal.makeInspectable,
-		({ entries, fileSystem }): MemoryFileSystemInspectable => ({
-			fileSystem,
-			volume: makeVolumeService(entries),
-		}),
-	);
+	static readonly promisesFileSystem = (
+		volume: MemoryFileSystemVolume,
+		options?: MemoryFileSystemPortOptions<MemoryFileSystemPromisesFaults>,
+	): MemoryFileSystemPromisesFileSystem =>
+		withFaults(
+			makePromisesFileSystem(volume),
+			options?.faults as
+				| Partial<Record<keyof MemoryFileSystemPromisesFileSystem, (...args: ReadonlyArray<unknown>) => unknown>>
+				| undefined,
+			"MemoryFileSystem.promisesFileSystem faults",
+			true,
+		);
 
 	/**
-	 * Builds a volume pre-populated from `seed`, exposed as the
-	 * {@link MemoryFileSystemInspectable} pair.
+	 * Builds a volume synchronously and returns every view over it as a
+	 * {@link MemoryFileSystemHandle}.
 	 *
 	 * @remarks
-	 * Seeding runs through the pair's own `fileSystem`, so the volume half
-	 * reads seeded entries back exactly as written. Fails typed when the seed
-	 * contradicts itself, mirroring {@link MemoryFileSystem.makeWith}.
+	 * For suites that construct their volume at `describe` scope and never
+	 * touch `Effect`. Throws synchronously — a node-shaped error carrying
+	 * `code`, `syscall` and `path` — when the seed contradicts itself or the
+	 * `root` is invalid (`EINVAL`).
 	 *
-	 * @param seed - Absolute POSIX paths mapped to seed entries.
+	 * The handle reads the real clock, so writes do not follow `TestClock`.
+	 *
+	 * @param seed - Seed entries; relative keys when `options.root` is given.
+	 * @param options - See {@link MemoryFileSystemOptions}.
 	 */
-	static readonly makeInspectableWith = (
-		seed: MemoryFileSystemSeed,
-	): Effect.Effect<MemoryFileSystemInspectable, PlatformError.PlatformError> =>
-		Effect.gen(function* () {
-			const pair = yield* MemoryFileSystem.makeInspectable;
-			yield* seedVolume(pair.fileSystem, seed);
-			return pair;
-		});
+	static readonly makeSync = (
+		seed: MemoryFileSystemSeed = {},
+		options?: MemoryFileSystemOptions,
+	): MemoryFileSystemHandle => {
+		// A bad root or seed key throws node's EINVAL naming the offending value
+		// in the path slot (and so in the message), before anything is built.
+		// This DUPLICATES the check `seedWith` makes inside `buildHandle` — on
+		// purpose: there the failure is a typed BadArgument, which carries no
+		// path, so `runNode` could only report `seed ''`. Validating here first is
+		// the only way the thrown error can name the key. Do not dedup it away.
+		const applied = applyRoot(seed, options?.root);
+		if (applied._tag === "Failure") throw nodeErrno("EINVAL", "seed", applied.failure.subject);
+		return runNode(buildHandle(seed, options), (error) => ({
+			syscall: syscallForMethod(error.reason.method),
+			path: "pathOrDescriptor" in error.reason ? String(error.reason.pathOrDescriptor ?? "") : "",
+		}));
+	};
 
 	/**
-	 * Provides `FileSystem.FileSystem` AND {@link MemoryFileSystem.Volume},
-	 * both backed by one fresh, empty volume per build.
+	 * Builds a volume and returns every view over it as a
+	 * {@link MemoryFileSystemHandle}: the `FileSystem` service, the inspection
+	 * {@link MemoryFileSystemVolume}, a layer pinned to this one volume, the two
+	 * read-only ports, and synchronous setup mutators.
 	 *
 	 * @remarks
-	 * The opt-in inspection form of {@link MemoryFileSystem.layer} — the
-	 * existing constructors are unchanged and never carry the extra service.
-	 * Within one build the resolved `Volume` inspects the same volume instance
-	 * backing the `FileSystem`; per-build semantics hold as everywhere else
-	 * (two provides are two volumes, each pair internally consistent).
+	 * The `Effect` twin of {@link MemoryFileSystem.makeSync}. Reach for it when
+	 * assertions run AFTER the effect under test: the layer forms build (and
+	 * re-seed) a fresh volume per provide, so a post-run assertion would read a
+	 * different volume than the code under test wrote to. Provide
+	 * `handle.layer` — fixed to this volume, stable across provides — and assert
+	 * on `handle.volume`.
+	 *
+	 * With `options.faults`, `handle.fileSystem` (and `handle.layer`) are
+	 * faulted; `handle.volume`, the ports and the mutators work beneath the
+	 * faults, because they are test setup and inspection, not the code under
+	 * test. Fails typed when the seed contradicts itself.
+	 *
+	 * @param seed - Seed entries; relative keys when `options.root` is given.
+	 *   Defaults to an empty seed.
+	 * @param options - See {@link MemoryFileSystemOptions}.
 	 */
-	static readonly layerInspectable: Layer.Layer<FileSystem.FileSystem | MemoryFileSystemVolume> = Layer.effectContext(
-		Effect.map(MemoryFileSystem.makeInspectable, inspectableContext),
-	);
+	static readonly makeHandle = (
+		seed: MemoryFileSystemSeed = {},
+		options?: MemoryFileSystemOptions,
+	): Effect.Effect<MemoryFileSystemHandle, PlatformError.PlatformError> => buildHandle(seed, options);
 
 	/**
-	 * Provides `FileSystem.FileSystem` AND {@link MemoryFileSystem.Volume},
-	 * both backed by one volume per build, pre-populated from `seed`.
+	 * Builds the error a synchronous `node:fs` call throws: an `Error` carrying
+	 * `code`, `syscall` and `path`, for a sync port that has to fail the way the
+	 * Node binding does.
 	 *
-	 * @remarks
-	 * The opt-in inspection form of {@link MemoryFileSystem.layerWith}, with
-	 * the same discipline: a parameterized factory (bind to a `const`),
-	 * per-build memoization (each provide re-seeds), and a contradictory seed
-	 * **dies** as a wiring bug — use
-	 * {@link MemoryFileSystem.makeInspectableWith} for the error channel.
-	 *
-	 * Re-seeding per provide has a consequence for write assertions: resolving
-	 * {@link MemoryFileSystem.Volume} under a SECOND `Effect.provide` of the
-	 * same layer value — even the same bound `const` — observes a fresh volume
-	 * holding only the seed, so every post-run "nothing was written" assertion
-	 * passes vacuously. Resolve `Volume` inside the program the layer is
-	 * provided to, or pin the identity with
-	 * {@link MemoryFileSystem.makeInspectableWith} and
-	 * `Layer.succeed(FileSystem.FileSystem, pair.fileSystem)`. To
-	 * inspect a volume UNDER fault injection, compose with `Layer.provideMerge`
-	 * so the decorated `FileSystem` wins while `Volume` survives:
-	 * `MemoryFileSystem.layerFaulty(faults).pipe(Layer.provideMerge(Inspectable))`.
-	 *
-	 * @param seed - Absolute POSIX paths mapped to seed entries.
+	 * @param code - The errno code, e.g. `"ENOENT"`.
+	 * @param syscall - The failing call, e.g. `"open"`.
+	 * @param path - The path the call was given; omit it for a
+	 *   descriptor-based syscall (`read`), whose node error carries none.
 	 */
-	static readonly layerInspectableWith = (
-		seed: MemoryFileSystemSeed,
-	): Layer.Layer<FileSystem.FileSystem | MemoryFileSystemVolume> =>
-		Layer.effectContext(Effect.orDie(Effect.map(MemoryFileSystem.makeInspectableWith(seed), inspectableContext)));
+	static readonly errno = (code: string, syscall: string, path?: string): MemoryFileSystemErrnoError =>
+		nodeErrno(code, syscall, path);
 
 	private constructor() {}
 }
