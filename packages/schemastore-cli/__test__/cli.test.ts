@@ -2,13 +2,27 @@ import { assert, describe, it } from "@effect/vitest";
 import type { MemoryFileSystemSeed } from "@effected/memfs";
 import { MemoryFileSystem } from "@effected/memfs";
 import type { OnDrift, SchemastoreConfig } from "@effected/schemastore";
-import { CatalogEntry, SchemaValidator, StoreDocument, ValidationFinding, defineConfig } from "@effected/schemastore";
+import {
+	CatalogEntry,
+	InstanceFinding,
+	InstanceValidator,
+	SchemaValidator,
+	StoreDocument,
+	ValidationFinding,
+	defineConfig,
+} from "@effected/schemastore";
 import { ConfigProvider, Effect, FileSystem, Layer, Path, Result, Runtime, Schema, Stdio, Terminal } from "effect";
 import type { Command } from "effect/cli";
 import { CliError } from "effect/cli";
 import { ChildProcessSpawner } from "effect/process";
 import { TestConsole } from "effect/testing";
 import { ConfigLoadError, ConfigNotFoundError } from "../src/ConfigLoader.js";
+import {
+	MissingSchemaRefError,
+	PayloadError,
+	SchemaResolutionError,
+	ValidationFailedError,
+} from "../src/cli/commands/validate.js";
 import { CatalogMergeError, ConflictingFlagsError, DriftError, GateError, StaleError } from "../src/cli/execute.js";
 import type { ProgramDeps } from "../src/cli/program.js";
 import { loggerLayer, program } from "../src/cli/program.js";
@@ -717,6 +731,184 @@ describe("schemastore CLI", () => {
 					assert.strictEqual(exitCodeOf(error), 64);
 				}),
 				{ [CONFIG_PATH]: "" },
+			),
+		);
+	});
+
+	// #857 — the payload half of the publication story: the check gate proves
+	// the document is valid JSON Schema; `validate` proves an instance
+	// conforms to the committed document consumers fetch.
+	describe("validate", () => {
+		const PAYLOAD_PATH = "/repo/payload.json";
+
+		const payloadSeed = (payload: unknown): MemoryFileSystemSeed => ({
+			...builtSeed,
+			[PAYLOAD_PATH]: `${JSON.stringify(payload)}\n`,
+		});
+
+		it.effect("a conforming payload validates against its $schema identity at exit 0", () =>
+			run(
+				Effect.gen(function* () {
+					yield* program(["validate", "payload.json"], deps(basicConfig()));
+					assert.include(yield* stdout, `valid ${PAYLOAD_PATH} against ${BASIC_PATH}`);
+				}),
+				payloadSeed({ $schema: BASIC_ID, name: "x" }),
+			),
+		);
+
+		it.effect("a non-conforming payload fails at exit 1 with pointer-and-keyword findings", () =>
+			run(
+				Effect.gen(function* () {
+					const error = yield* Effect.flip(program(["validate", "payload.json"], deps(basicConfig())));
+					assert.instanceOf(error, ValidationFailedError);
+					assert.strictEqual(exitCodeOf(error), 1);
+					assert.strictEqual(error.count, 1, "one wrong property, one finding");
+					const out = yield* stdout;
+					assert.isTrue(
+						out.some((line) => line.includes("/name") && line.includes("[type]")),
+						`the finding must carry the instance pointer and the keyword:\n${out.join("\n")}`,
+					);
+					assert.include(out, `1 finding(s): ${PAYLOAD_PATH} does not conform to ${BASIC_ID}`);
+				}),
+				payloadSeed({ $schema: BASIC_ID, name: 42 }),
+			),
+		);
+
+		it.effect("a frozen version's $id resolves to its committed document", () =>
+			run(
+				Effect.gen(function* () {
+					// Current is 2.0; the payload names the frozen 1.0 identity, whose
+					// document is the one committed at BASIC_PATH.
+					yield* program(["validate", "payload.json"], deps(basicConfig({ versions: ["1.0", "2.0"] })));
+					assert.include(yield* stdout, `valid ${PAYLOAD_PATH} against ${BASIC_PATH}`);
+				}),
+				{
+					[CONFIG_PATH]: "",
+					[BASIC_PATH]: emitted(Config, BASIC_ID),
+					[PAYLOAD_PATH]: `${JSON.stringify({ $schema: BASIC_ID, name: "x" })}\n`,
+				},
+			),
+		);
+
+		it.effect("--schema names a file directly and needs no config", () =>
+			run(
+				Effect.gen(function* () {
+					// A bare ProgramDeps with no importModule: if the command reached
+					// for a config, discovery would fail the test.
+					const bareDeps: ProgramDeps = { cwd: "/repo", version: "0.0.0" };
+					yield* program(["validate", "payload.json", "--schema", "local/basic.schema.json"], bareDeps);
+					assert.include(yield* stdout, `valid ${PAYLOAD_PATH} against /repo/local/basic.schema.json`);
+				}),
+				{
+					"/repo/local/basic.schema.json": `${JSON.stringify({
+						type: "object",
+						properties: { name: { type: "string" } },
+						required: ["name"],
+					})}\n`,
+					[PAYLOAD_PATH]: `${JSON.stringify({ name: "x" })}\n`,
+				},
+			),
+		);
+
+		it.effect("an unresolvable $schema fails at exit 2", () =>
+			run(
+				Effect.gen(function* () {
+					const error = yield* Effect.flip(program(["validate", "payload.json"], deps(basicConfig())));
+					assert.instanceOf(error, SchemaResolutionError);
+					assert.strictEqual(exitCodeOf(error), 2);
+					assert.include(error.message, "no schema in the config derives this $id or url");
+				}),
+				payloadSeed({ $schema: "https://example.com/schemas/nope.json", name: "x" }),
+			),
+		);
+
+		it.effect("a payload naming nothing is a usage error at exit 64", () =>
+			run(
+				Effect.gen(function* () {
+					const error = yield* Effect.flip(program(["validate", "payload.json"], deps(basicConfig())));
+					assert.instanceOf(error, MissingSchemaRefError);
+					assert.strictEqual(exitCodeOf(error), 64);
+					assert.include(error.message, "--schema");
+				}),
+				payloadSeed({ name: "x" }),
+			),
+		);
+
+		it.effect("a malformed payload fails at exit 2", () =>
+			run(
+				Effect.gen(function* () {
+					const error = yield* Effect.flip(program(["validate", "payload.json"], deps(basicConfig())));
+					assert.instanceOf(error, PayloadError);
+					assert.strictEqual(exitCodeOf(error), 2);
+				}),
+				{ ...builtSeed, [PAYLOAD_PATH]: "not json\n" },
+			),
+		);
+
+		it.effect("a missing payload fails at exit 2", () =>
+			run(
+				Effect.gen(function* () {
+					const error = yield* Effect.flip(program(["validate", "payload.json"], deps(basicConfig())));
+					assert.instanceOf(error, PayloadError);
+					assert.strictEqual(exitCodeOf(error), 2);
+				}),
+				builtSeed,
+			),
+		);
+
+		it.effect("--format json writes the report to stdout and the human lines to stderr", () =>
+			run(
+				Effect.gen(function* () {
+					const error = yield* Effect.flip(
+						program(["validate", "payload.json", "--format", "json"], deps(basicConfig())),
+					);
+					assert.instanceOf(error, ValidationFailedError);
+					const out = yield* stdout;
+					assert.strictEqual(out.length, 1, "exactly one JSON document on stdout");
+					const report = JSON.parse(out[0] ?? "") as {
+						payload: string;
+						schema: string;
+						document: string;
+						valid: boolean;
+						findings: ReadonlyArray<{ path: string; keyword?: string }>;
+					};
+					assert.isFalse(report.valid);
+					assert.strictEqual(report.payload, PAYLOAD_PATH);
+					assert.strictEqual(report.schema, BASIC_ID);
+					assert.strictEqual(report.document, BASIC_PATH);
+					assert.strictEqual(report.findings.length, 1);
+					assert.strictEqual(report.findings[0]?.path, "/name");
+					assert.strictEqual(report.findings[0]?.keyword, "type");
+					const err = yield* stderr;
+					assert.isTrue(
+						err.some((line) => line.includes("/name")),
+						`the human finding lines move to stderr:\n${err.join("\n")}`,
+					);
+				}),
+				payloadSeed({ $schema: BASIC_ID, name: 42 }),
+			),
+		);
+
+		it.effect("the instanceValidator seam replaces the engine", () =>
+			run(
+				Effect.gen(function* () {
+					// A conforming payload, but the injected double always finds
+					// something — proving the command consumes the seam.
+					const stubbed = deps(basicConfig(), {
+						instanceValidator: InstanceValidator.layerTest({
+							validate: () => Effect.succeed([InstanceFinding.make({ path: "/stubbed", message: "from the double" })]),
+						}),
+					});
+					const error = yield* Effect.flip(program(["validate", "payload.json"], stubbed));
+					assert.instanceOf(error, ValidationFailedError);
+					assert.strictEqual(error.count, 1);
+					const out = yield* stdout;
+					assert.isTrue(
+						out.some((line) => line.includes("/stubbed: from the double")),
+						`the double's finding must reach the human report:\n${out.join("\n")}`,
+					);
+				}),
+				payloadSeed({ $schema: BASIC_ID, name: "x" }),
 			),
 		);
 	});
