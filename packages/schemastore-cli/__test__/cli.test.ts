@@ -756,6 +756,28 @@ describe("schemastore CLI", () => {
 			),
 		);
 
+		// The kit's documented HostedSchema pattern: the source struct declares
+		// `$schema: Schema.Literal(OutputSchema.$id)`, so the generated document
+		// carries `$schema` in properties AND required. The self-reference is
+		// contract data there — the pointer must NOT be stripped, or the
+		// document's own `required: ["$schema"]` fails the very payload that
+		// names it. Verbatim validation lets the document's const constraint
+		// on `$schema` be enforced.
+		it.effect("a document declaring $schema validates the payload verbatim, self-reference included", () => {
+			const SelfReferencing = Schema.Struct({ $schema: Schema.Literal(BASIC_ID), name: Schema.String });
+			return run(
+				Effect.gen(function* () {
+					yield* program(["validate", "payload.json"], deps(basicConfig()));
+					assert.include(yield* stdout, `valid ${PAYLOAD_PATH} against ${BASIC_PATH}`);
+				}),
+				{
+					...builtSeed,
+					[BASIC_PATH]: emitted(SelfReferencing, BASIC_ID),
+					[PAYLOAD_PATH]: `${JSON.stringify({ $schema: BASIC_ID, name: "x" })}\n`,
+				},
+			);
+		});
+
 		it.effect("a non-conforming payload fails at exit 1 with pointer-and-keyword findings", () =>
 			run(
 				Effect.gen(function* () {

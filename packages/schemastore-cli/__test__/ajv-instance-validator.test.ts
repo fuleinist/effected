@@ -1,5 +1,5 @@
 import { assert, describe, it } from "@effect/vitest";
-import { InstanceValidator } from "@effected/schemastore";
+import { InstanceValidator, InstanceValidatorError } from "@effected/schemastore";
 import { Effect } from "effect";
 import { AjvInstanceValidator } from "../src/AjvInstanceValidator.js";
 
@@ -54,7 +54,7 @@ describe("AjvInstanceValidator.layer — the shipped ajv instance engine", () =>
 		assert.strictEqual(count?.keyword, "type");
 		const extra = findings.find((finding) => finding.path === "" && finding.keyword === "additionalProperties");
 		assert.isDefined(extra, "additionalProperties: false must be enforced against the instance");
-		assert.isTrue(findings.length >= 3);
+		assert.strictEqual(findings.length, 3);
 	});
 
 	it("points at the instance root with an empty path for a wrong top-level type", () => {
@@ -106,8 +106,8 @@ describe("AjvInstanceValidator.layer — the shipped ajv instance engine", () =>
 	// refuses is a finding (the document is the subject); HERE it is a
 	// mechanism failure — no verdict about the instance was produced.
 	it("fails typed with InstanceValidatorError for a document the engine cannot compile", () => {
-		const exit = Effect.runSync(
-			Effect.exit(
+		const error = Effect.runSync(
+			Effect.flip(
 				Effect.provide(
 					Effect.gen(function* () {
 						const validator = yield* InstanceValidator;
@@ -117,11 +117,12 @@ describe("AjvInstanceValidator.layer — the shipped ajv instance engine", () =>
 				),
 			),
 		);
-		assert.isTrue(exit._tag === "Failure", "a strict-mode compile failure is an engine mechanism failure here");
-		if (exit._tag === "Failure") {
-			const message = String(exit.cause);
-			assert.include(message, "nonsenseKeyword");
-		}
+		assert.instanceOf(
+			error,
+			InstanceValidatorError,
+			"a strict-mode compile failure is an engine mechanism failure here",
+		);
+		assert.include(String(error.cause), "nonsenseKeyword");
 	});
 
 	it("strict: false accepts a document strict mode refuses", () => {

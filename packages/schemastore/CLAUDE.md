@@ -5,8 +5,10 @@ documents from Effect Schema sources: assembly over core's
 `Schema.toJsonSchemaDocument` + `JsonSchema.toDocumentDraft07`, the
 declared keyword families, the catalog vocabulary in both versioning modes,
 structural and hygiene lints, canonical JSON text, write-if-changed IO with
-change classification, and the validation **contract** — whose one shipped
-engine is `@effected/schemastore-cli`'s `AjvValidator`.
+change classification, and the validation **contracts** — `SchemaValidator`
+(documents) and `InstanceValidator` (payloads) — whose one shipped engine
+each is `@effected/schemastore-cli`'s `AjvValidator` and
+`AjvInstanceValidator`.
 
 Tier: **boundary**. The one runtime dependency is `@effected/semver`;
 `effect` is the peer. All IO lives in `src/SchemaFile.ts` over core
@@ -24,7 +26,7 @@ and follow its links; load the specific concept a task needs:
   policies, and the test layout → `okf/modules/schemastore.md` — Load when:
   changing an emitted shape, the versioning grammar, the config contract
   or the gating model, or asking what a module owns.
-- Why the engine is the CLI's and the library ships only the contract →
+- Why the engines are the CLI's and the library ships only the contracts →
   `okf/decisions/schemastore-engine-lives-in-the-cli.md`,
   `okf/decisions/schemastore-ajv-ships-closed.md`,
   `okf/decisions/schemastore-retier-to-integrated.md` (superseded) — Load
@@ -45,7 +47,8 @@ and follow its links; load the specific concept a task needs:
   `okf/decisions/schemastore-meta-schema-keeps-trailing-hash.md`.
 - Module naming, no `SchemaVersioning.plan`, no `bin`, no templates directory,
   coverage tooling → the remaining `okf/decisions/schemastore-*.md`.
-- The companion command, its drift table and exit codes, and `AjvValidator`
+- The companion command, its drift table and exit codes, and the engines
+  `AjvValidator` / `AjvInstanceValidator`
   (including the `ajvFormats.default` one-hop binding,
   `okf/gotchas/ajv-formats-default-import-is-not-callable.md`) →
   `okf/modules/schemastore-cli.md` — Load when: a change here alters what
@@ -74,6 +77,8 @@ and leaves a truncated `issues.json` shaped like a clean gate.
 symbols; `SchemaTarget`'s class/interface merge carries the house
 `biome-ignore lint/suspicious/noUnsafeDeclarationMerging` with the
 statics-only justification. `internal/limits.ts`'s `MAX_NESTING_DEPTH` is
-hand-copied by the CLI's `AjvValidator` — change both together.
+mirrored by the CLI's `internal/ajv.ts` — the shared `makeAjv` both
+engines (`AjvValidator`, `AjvInstanceValidator`) build through carries the
+same limit as `MAX_KEYWORD_WALK_DEPTH` — change both together.
 `package.json` stays `"private": true` — the bundler emits the publishable
 manifest.

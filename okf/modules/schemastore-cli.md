@@ -1,7 +1,7 @@
 ---
 type: Module
 title: "@effected/schemastore-cli"
-description: "The companion command to @effected/schemastore: loads a schemastore.config.ts, builds or checks every declared schema and catalog entry under a per-schema published flag and a drift policy, and reports to a terminal, JSON or a GitHub step summary; also the home of AjvValidator, the one shipped SchemaValidator engine."
+description: "The companion command to @effected/schemastore: loads a schemastore.config.ts, builds or checks every declared schema and catalog entry under a per-schema published flag and a drift policy, validates a payload against a published document, and reports to a terminal, JSON or a GitHub step summary; also the home of the kit's two shipped engines, AjvValidator (SchemaValidator) and AjvInstanceValidator (InstanceValidator)."
 status: draft
 kind: package
 resource: ../../packages/schemastore-cli
@@ -29,6 +29,8 @@ sources:
     resource: ../../packages/schemastore-cli/src/Runner.ts
   - id: ajv-validator
     resource: ../../packages/schemastore-cli/src/AjvValidator.ts
+  - id: ajv-instance-validator
+    resource: ../../packages/schemastore-cli/src/AjvInstanceValidator.ts
   - id: cli-package-json
     resource: ../../packages/schemastore-cli/package.json
 generated:
@@ -48,12 +50,15 @@ CLI ships that plumbing once, as a `bin`, so a consumer's whole schema
 setup collapses to one TypeScript config file and two `package.json`
 scripts.
 
-It is **not a library**, though it has one export. Its published
+It is **not a library**, though it has one entry. Its published
 surface is the `schemastore` executable, `./package.json` and a single
-`.` entry exporting `AjvValidator` — the one shipped `SchemaValidator`
-engine, which the command composes at its edge and which exists as an
-export so a program driving `SchemaPipeline` itself can compose the
-same engine the command runs; nothing is hidden.[^ajv-validator][^cli-package-json]
+`.` entry exporting **only engine layers over the library's contracts** —
+`AjvValidator`, the one shipped `SchemaValidator` engine, and
+`AjvInstanceValidator`, the one shipped `InstanceValidator` engine —
+which the commands compose at their edges and which exist as exports so
+a program driving `SchemaPipeline` or validating payloads itself can
+compose the same engines the commands run; nothing is
+hidden.[^ajv-validator][^ajv-instance-validator][^cli-package-json]
 Every type a config file needs — `defineConfig`, `SchemaTarget`, the
 versioning helpers — is imported from `@effected/schemastore`, which the
 CLI declares as a peer. This is what keeps the consumer's config and the
@@ -71,15 +76,16 @@ Tier: **none — a companion package**, like `pnpm-plugin-effect`. It runs
 under `Command.Environment`, loads consumer TypeScript through `jiti`,
 and touches the real filesystem — which would make a *library* integrated
 tier — but tier measures what an importer pays, and the one thing an
-importer can reach, `AjvValidator`, is a layer over the library's own
-contract rather than a surface of its own: the command is the canonical
-use, the export a courtesy. The
+importer can reach — `AjvValidator` and `AjvInstanceValidator` — is an
+engine layer over the library's own
+contract rather than a surface of its own: the commands are the canonical
+use, the exports a courtesy. The
 [companion package](../glossary/companion-package.md) glossary rules,
 and the `pnpm-plugin-effect` precedent (a companion with no tier) is the
 one this follows rather than arguing a running-code companion into a
 tier.
 
-## AjvValidator: the engine lives here
+## The engines live here
 
 `AjvValidator.layer` is the `SchemaValidator` implementation the library
 shipped as `SchemaValidator.layer` until 2026-09-15, moved rather than
@@ -98,8 +104,25 @@ not a workaround — see
 where it composed the library's layer, and the CLI's own tests own the
 engine suite (`__test__/ajv-validator.test.ts`).
 
+`AjvInstanceValidator.layer` is the second engine, for the payload half
+of the story: the same setup pointed at an instance instead of the
+meta-schema, answering `InstanceFinding` values — ajv's `instancePath`
+preserved as the pointer into the INSTANCE, `allErrors` reporting every
+problem — when a payload fails a document, and `InstanceValidatorError`
+when the engine cannot compile the document at all. The subjects differ,
+so the same throw means different things: for `AjvValidator` the document
+IS the subject and a compile failure is a finding; for
+`AjvInstanceValidator` the subject is the instance, and a document that
+yields no verdict is a mechanism failure — the document's own gate is
+`SchemaValidator`'s job, run by `check` before anything is published.
+Both engines build through ONE shared setup, `internal/ajv.ts`
+`makeAjv`, so a document the `check` gate admits always compiles in the
+instance engine too and the two verdicts cannot drift.
+`cli/commands/validate.ts` composes it, and its suite is
+`__test__/ajv-instance-validator.test.ts`.[^ajv-instance-validator]
+
 It lives here so `ajv` is a cost only the command pays: the library keeps
-the contract and its doubles, and an application that imports
+the contracts and their doubles, and an application that imports
 `@effected/schemastore` at runtime — for `HostedSchema` — never installs
 or bundles an engine. The reasoning is
 [the engine lives in the CLI](../decisions/schemastore-engine-lives-in-the-cli.md);
@@ -327,6 +350,7 @@ Two rules are fixed here so the code never relitigates them:
 ```text
 schemastore build [config] [--drift=strict|semantic|allow] [--on-drift=error|warn] [--force] [--format=human|json]
 schemastore check [config] [--drift=…] [--on-drift=…] [--force] [--format=human|json]
+schemastore validate <payload.json> [config] [--schema <path|$id|url>] [--format=human|json]
 ```
 
 - Before anything is generated, `Runner` walks every advertised frozen
@@ -396,6 +420,31 @@ schemastore check [config] [--drift=…] [--on-drift=…] [--force] [--format=hu
   refused before the config loads as `ConflictingFlagsError` at exit
   `64` (a usage error, not a run outcome) rather than silently resolving
   to `allow`.
+- `validate` answers the question the publication story exists for: does
+  THIS payload conform to the published document it names? The reference
+  is `--schema` or the payload's own `$schema`, resolved file-first and
+  then against every identity a config schema derives — a target `$id`, a
+  frozen version's `$id`/`url`, the catalog `url` — so CI validates an
+  action's output against the committed document with no third-party tool
+  and no network fetch. A payload that cannot be read or parsed fails
+  `PayloadError` at exit `2`; a reference that is neither an existing file
+  nor a derived identity, or names a document that cannot be read or
+  parsed, fails `SchemaResolutionError` at exit `2`; a payload naming
+  nothing with no `--schema` given is `MissingSchemaRefError` at exit
+  `64`. The payload's `$schema` self-reference is the pointer naming the
+  document, not contract data: it is stripped before validating ONLY when
+  the resolved document does not declare `$schema` as a root property — a
+  generated document sets `additionalProperties: false`, which would
+  otherwise reject the very self-reference that names it. A document that
+  DOES declare `$schema` (the `HostedSchema` pattern, whose source struct
+  carries `$schema: Schema.Literal(OutputSchema.$id)`, so the key is
+  required and const-constrained) validates the payload verbatim and
+  enforces its own constraint on the key. A non-conforming payload fails
+  `ValidationFailedError` at exit `1`, one finding per problem carrying
+  the JSON pointer into the instance and the keyword; an engine mechanism
+  failure (`InstanceValidatorError`) flows unmarked to the runtime's exit
+  `3`. `--format=json` writes one report document to stdout and moves the
+  human lines to stderr, exactly as `build`/`check` do.
 - `--format=json` emits one document on stdout — `mode`, `configPath`,
   `drift: { onDrift, policy? }` (`policy` present only when a flag forced
   one tolerance over every schema's own, never a `source` field),
@@ -420,10 +469,10 @@ Exit codes:
 | code | meaning |
 | ------ | -------------------------------------------------------------------------- |
 | 0 | success, including drift under `onDrift: warn` |
-| 1 | drift under `onDrift: error`, a gate failure, a missing frozen version (`FrozenVersionMissingError`), a frozen file without its derived `$id` (`FrozenVersionIdMismatchError`), a merged catalog blocked by a URL conflict or an invalid slice (`CatalogMergeError`), or — for `check` — any document `build` would write (a catalog slice or the merged catalog included), an orphaned slice or merged catalog, or an orphaned document at a sibling shape of a derived path |
-| 2 | config not found, failed to load, failed `SchemastoreConfig` validation, or a `catalogDir` that is a file or cannot be listed (`CatalogDirError`, raised before anything is written) |
-| 3 | infrastructure failure (`CliRuntime.reportFailures` fallback) |
-| 64 | usage error — `ShowHelp` carrying parse errors, or `--force` combined with an explicit non-`allow` `--drift` (`ConflictingFlagsError`) |
+| 1 | drift under `onDrift: error`, a gate failure, a missing frozen version (`FrozenVersionMissingError`), a frozen file without its derived `$id` (`FrozenVersionIdMismatchError`), a merged catalog blocked by a URL conflict or an invalid slice (`CatalogMergeError`), — for `check` — any document `build` would write (a catalog slice or the merged catalog included), an orphaned slice or merged catalog, or an orphaned document at a sibling shape of a derived path, or — for `validate` — a payload that does not conform to the resolved document (`ValidationFailedError`, one finding per problem, pointer and keyword each) |
+| 2 | config not found, failed to load, failed `SchemastoreConfig` validation, a `catalogDir` that is a file or cannot be listed (`CatalogDirError`, raised before anything is written), or — for `validate` — a payload that cannot be read or parsed (`PayloadError`) or a schema reference that resolves to no readable document (`SchemaResolutionError`) |
+| 3 | infrastructure failure (`CliRuntime.reportFailures` fallback; for `validate`, an engine mechanism failure — `InstanceValidatorError`, a document the instance engine cannot compile — flows here unmarked) |
+| 64 | usage error — `ShowHelp` carrying parse errors, `--force` combined with an explicit non-`allow` `--drift` (`ConflictingFlagsError`), or — for `validate` — a payload with no `$schema` and no `--schema` given (`MissingSchemaRefError`) |
 
 ## The catalog: slices and the merged file
 
@@ -563,8 +612,9 @@ recorded as a Gotcha rather than fought.
 ## Package shape
 
 - `packages/schemastore-cli`: `bin: { schemastore: "./src/bin.ts" }`
-  and `exports` of exactly `.` (`src/index.ts`, re-exporting
-  `AjvValidator` and nothing else) plus `./package.json`. The one entry
+  and `exports` of exactly `.` (`src/index.ts`, re-exporting only engine
+  layers over the library's contracts — `AjvValidator` and
+  `AjvInstanceValidator` — and nothing else) plus `./package.json`. The one entry
   earns a declaration bundle and an api-extractor model like any other
   kit package (`savvy.build.ts` sets
   `localPaths: ["../../website/lib/models/schemastore-cli"]`); the
@@ -608,7 +658,12 @@ becomes moot: there is no longer a canonical generator script to copy.
   nothing; `onDrift: warn` writes and exits `0`; gate failure exits `1`
   under either `onDrift`; `--format=json` parses with nothing else on
   stdout; step summary appended when set, logged-not-fatal when
-  unwritable.
+  unwritable; `validate` over a seeded volume — a conforming payload
+  exits `0` against its `$schema` identity, a non-conforming one exits
+  `1` with pointer-and-keyword findings, a document declaring `$schema`
+  validates the payload verbatim (the `HostedSchema` pattern), an
+  unresolvable reference exits `2`, a payload naming nothing exits `64`,
+  and the `instanceValidator` seam replaces the engine.
 - Two `effect/cli` notes the tests pin: a `Flag.Boolean` must
   carry `withDefault(false)` or its omission is a parse error rather
   than `false`, and `CliLogger` must be given `stderrFrom: "All"` for the
@@ -625,6 +680,7 @@ becomes moot: there is no longer a canonical generator script to copy.
 [^pipeline]: `SchemaPipeline.run` / `SchemaPipeline.check`, `ContractChangePolicy`, and the `change`, `blocked`, `contractBlocked`, `wouldWrite` result fields. The pipeline never reads `published`; the CLI's `Runner` classifies over `check` results with the contract guard set to `"allow"`.
 [^versioning]: `SchemaVersioning` — the widened one-to-three-component grammar, `parseResult`, and `next`'s minor-bump rule (identity on a prerelease label).
 [^config]: `SchemastoreConfig.ts` — `defineConfig`, `SchemastoreConfigInput`, `SchemaEntryInput` (including `hosted`), `ResolvedSchema`, `FrozenVersion` (`version`/`path`/`$id`/`url`); the keyed-by-name shape, the per-level `Schema.Struct` decode, and the delegation of hosting and version rules to `HostedSchema`.
-[^ajv-validator]: `packages/schemastore-cli/src/AjvValidator.ts` — `AjvValidator.layer`: strict mode, `KeywordFamilies` registration, `addFormats(ajv, { keywords: false })`, a fresh `Ajv` per call.
+[^ajv-validator]: `packages/schemastore-cli/src/AjvValidator.ts` — `AjvValidator.layer`: strict mode, `KeywordFamilies` registration, `addFormats(ajv, { keywords: false })`, a fresh `Ajv` per call — all through the shared `internal/ajv.ts` `makeAjv`.
+[^ajv-instance-validator]: `packages/schemastore-cli/src/AjvInstanceValidator.ts` — `AjvInstanceValidator.layer`: the same shared `makeAjv` pointed at an instance, findings as `InstanceFinding` values, compile failures as `InstanceValidatorError`.
 [^cli-package-json]: `packages/schemastore-cli/package.json` — the `.` export to `src/index.ts`, `ajv` and `ajv-formats` as regular dependencies, `effect` and `@effected/schemastore` as peers.
 [^runner]: `packages/schemastore-cli/src/Runner.ts` — `FrozenVersionMissingError`, `FrozenVersionIdMismatchError`, the frozen pre-flight (existence, then declared `$id`) that runs before generation, the catalog slice and merged-catalog writes, the `orphaned` and `blocked` catalog outcomes, and the sibling-shape probe that reports unclaimed leftover documents in `RunReport.orphaned`.

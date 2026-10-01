@@ -161,6 +161,10 @@ entrypoint.[^entrypoint] The load-bearing division:
 - **`SchemaValidator`** — the validation contract and its doubles; the
   engine is the CLI's `AjvValidator`. See
   [the validation gate](#the-validation-gate-ajv-ships-closed).
+- **`InstanceValidator`** — the payload-against-document validation
+  contract and its doubles; the engine is the CLI's
+  `AjvInstanceValidator`. See
+  [the validation gate](#the-validation-gate-ajv-ships-closed).
 - **`DocumentDiff`** — pure change classification; see
   [change classification](#change-classification-annotations-versus-contract).
 - **`SchemaFile`** — the one IO module; see
@@ -482,15 +486,28 @@ from the library.
 
 ## The validation gate: ajv ships closed
 
-This package ships the contract — the `SchemaValidator` service,
+This package ships the contracts — the `SchemaValidator` service,
 `SchemaValidatorShape`, `SchemaValidatorOptions`, `SchemaValidatorError`,
-`ValidationFinding`, `noop`, `makeTest` and `layerTest` — and no engine.
-The one shipped implementation is `AjvValidator.layer`, exported from
-[`@effected/schemastore-cli`](schemastore-cli.md), which the command
-composes at its edge and a program driving `SchemaPipeline` itself can
-import ([the engine lives in the CLI](../decisions/schemastore-engine-lives-in-the-cli.md)).
+`ValidationFinding`, `noop`, `makeTest` and `layerTest`, and the
+`InstanceValidator` service with the same double set plus
+`InstanceValidatorError` and `InstanceFinding` — and no engine.
+`SchemaValidator` answers "is this document valid JSON Schema";
+`InstanceValidator` answers the question it does not: "does this payload
+conform to the published document it names in `$schema`". The one shipped
+`SchemaValidator` implementation is `AjvValidator.layer`, and the one
+shipped `InstanceValidator` implementation is `AjvInstanceValidator.layer`
+— the same ajv strict-mode setup through one shared `makeAjv`, pointed at
+a payload instance instead of the meta-schema — both exported from
+[`@effected/schemastore-cli`](schemastore-cli.md), which the commands
+compose at their edges and a program driving `SchemaPipeline` or
+validating payloads itself can import ([the engine lives in the CLI](../decisions/schemastore-engine-lives-in-the-cli.md)).
 The channel convention is the library's: findings are values, and the
-error channel is reserved for the engine failing as a mechanism.
+error channel is reserved for the engine failing as a mechanism. The
+subjects differ, so the same compile failure splits: for
+`SchemaValidator` the document IS the subject and a document the engine
+refuses is a finding; for `InstanceValidator` the subject is the
+instance, and a document that yields no verdict is
+`InstanceValidatorError`.
 
 See [ajv ships closed](../decisions/schemastore-ajv-ships-closed.md) for
 the full reasoning and the alternatives it overturned. The shipped layer

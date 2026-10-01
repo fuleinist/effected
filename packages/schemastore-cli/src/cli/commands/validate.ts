@@ -194,14 +194,28 @@ const schemaPropertyOf = (payload: unknown): string | undefined =>
 		? payload.$schema
 		: undefined;
 
-// The `$schema` self-reference is the pointer this command consumed to find
-// the document, not contract data: documents the kit generates set
-// `additionalProperties: false`, so leaving the key in the instance would
-// fail EVERY payload that names its own document — the flagship flow. Strip
-// it (top level, string-valued, in either reference mode) and validate the
-// rest of the payload verbatim.
-const withoutSchemaRef = (payload: unknown): unknown => {
-	if (schemaPropertyOf(payload) === undefined) {
+// Does the resolved document declare `$schema` as a root property? The
+// kit's HostedSchema pattern lets the source struct carry
+// `$schema: Schema.Literal(OutputSchema.$id)`, so the generated document
+// lists `$schema` in `properties` AND `required` — there the self-reference
+// is contract data the document itself const-constrains.
+const declaresSchemaProperty = (document: Record<string, unknown>): boolean => {
+	const properties = document.properties;
+	return Predicate.isObject(properties) && !Array.isArray(properties) && "$schema" in properties;
+};
+
+// The payload's `$schema` is the pointer this command consumed to find the
+// document, not contract data — but only when the document does not declare
+// `$schema` itself. A generated document whose source struct omits the key
+// sets `additionalProperties: false`, so leaving it in the instance would
+// fail EVERY payload that names its own document; strip it (top level,
+// string-valued, in either reference mode) and validate the rest verbatim.
+// When the document DOES declare `$schema` (the HostedSchema pattern), the
+// key is required and const-constrained — stripping it would trip the
+// document's own `required` — so validate the payload verbatim and let the
+// document's constraint on `$schema` be enforced.
+const withoutSchemaRef = (payload: unknown, document: Record<string, unknown>): unknown => {
+	if (schemaPropertyOf(payload) === undefined || declaresSchemaProperty(document)) {
 		return payload;
 	}
 	const rest: Record<string, unknown> = { ...(payload as Record<string, unknown>) };
@@ -217,8 +231,11 @@ const withoutSchemaRef = (payload: unknown): unknown => {
  * payload's `$schema`) file-first then against the config's derived
  * identities, validates with `deps.instanceValidator` or the real engine,
  * and reports. A top-level string `$schema` on the payload is the pointer
- * naming the document, not contract data, so it is stripped from the
- * instance before validating — the rest goes verbatim. Findings fail
+ * naming the document: it is stripped from the instance before validating
+ * only when the resolved document does not declare `$schema` as a root
+ * property; a document that does declare it (the HostedSchema pattern,
+ * where the key is required and const-constrained) sees the payload
+ * verbatim, and the rest of the payload always goes verbatim. Findings fail
  * `ValidationFailedError` at exit `1`; a
  * payload that cannot be read or parsed is `PayloadError` at `2`, an
  * unresolvable reference `SchemaResolutionError` at `2`, a payload naming
@@ -250,7 +267,10 @@ export const runValidate = Effect.fn("schemastore.validate")(function* (input: V
 	}
 	const findings = yield* Effect.gen(function* () {
 		const validator = yield* InstanceValidator;
-		return yield* validator.validate(document as Record<string, unknown>, withoutSchemaRef(payload));
+		return yield* validator.validate(
+			document as Record<string, unknown>,
+			withoutSchemaRef(payload, document as Record<string, unknown>),
+		);
 	}).pipe(Effect.provide(deps.instanceValidator ?? AjvInstanceValidator.layer));
 	const human: ReadonlyArray<string> =
 		findings.length === 0
@@ -280,9 +300,12 @@ export const runValidate = Effect.fn("schemastore.validate")(function* (input: V
  * a frozen version's `$id`/`url`, or a catalog `url` — so CI validates an
  * action's output against the committed document without a third-party
  * tool or a network fetch. A top-level string `$schema` on the payload is
- * consumed as that pointer and stripped before validating, since the
- * generated documents' `additionalProperties: false` would otherwise
- * reject the very self-reference that names them.
+ * consumed as that pointer; it is stripped before validating only when the
+ * resolved document does not declare `$schema` as a root property, since a
+ * generated document's `additionalProperties: false` would otherwise
+ * reject the very self-reference that names it. A document that declares
+ * `$schema` — the HostedSchema pattern — validates the payload verbatim
+ * and enforces its own const constraint on the key.
  *
  * @public
  */
