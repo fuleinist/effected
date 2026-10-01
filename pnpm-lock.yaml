@@ -175,6 +175,12 @@ catalogs:
     '@types/node':
       specifier: ^26.6.3
       version: 26.6.3
+    '@types/react':
+      specifier: ^19.3.0
+      version: 19.3.0
+    react:
+      specifier: ^19.3.0
+      version: 19.3.0
     typescript:
       specifier: ^7.0.2
       version: 7.0.2
@@ -287,6 +293,10 @@ importers:
     publishDirectory: dist/dev/pkg
 
   packages/cli:
+    dependencies:
+      '@effected/github-commands':
+        specifier: workspace:^
+        version: link:../github-commands/dist/dev/pkg
     devDependencies:
       '@effect/platform-node':
         specifier: catalog:effect
@@ -297,12 +307,21 @@ importers:
       '@effected/config-file':
         specifier: workspace:*
         version: link:../config-file/dist/dev/pkg
+      '@effected/env':
+        specifier: workspace:*
+        version: link:../env/dist/dev/pkg
       '@effected/glob':
         specifier: workspace:*
         version: link:../glob/dist/dev/pkg
       '@effected/jsonc':
         specifier: workspace:*
         version: link:../jsonc/dist/dev/pkg
+      '@effected/markdown':
+        specifier: workspace:*
+        version: link:../markdown/dist/dev/pkg
+      '@effected/memfs':
+        specifier: workspace:*
+        version: link:../memfs/dist/dev/pkg
       '@effected/toml':
         specifier: workspace:*
         version: link:../toml/dist/dev/pkg
@@ -321,9 +340,21 @@ importers:
       '@types/node':
         specifier: catalog:build
         version: 26.6.3
+      '@types/react':
+        specifier: catalog:build
+        version: 19.3.0
       effect:
         specifier: catalog:effect
         version: 4.0.0-rc.118
+      ink:
+        specifier: 7.1.1
+        version: 7.1.1(@types/react@19.3.0)(react@19.3.0)
+      react:
+        specifier: catalog:build
+        version: 19.3.0
+      string-width:
+        specifier: ^8.3.0
+        version: 8.3.0
       typescript:
         specifier: catalog:build
         version: 7.0.2
@@ -392,6 +423,31 @@ importers:
     publishDirectory: dist/dev/pkg
 
   packages/engine:
+    devDependencies:
+      '@effect/platform-node':
+        specifier: catalog:effect
+        version: 4.0.0-rc.118(effect@4.0.0-rc.118)(redis@6.2.1)
+      '@effect/vitest':
+        specifier: catalog:effect
+        version: 4.0.0-rc.118(effect@4.0.0-rc.118)(vitest@5.0.2)
+      '@effected/workspaces':
+        specifier: workspace:*
+        version: link:../workspaces/dist/dev/pkg
+      '@savvy-web/bundler':
+        specifier: ^2.4.18
+        version: 2.4.18(@types/node@26.6.3)(@types/react-dom@19.3.0(@types/react@19.3.0))(@types/react@19.3.0)(react-dom@19.3.0(react@19.3.0))(react@19.3.0)(redis@6.2.1)(tsx@4.23.15)(typescript@7.0.2)
+      '@types/node':
+        specifier: catalog:build
+        version: 26.6.3
+      effect:
+        specifier: catalog:effect
+        version: 4.0.0-rc.118
+      typescript:
+        specifier: catalog:build
+        version: 7.0.2
+    publishDirectory: dist/dev/pkg
+
+  packages/env:
     devDependencies:
       '@effect/platform-node':
         specifier: catalog:effect
@@ -493,6 +549,9 @@ importers:
       '@effected/github':
         specifier: workspace:^
         version: link:../github/dist/dev/pkg
+      '@effected/github-commands':
+        specifier: workspace:^
+        version: link:../github-commands/dist/dev/pkg
       '@effected/glob':
         specifier: workspace:^
         version: link:../glob/dist/dev/pkg
@@ -524,6 +583,25 @@ importers:
       '@effected/memfs':
         specifier: workspace:*
         version: link:../memfs/dist/dev/pkg
+      '@savvy-web/bundler':
+        specifier: ^2.4.18
+        version: 2.4.18(@types/node@26.6.3)(@types/react-dom@19.3.0(@types/react@19.3.0))(@types/react@19.3.0)(react-dom@19.3.0(react@19.3.0))(react@19.3.0)(redis@6.2.1)(tsx@4.23.15)(typescript@7.0.2)
+      '@types/node':
+        specifier: catalog:build
+        version: 26.6.3
+      effect:
+        specifier: catalog:effect
+        version: 4.0.0-rc.118
+      typescript:
+        specifier: catalog:build
+        version: 7.0.2
+    publishDirectory: dist/dev/pkg
+
+  packages/github-commands:
+    devDependencies:
+      '@effect/vitest':
+        specifier: catalog:effect
+        version: 4.0.0-rc.118(effect@4.0.0-rc.118)(vitest@5.0.2)
       '@savvy-web/bundler':
         specifier: ^2.4.18
         version: 2.4.18(@types/node@26.6.3)(@types/react-dom@19.3.0(@types/react@19.3.0))(@types/react@19.3.0)(react-dom@19.3.0(react@19.3.0))(react@19.3.0)(redis@6.2.1)(tsx@4.23.15)(typescript@7.0.2)
@@ -935,6 +1013,15 @@ importers:
       '@effected/cli':
         specifier: workspace:^
         version: link:../cli/dist/dev/pkg
+      '@effected/env':
+        specifier: workspace:^
+        version: link:../env/dist/dev/pkg
+      '@effected/glob':
+        specifier: workspace:^
+        version: link:../glob/dist/dev/pkg
+      '@effected/walker':
+        specifier: workspace:^
+        version: link:../walker/dist/dev/pkg
       ajv:
         specifier: ^8.20.0
         version: 8.20.0
@@ -1292,6 +1379,9 @@ importers:
       '@effected/engine':
         specifier: workspace:*
         version: link:../packages/engine/dist/dev/pkg
+      '@effected/env':
+        specifier: workspace:*
+        version: link:../packages/env/dist/dev/pkg
       '@effected/git':
         specifier: workspace:*
         version: link:../packages/git/dist/dev/pkg
@@ -1301,6 +1391,9 @@ importers:
       '@effected/github-actions':
         specifier: workspace:*
         version: link:../packages/github-actions/dist/dev/pkg
+      '@effected/github-commands':
+        specifier: workspace:*
+        version: link:../packages/github-commands/dist/dev/pkg
       '@effected/github-references':
         specifier: workspace:*
         version: link:../packages/github-references/dist/dev/pkg

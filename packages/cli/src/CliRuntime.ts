@@ -1,11 +1,30 @@
-import type { Layer } from "effect";
-import { Cause, Effect, MutableRef, Runtime } from "effect";
+import type { Audience, TerminalEnv } from "@effected/env";
+import { CommandNeutralizer } from "@effected/github-commands";
+import type { FileSystem, Path, Stdio, Terminal } from "effect";
+import { Cause, Effect, Layer, MutableRef, Runtime } from "effect";
 import { CliError } from "effect/cli";
+import { CliColor } from "./CliColor.js";
+import type { CliEnvOptions, CliEnvServices } from "./CliEnv.js";
+import { CliEnv } from "./CliEnv.js";
 import { CliExit } from "./CliExit.js";
+import type { CliLogFileOptions, CliLogOptions } from "./CliLog.js";
+import { CliLog, envBuildLogLayer, platformLogLayer } from "./CliLog.js";
 import { CliLogger } from "./CliLogger.js";
+import { sanitize } from "./Fmt.js";
 import { ExitRequested } from "./internal/ExitRequested.js";
+import type { FailureTarget } from "./internal/failureTarget.js";
+import {
+	FailureTargetCell,
+	currentTarget,
+	fallbackTarget,
+	guardConsumerLines,
+	linesOf,
+	plainFailureLines,
+	refreshFailureTarget,
+} from "./internal/failureTarget.js";
 import { routeHelpOnUsageError } from "./internal/HelpRouting.js";
 import { isExitCode } from "./internal/isExitCode.js";
+import { TrustedLine } from "./internal/logSafety.js";
 
 const isShowHelp = (u: unknown): u is CliError.ShowHelp => CliError.isCliError(u) && u._tag === "ShowHelp";
 
@@ -27,6 +46,31 @@ export interface FailureDetails {
 	 * failure from the error channel.
 	 */
 	readonly isDefect: boolean;
+	/**
+	 * The report the kit writes for this failure when there is no `render`: for this run, in this audience, with its
+	 * colour, links and `displayPath`. A `render` that hands a failure back returns these lines unchanged, and the
+	 * output is then exactly the default report. It equals `lines()`; to drop the leading status and keep the run's
+	 * settings, use {@link FailureDetails.lines} with `status: false`.
+	 */
+	readonly defaultLines: ReadonlyArray<string>;
+	/**
+	 * The report the kit would write for this failure, rendered for this run: its audience, colour, links and
+	 * `displayPath`.
+	 *
+	 * @remarks
+	 * `lines()` is {@link FailureDetails.defaultLines}. With `status: false` the leading status glyph, or the `[FAIL]`
+	 * tag in plain text, is left off, so a render that puts its own prefix in front (the program's name, say) reads
+	 * cleanly and still gets the run's colour and paths. `CliRuntime.defaultRender` with `status: false` drops the
+	 * status too, but it has no run to read and renders plain with absolute paths.
+	 *
+	 * ```ts
+	 * const render = (_error: unknown, details: FailureDetails) =>
+	 *   details.lines({ status: false }).map((line, i) => (i === 0 ? `prog: ${line}` : line))
+	 * ```
+	 *
+	 * @param options - `status: false` leaves off the leading status
+	 */
+	readonly lines: (options?: { readonly status?: boolean | undefined }) => ReadonlyArray<string>;
 }
 
 /**
@@ -36,7 +80,10 @@ export interface FailureDetails {
  */
 export interface ReportFailuresOptions {
 	/**
-	 * Render the failure. Defaults to `String(error)`, one line.
+	 * Render the failure. Defaults to the failure's document, `CliFailure.toDoc(cause)`, rendered for the
+	 * audience: a failure status line, a tree for a schema failure, a defect's message with its cleaned stack, and
+	 * the one fixed line each for `Cancelled` and `NotInteractive`. Under `CliRuntime.main` with `env` it is painted for
+	 * a person and plain for an agent or a CI; elsewhere it is plain. It is still written through the logger.
 	 *
 	 * @remarks
 	 * Return several lines to print several: a config error's own message
@@ -47,6 +94,12 @@ export interface ReportFailuresOptions {
 	 * failure can render as one line and a defect as a full report, without
 	 * guessing from the error's shape. A renderer that takes only `error`
 	 * still fits.
+	 *
+	 * What it returns is text the kit did not build, so the report applies the output policy to it: under GitHub
+	 * Actions a line the runner would read as a workflow command is neutralized (with no environment services at all,
+	 * always), and for an agent or a CI audience escape sequences are removed (GitHub Actions detects as `ci`). For a person the escapes you return are kept,
+	 * since the kit cannot tell your own colour from an injected sequence: a `render` must sanitise the data it
+	 * interpolates (an error message, a file name) itself.
 	 */
 	readonly render?: ((error: unknown, details: FailureDetails) => string | ReadonlyArray<string>) | undefined;
 	/**
@@ -77,7 +130,7 @@ export interface ReportFailuresOptions {
 }
 
 /**
- * Options for {@link CliRuntime.main}.
+ * Options for `CliRuntime.main`.
  *
  * @public
  */
@@ -87,8 +140,32 @@ export interface MainOptions<RP, EP> extends ReportFailuresOptions {
 	 * on it. Passed in so this package never imports a platform.
 	 */
 	readonly platform: Layer.Layer<RP, EP>;
-	/** The logger, provided outermost. Defaults to `CliLogger.layer()`. */
+	/**
+	 * The logger, provided outermost. Defaults to `CliLogger.layer()`, or to `CliLog.layer(env.log)` when
+	 * `env.log` is given. An explicit `logger` wins over both.
+	 */
 	readonly logger?: Layer.Layer<never> | undefined;
+	/**
+	 * Provide the environment services, built by {@link CliEnv.layer}, inside failure reporting, where the platform
+	 * sits, together with `CliColor.formatterLayer` so help text follows the same colour decision.
+	 *
+	 * @remarks
+	 * The program may then require `CurrentRuntimeEnv`, `TerminalEnv`, `Audience` and `CliTheme` and read
+	 * `CliInteractive`. Without it `CliInteractive` keeps its non-interactive default, so forgetting this wiring
+	 * gives a CLI that never prompts. With `env.log`, `main` uses `CliLog.layer` as the logger set, and `env.log`
+	 * may carry the `file` option when the platform provides `FileSystem` and `Path`. A failure building the env
+	 * layer renders as one line and exits through `exitCode`.
+	 *
+	 * Not interactive, the `Terminal` the program sees is gated: its `readLine` fails as a quit, its input is
+	 * already ended and its `display` writes nothing. A program that reads piped data must read `Stdio.stdin`, and
+	 * one that writes output must use `Console` or `Stdio`, never `Terminal`.
+	 *
+	 * Stderr's colour mirrors stdout's terminal check unless `env.stderrIsTerminal` says otherwise, so with stderr
+	 * redirected and stdout a terminal the failure report is painted into the file. On Node, pass the real check:
+	 * `env: { stderrIsTerminal: Effect.sync(() => process.stderr.isTTY === true) }` (core's `Stdio` reports only
+	 * stdout; upstream Effect-TS/effect#8639).
+	 */
+	readonly env?: CliEnvOptions | undefined;
 	/**
 	 * Where the help document goes when it is printed with a usage error:
 	 * `"stdout"` (the default, core's behaviour) or `"stderr"`, beside the
@@ -109,6 +186,17 @@ export interface MainOptions<RP, EP> extends ReportFailuresOptions {
 	 */
 	readonly helpOnUsageError?: "stdout" | "stderr" | undefined;
 }
+
+/** The last line of defence of a failure report: the error's text, sanitised and neutralized, whatever else broke. */
+const lastResort = (error: unknown): ReadonlyArray<string> => {
+	let text: string;
+	try {
+		text = String(error);
+	} catch {
+		text = "[unprintable failure]";
+	}
+	return CommandNeutralizer.lines(sanitize(text));
+};
 
 const toLines = (rendered: string | ReadonlyArray<string>): ReadonlyArray<string> =>
 	typeof rendered === "string" ? [rendered] : rendered;
@@ -208,6 +296,38 @@ export class CliRuntime {
 	private constructor() {}
 
 	/**
+	 * What `reportFailures` and `main` render a failure as when no `render` option is given, for a consumer's own
+	 * `render` to hand a failure back to.
+	 *
+	 * @remarks
+	 * The plain lines of `CliFailure.toDoc(details.cause)`: a failure status line, a `Tree` for a schema failure, a
+	 * defect's message with its cleaned `stack`, and the one fixed line each for `Cancelled` and `NotInteractive`.
+	 * It has no terminal to ask, so it is the plain rendering for an agent, with absolute paths; the report `main` writes
+	 * with no `render` option is the same document in the renderer the audience gets (painted for a person), and that
+	 * report is `details.defaultLines`: return those to hand a failure back with the run's colour, links and path
+	 * display. With `status: false` the leading status (the glyph, or `[FAIL]` in plain text) is left off, so a prefix
+	 * such as the program's name reads cleanly; for that AND the run's settings, use `details.lines({ status: false })`.
+	 * A custom `render` that only cares about its own errors delegates the rest:
+	 *
+	 * ```ts
+	 * const render = (error: unknown, details: FailureDetails) =>
+	 *   error instanceof MyError ? myLines(error) : CliRuntime.defaultRender(error, details)
+	 * ```
+	 *
+	 * @param error - the squashed failure
+	 * @param details - what `render` is told about the failure; accepted so a delegating `render` passes both
+	 *   arguments through unchanged (only `cause` and `isDefect` are read)
+	 * @param options - `status: false` leaves off the leading status glyph or `[FAIL]` tag
+	 */
+	static readonly defaultRender = (
+		error: unknown,
+		details: Pick<FailureDetails, "cause" | "isDefect">,
+		options?: { readonly status?: boolean | undefined },
+	): string | ReadonlyArray<string> =>
+		// `details.cause` is what a report is told; a hand-built `details` with an empty cause renders the error itself.
+		plainFailureLines(details.cause.reasons.length > 0 ? details.cause : Cause.fail(error), options?.status !== false);
+
+	/**
 	 * Catch, render through the ambient logger, and re-fail with the exit code
 	 * and the no-double-report mark.
 	 */
@@ -244,13 +364,42 @@ export class CliRuntime {
 						return Effect.fail(CliRuntime.reported(error, chooseExitCode(error, options.usageExitCode ?? 64)));
 					}
 
-					const render = options.render ?? ((value: unknown) => String(value));
-					// Cause.squash prefers a Fail over a Die, so `error` is a defect exactly when there is no Fail.
-					const details: FailureDetails = { cause, isDefect: !Cause.hasFails(cause) };
+					const render = options.render;
 
 					return Effect.gen(function* () {
-						for (const line of toLines(render(error, details))) {
-							yield* Effect.logError(line);
+						// The failure's document in the renderer the audience gets: the report itself without a `render`, and
+						// `details.defaultLines` with one. If the document cannot be rendered for the audience, the plain path;
+						// if that dies too, the message alone, still sanitised and neutralized: the last resort keeps the policy.
+						// The target is built from the services in context when there is no cell: if that dies, the plain fallback.
+						const target = yield* currentTarget.pipe(Effect.catchCause(() => Effect.succeed(fallbackTarget)));
+						const reportLines = (status: boolean): ReadonlyArray<string> => {
+							try {
+								return linesOf(cause, target, status);
+							} catch {
+								try {
+									return plainFailureLines(cause, status);
+								} catch {
+									return lastResort(error);
+								}
+							}
+						};
+						const defaultLines = reportLines(true);
+						// Cause.squash prefers a Fail over a Die, so `error` is a defect exactly when there is no Fail.
+						const details: FailureDetails = {
+							cause,
+							isDefect: !Cause.hasFails(cause),
+							defaultLines,
+							lines: (options) => (options?.status === false ? reportLines(false) : defaultLines),
+						};
+						// Without a `render`, written through the logger, so `--log-level` and its routing are as they were.
+						const lines =
+							render === undefined
+								? defaultLines
+								: // A consumer's lines are text the kit did not build: neutralized under Actions, stripped for an agent.
+									yield* guardConsumerLines(toLines(render(error, details)));
+						for (const line of lines) {
+							// Rendered by the kit (or by the consumer's own `render`): not sanitised again by the logger.
+							yield* Effect.logError(line).pipe(Effect.provideService(TrustedLine, true));
 						}
 
 						return yield* Effect.fail(CliRuntime.reported(error, chooseExitCode(error, options.exitCode)));
@@ -269,6 +418,9 @@ export class CliRuntime {
 	 *   fallback code rather than escaping to the runtime's stack trace.
 	 * - The logger is provided **outermost**, so it is present whichever branch
 	 *   fails.
+	 * - With the `env` option, `CliEnv.layer` and `CliColor.formatterLayer` are
+	 *   provided beside the platform, inside failure reporting, so the program can
+	 *   read the audience, terminal, theme and `CliInteractive`.
 	 *
 	 * You still call your platform's runner:
 	 *
@@ -279,11 +431,91 @@ export class CliRuntime {
 	 * )
 	 * ```
 	 */
-	static readonly main = <A, E, R, RP, EP>(
+	static main<A, E, R, RP, EP>(
+		program: Effect.Effect<A, E, R>,
+		options: MainOptions<RP, EP> & { readonly env?: undefined },
+	): Effect.Effect<void, Error, Exclude<Exclude<R, CliExit>, RP>>;
+	static main<A, E, R, RP, EP>(
+		program: Effect.Effect<A, E, R>,
+		options: MainOptions<RP, EP> & { readonly env: CliEnvOptions & { readonly log: CliLogFileOptions } },
+	): Effect.Effect<
+		void,
+		Error,
+		| Exclude<Exclude<R, CliExit | CliEnvServices>, RP>
+		| Exclude<Stdio.Stdio | Terminal.Terminal | FileSystem.FileSystem | Path.Path, RP>
+	>;
+	static main<A, E, R, RP, EP>(
+		program: Effect.Effect<A, E, R>,
+		options: MainOptions<RP, EP> & {
+			readonly env: CliEnvOptions & { readonly log?: CliLogOptions & { readonly file?: undefined } };
+		},
+	): Effect.Effect<
+		void,
+		Error,
+		Exclude<Exclude<R, CliExit | CliEnvServices>, RP> | Exclude<Stdio.Stdio | Terminal.Terminal, RP>
+	>;
+	// A `CliEnvOptions`-typed env may carry `log.file` even when this call site cannot see it, so it keeps
+	// `FileSystem | Path` required: dropping them here would let a file sink silently disappear at runtime.
+	static main<A, E, R, RP, EP>(
+		program: Effect.Effect<A, E, R>,
+		options: MainOptions<RP, EP> & { readonly env: CliEnvOptions },
+	): Effect.Effect<
+		void,
+		Error,
+		| Exclude<Exclude<R, CliExit | CliEnvServices>, RP>
+		| Exclude<Stdio.Stdio | Terminal.Terminal | FileSystem.FileSystem | Path.Path, RP>
+	>;
+	static main<A, E, R, RP, EP>(
 		program: Effect.Effect<A, E, R>,
 		options: MainOptions<RP, EP>,
-	): Effect.Effect<void, Error, Exclude<Exclude<R, CliExit>, RP>> =>
-		Effect.gen(function* () {
+	): Effect.Effect<void, Error, unknown> {
+		// Bound once, so the logger and the program below share one build of it (layers memoize by reference).
+		const env = options.env === undefined ? undefined : CliEnv.layer(options.env);
+		const envLog = options.env?.log;
+		const logger =
+			options.logger ??
+			(env === undefined || envLog === undefined
+				? CliLogger.layer()
+				: // The logger needs Audience and TerminalEnv, so it is built over the env layer; the same layer is provided
+					// again inside failure reporting, where a failure to build it is reported. If it cannot be built here, fall
+					// back to the plain CliLogger so that report has a logger.
+					(
+						CliLog.layer as (
+							options: CliLogOptions | CliLogFileOptions,
+						) => Layer.Layer<never, never, Audience | TerminalEnv | FileSystem.FileSystem | Path.Path>
+					)(envLog).pipe(
+						Layer.provide(env),
+						// The platform and env builds log too (an invalid audience override warns, a platform may log while it
+						// builds): build them UNDER a CliLogger, never beside it, or those lines go through Effect's default
+						// logger to STDOUT, before any logger exists. `provideMerge` hands the same logger set on to the env build.
+						// The platform alone is built under the run's log level and format (`platformLogLayer`): provided to it
+						// only, so its lowered MinimumLogLevel never reaches this CliLog's own build, which reads the ambient one.
+						Layer.provide(
+							Layer.provideMerge(
+								options.platform.pipe(Layer.provide(platformLogLayer(envLog, options.env?.audienceEnvVar))),
+								// The env build logs too (an invalid override value warns, interpolating it): once, in the build-time
+								// format and neutralized, never silenced by plainLogger, and without lowering MinimumLogLevel, which this
+								// CliLog's own build reads.
+								envBuildLogLayer(envLog, options.env?.audienceEnvVar),
+							),
+						),
+						Layer.catchCause(() => CliLogger.layer(envLog.logger)),
+					));
+		const inside =
+			env === undefined
+				? Layer.empty
+				: Layer.mergeAll(
+						CliColor.formatterLayer(options.env?.formatter),
+						// Records how a failure is rendered, from the services this layer provides, for the report outside it.
+						Layer.effectDiscard(
+							refreshFailureTarget(undefined, {
+								displayPath: options.env?.displayPath,
+								stackFrames: options.env?.stackFrames,
+							}),
+						),
+					).pipe(Layer.provideMerge(env));
+
+		const run = Effect.gen(function* () {
 			// Inside the platform provide, so the rerouting sees the platform's own Formatter.
 			yield* options.helpOnUsageError === "stderr" ? routeHelpOnUsageError(program) : program;
 			const exit = yield* CliExit;
@@ -299,10 +531,16 @@ export class CliRuntime {
 			if (code !== 0) return yield* Effect.fail(new ExitRequested(code));
 		}).pipe(
 			Effect.provide(CliExit.layer),
+			Effect.provide(inside),
 			Effect.provide(options.platform),
 			CliRuntime.reportFailures(options),
-			Effect.provide(options.logger ?? CliLogger.layer()),
+			Effect.provide(logger),
+		) as Effect.Effect<void, Error, unknown>;
+		// One cell per run, outside failure reporting, which the environment layer fills from inside it.
+		return Effect.suspend(() =>
+			Effect.provideService(run, FailureTargetCell, MutableRef.make<FailureTarget | undefined>(undefined)),
 		);
+	}
 
 	/**
 	 * Mark an error as already reported, carrying an exit code.
@@ -312,7 +550,7 @@ export class CliRuntime {
 	 * command that prints its own diagnostics, say — needs the same two marks
 	 * and should not have to rediscover the inverted polarity.
 	 *
-	 * Under {@link CliRuntime.main} or {@link CliRuntime.reportFailures}, do NOT
+	 * Under `CliRuntime.main` or {@link CliRuntime.reportFailures}, do NOT
 	 * print the failure yourself before failing with it: `reportFailures`
 	 * renders every error except a `ShowHelp` and a `CliError.UserError` whose
 	 * reported mark is `false`, so it would print twice. Fail with the marked
@@ -344,9 +582,14 @@ export class CliRuntime {
 	static reported(error: unknown, exitCode?: number): Error;
 	static reported(error: unknown, exitCode = 1): Error {
 		const marked = error instanceof Error ? error : new Error(String(error));
-		return Object.assign(marked, {
-			[Runtime.errorReported]: false,
-			[Runtime.errorExitCode]: exitCode,
-		});
+		// defineProperty, not assignment: a class may carry the exit code as a prototype getter, which a plain
+		// assignment cannot overwrite.
+		for (const [key, value] of [
+			[Runtime.errorReported, false],
+			[Runtime.errorExitCode, exitCode],
+		] as const) {
+			Object.defineProperty(marked, key, { value, writable: true, configurable: true, enumerable: false });
+		}
+		return marked;
 	}
 }

@@ -54,7 +54,7 @@ const escapeProperty = (value: string): string => escapeMessage(value).replaceAl
  * **Pure.** This module renders strings and nothing else — it performs no IO
  * and holds no service — which is what makes the escaping rules testable
  * without a runner, and what lets a non-Actions consumer reuse the protocol.
- * Writing a rendered command to stdout is {@link ActionOutputs}'s job.
+ * Writing a rendered command to stdout is the caller's job (`@effected/github-actions` does it).
  *
  * The escaping is the whole point of the module. A message carrying a raw
  * newline does not merely render oddly: the runner reads the text after it as
@@ -62,7 +62,7 @@ const escapeProperty = (value: string): string => escapeMessage(value).replaceAl
  *
  * @example
  * ```ts
- * import { WorkflowCommand } from "@effected/github-actions";
+ * import { WorkflowCommand } from "@effected/github-commands";
  *
  * WorkflowCommand.error("build failed", { file: "src/main.ts", startLine: 12 });
  * // "::error file=src/main.ts,line=12::build failed"
@@ -81,6 +81,11 @@ export class WorkflowCommand {
 	 * `CommandProperties` alias: an internal named type on a `@public` signature
 	 * fails the API Extractor gate, and neither an `@internal` tag nor a second
 	 * alias helps — only inlining does.
+	 *
+	 * Use a name the runner registers (`error`, `warning`, `notice`, `debug`, `group`, `endgroup`, `add-mask` and the
+	 * rest of its list). The runner tries its V2 parser first and, if the name is not registered, rejects the line, and
+	 * its legacy parser then reads the line for `##[` ANYWHERE in it: a `##[` in the data of a command with an
+	 * unregistered name is therefore a command. {@link CommandNeutralizer} is the tool for text that is only data.
 	 */
 	static render(
 		name: string,

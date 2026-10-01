@@ -10,8 +10,8 @@ tags:
   - bundle
 generated:
   by: "okfit/claude-code"
-  at: 2026-09-30T01:39:09Z
-  body_sha256: 076919e406bf254a45f35958e873f895366c33894cc5c0687f0a63cdf427584b
+  at: 2026-10-01T01:56:30Z
+  body_sha256: f10e59943a6f54802073740255a9eb6d28cdceba0116a3905f243ddabf38a5e2
 ---
 
 # github-actions
@@ -24,7 +24,10 @@ line against [`github`](github.md) is sharp: `github` talks to the GitHub
 API, `github-actions` talks to the runner. Nothing here reads a `GITHUB_*`
 variable on `github`'s behalf, and nothing in `github` imports a workflow
 command. The two meet at exactly two seams, both living here: the App-token
-bridge and the `Logger` that maps Effect logs onto workflow commands.
+bridge and the `Logger` that maps Effect logs onto workflow commands. The
+workflow-command grammar itself, `WorkflowCommand` and the `CommandNeutralizer`
+the logger uses, is the pure [`@effected/github-commands`](github-commands.md),
+a regular dependency (it has no shared-instance contract, so a duplicate is harmless) that this entrypoint re-exports `WorkflowCommand` from.
 
 The package covers four subsystems, each with its own contract doc: the
 runner runtime ([`actions-runtime`](../interfaces/actions-runtime.md)),

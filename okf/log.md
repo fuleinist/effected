@@ -1,5 +1,23 @@
 # Log
 
+## 2026-09-30
+
+* Updated @effected/jsonl
+* Updated @effected/jsonl journal service
+* Updated @effected/memfs
+* Updated @effected/schemastore
+* Updated @effected/templates
+* Updated @effected/workspaces/testing: the repo-shape checks
+* Updated A test needing FileSystem uses memfs, never a hand-rolled layerNoop stub
+* Updated Module layout is module-per-concept, not kind-based folders
+* Updated Testing standards
+* Updated github-actions
+* Updated memfs's volume is invisible to anything that does not ask for the FileSystem service
+* Updated @effected/env
+* Updated @effected/env is its own boundary package, a required peer of cli
+* Updated FORCE_COLOR is honoured, with Node's getColorDepth precedence
+* Updated std-osc8's pure core is ported into env, not wrapped
+
 ## 2026-09-29
 
 * Updated @effected/schemastore
