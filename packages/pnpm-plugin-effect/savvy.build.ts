@@ -175,14 +175,14 @@ await build({
 				effected: {
 					packages: {
 						"@effected/app": {
-							range: "^0.19.1",
+							range: "^0.19.2",
 							peer: "^0.19.0",
 							strategy: "lock-minor",
 							source: "workspace",
 						},
 						"@effected/cli": {
-							range: "^0.10.0",
-							peer: "^0.10.0",
+							range: "^0.11.0",
+							peer: "^0.11.0",
 							strategy: "lock-minor",
 							source: "workspace",
 						},
@@ -193,7 +193,7 @@ await build({
 							source: "workspace",
 						},
 						"@effected/config-file": {
-							range: "^0.13.1",
+							range: "^0.13.2",
 							peer: "^0.13.0",
 							strategy: "lock-minor",
 							source: "workspace",
@@ -223,8 +223,8 @@ await build({
 							source: "workspace",
 						},
 						"@effected/github-actions": {
-							range: "^0.19.1",
-							peer: "^0.19.0",
+							range: "^0.20.0",
+							peer: "^0.20.0",
 							strategy: "lock-minor",
 							source: "workspace",
 						},
@@ -271,7 +271,7 @@ await build({
 							source: "workspace",
 						},
 						"@effected/mcp": {
-							range: "^0.3.0",
+							range: "^0.3.1",
 							peer: "^0.3.0",
 							strategy: "lock-minor",
 							source: "workspace",
@@ -313,13 +313,13 @@ await build({
 							source: "workspace",
 						},
 						"@effected/schemastore": {
-							range: "^0.17.0",
+							range: "^0.17.1",
 							peer: "^0.17.0",
 							strategy: "lock-minor",
 							source: "workspace",
 						},
 						"@effected/schemastore-cli": {
-							range: "^0.17.0",
+							range: "^0.17.1",
 							peer: "^0.17.0",
 							strategy: "lock-minor",
 							source: "workspace",
@@ -355,7 +355,7 @@ await build({
 							source: "workspace",
 						},
 						"@effected/tsconfig-json": {
-							range: "^0.12.2",
+							range: "^0.12.3",
 							peer: "^0.12.0",
 							strategy: "lock-minor",
 							source: "workspace",
@@ -373,7 +373,7 @@ await build({
 							source: "workspace",
 						},
 						"@effected/xdg": {
-							range: "^0.8.2",
+							range: "^0.8.3",
 							peer: "^0.8.0",
 							strategy: "lock-minor",
 							source: "workspace",
