@@ -11,7 +11,7 @@
 import { CliRuntime } from "@effected/cli";
 import type { InstanceFinding, SchemastoreConfig } from "@effected/schemastore";
 import { InstanceValidator } from "@effected/schemastore";
-import { Console, Effect, FileSystem, Option, Path, Predicate, Schema } from "effect";
+import { Console, Effect, FileSystem, JsonPointer, Option, Path, Predicate, Schema } from "effect";
 import { Argument, Command, Flag } from "effect/cli";
 import { AjvInstanceValidator } from "../../AjvInstanceValidator.js";
 import { ConfigLoader } from "../../ConfigLoader.js";
@@ -194,14 +194,76 @@ const schemaPropertyOf = (payload: unknown): string | undefined =>
 		? payload.$schema
 		: undefined;
 
+// Resolve one local `#/$defs/<name>` pointer against the document's pool,
+// decoding the token the same way the kit's document lint decodes refs
+// (percent-decode, then JSON-Pointer unescape) so an escaped or encoded
+// class name finds its entry. Anything else — an external or subpath
+// pointer, malformed encoding, a missing or non-object entry — resolves to
+// nothing.
+const defsTarget = (document: Record<string, unknown>, ref: string): Record<string, unknown> | undefined => {
+	if (!ref.startsWith("#/")) {
+		return undefined;
+	}
+	let name: string;
+	try {
+		const tokens = ref
+			.slice(2)
+			.split("/")
+			.map((token) => JsonPointer.unescapeToken(decodeURIComponent(token)));
+		if (tokens.length !== 2 || tokens[0] !== "$defs") {
+			return undefined;
+		}
+		name = tokens[1] as string;
+	} catch {
+		return undefined;
+	}
+	const defs = document.$defs;
+	if (!Predicate.isObject(defs) || Array.isArray(defs) || !Object.hasOwn(defs, name)) {
+		return undefined;
+	}
+	const entry = defs[name];
+	return Predicate.isObject(entry) && !Array.isArray(entry) ? (entry as Record<string, unknown>) : undefined;
+};
+
 // Does the resolved document declare `$schema` as a root property? The
 // kit's HostedSchema pattern lets the source struct carry
 // `$schema: Schema.Literal(OutputSchema.$id)`, so the generated document
 // lists `$schema` in `properties` AND `required` — there the self-reference
-// is contract data the document itself const-constrains.
+// is contract data the document itself const-constrains. The declaring
+// properties are not always on the literal root: a `Schema.Class` source
+// emits a bare `$ref` root (`#/$defs/<Name>Encoded`), an `identifier`-
+// annotated struct emits `#/$defs/<Name>`, and a shared entry carrying
+// `rootAnnotations` emits `{ ...annotations, allOf: [{ $ref }] }`. Follow
+// local `$defs` pointers — the root's and each `allOf` member's — through a
+// visited set, and inspect inline `allOf` members as roots too, so every
+// shape the emitter produces is seen.
 const declaresSchemaProperty = (document: Record<string, unknown>): boolean => {
-	const properties = document.properties;
-	return Predicate.isObject(properties) && !Array.isArray(properties) && "$schema" in properties;
+	const declares = (node: Record<string, unknown>): boolean => {
+		const properties = node.properties;
+		return Predicate.isObject(properties) && !Array.isArray(properties) && "$schema" in properties;
+	};
+	const seen = new Set<string>();
+	const queue: Array<Record<string, unknown>> = [document];
+	for (let node = queue.shift(); node !== undefined; node = queue.shift()) {
+		if (declares(node)) {
+			return true;
+		}
+		if (typeof node.$ref === "string" && !seen.has(node.$ref)) {
+			seen.add(node.$ref);
+			const target = defsTarget(document, node.$ref);
+			if (target !== undefined) {
+				queue.push(target);
+			}
+		}
+		if (Array.isArray(node.allOf)) {
+			for (const member of node.allOf) {
+				if (Predicate.isObject(member) && !Array.isArray(member)) {
+					queue.push(member as Record<string, unknown>);
+				}
+			}
+		}
+	}
+	return false;
 };
 
 // The payload's `$schema` is the pointer this command consumed to find the

@@ -778,6 +778,93 @@ describe("schemastore CLI", () => {
 			);
 		});
 
+		// The same contract through the roots the emitter actually produces:
+		// a `Schema.Class` emits a bare `$ref` root into `#/$defs/<Name>Encoded`,
+		// an `identifier`-annotated struct into `#/$defs/<Name>`, and a shared
+		// entry under `rootAnnotations` wraps the pointer in
+		// `{ ...annotations, allOf: [{ $ref }] }`. The declaring `properties`
+		// live behind the local pointer in every case, so the self-reference
+		// must survive there too.
+		it.effect("a Schema.Class root declaring $schema behind its local $ref validates verbatim", () => {
+			class Hosted extends Schema.Class<Hosted>("Hosted")({
+				$schema: Schema.Literal(BASIC_ID),
+				name: Schema.String,
+			}) {}
+			return run(
+				Effect.gen(function* () {
+					yield* program(["validate", "payload.json"], deps(basicConfig()));
+					assert.include(yield* stdout, `valid ${PAYLOAD_PATH} against ${BASIC_PATH}`);
+				}),
+				{
+					...builtSeed,
+					[BASIC_PATH]: emitted(Hosted, BASIC_ID),
+					[PAYLOAD_PATH]: `${JSON.stringify({ $schema: BASIC_ID, name: "x" })}\n`,
+				},
+			);
+		});
+
+		it.effect("an identifier-annotated struct root declaring $schema behind its local $ref validates verbatim", () => {
+			const Identified = Schema.Struct({
+				$schema: Schema.Literal(BASIC_ID),
+				name: Schema.String,
+			}).annotate({ identifier: "Output" });
+			return run(
+				Effect.gen(function* () {
+					yield* program(["validate", "payload.json"], deps(basicConfig()));
+					assert.include(yield* stdout, `valid ${PAYLOAD_PATH} against ${BASIC_PATH}`);
+				}),
+				{
+					...builtSeed,
+					[BASIC_PATH]: emitted(Identified, BASIC_ID),
+					[PAYLOAD_PATH]: `${JSON.stringify({ $schema: BASIC_ID, name: "x" })}\n`,
+				},
+			);
+		});
+
+		it.effect("a rootAnnotations-wrapped shared $ref root declaring $schema validates verbatim", () => {
+			// Recursive, so the class shares its $defs entry with every
+			// self-reference and the emitter wraps the root in allOf.
+			class Shared extends Schema.Class<Shared>("Shared")({
+				$schema: Schema.Literal(BASIC_ID),
+				name: Schema.String,
+				children: Schema.Array(Schema.suspend((): Schema.Codec<Shared> => Shared)),
+			}) {}
+			const wrapped = Result.getOrThrow(
+				Result.getOrThrow(
+					StoreDocument.fromSchemaResult(Shared, { $id: BASIC_ID, rootAnnotations: { title: "T" } }),
+				).serializeResult(),
+			);
+			return run(
+				Effect.gen(function* () {
+					yield* program(["validate", "payload.json"], deps(basicConfig()));
+					assert.include(yield* stdout, `valid ${PAYLOAD_PATH} against ${BASIC_PATH}`);
+				}),
+				{
+					...builtSeed,
+					[BASIC_PATH]: wrapped,
+					[PAYLOAD_PATH]: `${JSON.stringify({ $schema: BASIC_ID, name: "x", children: [] })}\n`,
+				},
+			);
+		});
+
+		// The strip side of the contract must survive the same hop: a closed
+		// $ref-rooted document that does NOT declare `$schema` still has the
+		// pointer stripped, so the payload naming its own document validates.
+		it.effect("a closed $ref-rooted document without a declared $schema still strips the pointer", () => {
+			const Plain = Schema.Struct({ name: Schema.String }).annotate({ identifier: "Plain" });
+			return run(
+				Effect.gen(function* () {
+					yield* program(["validate", "payload.json"], deps(basicConfig()));
+					assert.include(yield* stdout, `valid ${PAYLOAD_PATH} against ${BASIC_PATH}`);
+				}),
+				{
+					...builtSeed,
+					[BASIC_PATH]: emitted(Plain, BASIC_ID),
+					[PAYLOAD_PATH]: `${JSON.stringify({ $schema: BASIC_ID, name: "x" })}\n`,
+				},
+			);
+		});
+
 		it.effect("a non-conforming payload fails at exit 1 with pointer-and-keyword findings", () =>
 			run(
 				Effect.gen(function* () {
