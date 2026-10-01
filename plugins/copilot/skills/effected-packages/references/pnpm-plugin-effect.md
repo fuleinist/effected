@@ -18,8 +18,8 @@ This writes a `configDependencies` entry into the workspace's `pnpm-workspace.ya
 
 The Effect pair, consumed by every `@effected/*` package:
 
-- **`catalog:effect`** — every `effect`/`@effect/*` package pinned to ONE exact Effect v4 prerelease (`lock` strategy — no caret; a caret on a prerelease floats across the release line and desynchronizes the installed `effect` from the vendored source). Applications use it in `dependencies`; libraries in `devDependencies`.
-- **`catalog:effect:peers`** — the same package set as the advertised peer range; libraries declare it in `peerDependencies`. Under `lock` it holds the same exact pin, not a caret floor.
+- **`catalog:effect`** — every `effect`/`@effect/*` package on the stable Effect v4 line, a caret range (`^4.0.0`) under the `lock-minor` strategy. Effect releases `effect` and every `@effect/*` package together at one shared version, so they resolve together; the exact version a repo builds against is its **lockfile's resolution**, not the catalog literal, and the vendored `.repos/effect` source should be re-pinned whenever that resolution moves. `@effect/tsgo` is the exception — its own range on its own version line, unrelated to `effect`'s. Applications use it in `dependencies`; libraries in `devDependencies`.
+- **`catalog:effect:peers`** — the same package set as the advertised peer range (`^4.0.0` for `effect` and its satellites); libraries declare it in `peerDependencies`. `lock-minor` floors peer patches, so a peer never demands a newer patch than a consumer has.
 
 The kit pair, for consumers of the kit only. Internal edges stay `workspace:*`, and these are **not** exported into the root `pnpm-workspace.yaml`:
 
@@ -41,7 +41,7 @@ The Effect **v3** interop catalogs (`effect3` / `effect3:peers`) and the camelCa
 }
 ```
 
-Application pattern — exact pin directly:
+Application pattern — the catalog range directly (the lockfile fixes the exact version):
 
 ```json
 {
@@ -51,7 +51,12 @@ Application pattern — exact pin directly:
 
 ## Testing machinery
 
-One suite, `__test__/allowed-versions.test.ts`, covering the allowed-versions generator (`allowed-versions.gen.ts`): the package's `pnpm:export` script first regenerates a `peerDependencyRules.allowedVersions` table — one version-qualified rule `"<satellite>@<its pin>>effect"` per v4 lock-catalog package, valued at the effect pin — as pure literals spliced between sentinel comments in `savvy.build.ts`, because the export CLI statically evaluates the config source and rejects computed values. A drift tripwire test fails whenever the committed table differs from regeneration, so a catalog advance cannot leave the table behind. Never a blanket or unqualified key: the version qualifier is what keeps a same-named Effect v3 satellite's genuine unmet peer warning alive, and the kit's own `@effected/*` artifacts are deliberately not covered (their stranding is repaired by the toolchain republish cycle).
+One suite, `__test__/catalog.test.ts`, in two parts:
+
+- **The `effected` catalog.** It reads the `PnpmConfigPlugin(...)` literal from `savvy.build.ts` the way the upgrade CLI does, without importing it, and asserts that every publishable package except the plugin itself is a member, in the object form that emits a peers catalog.
+- **The scoped overrides.** It imports the built `pnpmfile.mjs` from `dist/dev/pkg`, the `publishConfig.directory`, and checks the `@effect/platform-node-shared` pins merge with a consumer's own `overrides`, with a consumer value for the same selector winning.
+
+The `peerDependencyRules.allowedVersions` table has no generator or test of its own. `rolldown-pnpm-config` derives it at build time from the `effect` catalog (`allowedVersionsFromCatalogs`, one version-qualified `"<satellite>@<version>>effect"` rule per exact entry). The `effect` satellites share `effect`'s own caret range, so only a package on its own version line, such as `@effect/tsgo`, gets a rule. The qualifier keeps a same-named Effect v3 satellite's genuine unmet-peer warning alive.
 
 ## Gotchas
 

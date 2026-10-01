@@ -6,7 +6,7 @@ description: >-
   JSONC/YAML/TOML/Markdown, semver, SPDX, glob matching, an in-memory filesystem for tests,
   package.json/tsconfig/lockfile/config-file handling, monorepo/workspace introspection, git introspection,
   runtime-version resolution, running commands, managed sections, JSONL journals, the GitHub REST/GraphQL API
-  and Actions runtime, CLI output, prompts and failure reporting, cross-front-end primitives for a CLI or MCP boundary,
+  and Actions runtime, CLI output, prompts, TUI screens and wizards (Ink), failure reporting, cross-front-end primitives for a CLI or MCP boundary,
   serving or testing an MCP server over stdio, SBOM generation and signing, or publishing SchemaStore JSON
   Schema or schema.org JSON-LD. Also use when choosing dependencies for a new Effect v4 app or library. Rows
   route; per-package depth lives in references/; per-construct intent search lives in references/constructs/.
@@ -17,7 +17,7 @@ description: >-
 `@effected/*` is an Effect v4-first app kit: 36 packages (34 libraries plus
 the `pnpm-plugin-effect` and `schemastore-cli` companions) designed against the
 v4 line, released together, with every
-`effect` dependency pinned to one exact prerelease via pnpm catalogs. Before
+`effect` dependency drawn from one pnpm catalog range (`^4.0.0`, `lock-minor`). Before
 designing lockfile/config/glob/semver/path/state/workspace/git capability by
 hand, check this table — the kit probably ships it, schema-first and with a
 typed error channel.
@@ -171,7 +171,7 @@ package that has not yet published is consumed from the local checkout during
 a dogfood loop instead of from the registry.
 
 Releases are changeset-driven: CI builds the appropriate changesets and
-releases the packages they name. That may be the whole kit on a prerelease advance
+releases the packages they name. That may be the whole kit on an Effect advance
 or a single package on a patch — a package can be released on its own, and
 solo patches like `workspaces@0.11.1` are ordinary. A downstream repo
 mid-dogfood-loop may still consume unreleased branch work from the local
