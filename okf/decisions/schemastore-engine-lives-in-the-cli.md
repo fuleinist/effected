@@ -1,7 +1,7 @@
 ---
 type: Decision
 title: The ajv engine lives in the CLI, and the library returns to boundary tier
-description: "The one shipped SchemaValidator engine is @effected/schemastore-cli's AjvValidator.layer, so ajv is a cost only the command pays; @effected/schemastore keeps the contract and its doubles, drops ajv and ajv-formats, and retiers from integrated back to boundary."
+description: "The one shipped SchemaValidator engine is @effected/schemastore-cli's AjvValidator.layer — and the one shipped InstanceValidator engine its AjvInstanceValidator.layer — so ajv is a cost only the command pays; @effected/schemastore keeps the contracts and their doubles, drops ajv and ajv-formats, and retiers from integrated back to boundary."
 status: draft
 supersedes: schemastore-retier-to-integrated.md
 tags:
@@ -19,6 +19,8 @@ sources:
     resource: ../../packages/schemastore-cli/package.json
   - id: ajv-validator
     resource: ../../packages/schemastore-cli/src/AjvValidator.ts
+  - id: ajv-instance-validator
+    resource: ../../packages/schemastore-cli/src/AjvInstanceValidator.ts
   - id: schema-validator
     resource: ../../packages/schemastore/src/SchemaValidator.ts
 generated:
@@ -62,6 +64,19 @@ mechanism failures as `SchemaValidatorError` — moved, not rewritten.
 The command composes it at its edge where it composed
 `SchemaValidator.layer`.
 
+The same split governs the payload half, added with the `schemastore
+validate` command: the library ships the `InstanceValidator` contract —
+the service, `InstanceValidatorShape`, `InstanceValidatorOptions`,
+`InstanceValidatorError`, `InstanceFinding`, `noop`, `makeTest` and
+`layerTest` — and no engine; the CLI's single `.` entry exports the one
+shipped implementation, `AjvInstanceValidator.layer`. It builds through
+the SAME shared setup as `AjvValidator` (`internal/ajv.ts` `makeAjv`),
+pointed at a payload instance instead of the meta-schema, so a document
+the `check` gate admits always compiles in the instance engine too and
+the two verdicts cannot drift. The runtime-import argument is identical:
+an application importing `@effected/schemastore` for `HostedSchema`
+never pulls ajv to validate a payload either.[^ajv-instance-validator]
+
 `@effected/schemastore` keeps the contract and nothing of the engine:
 the `SchemaValidator` service, `SchemaValidatorShape`,
 `SchemaValidatorOptions`, `SchemaValidatorError`, `ValidationFinding`,
@@ -71,10 +86,13 @@ runtime dependency.[^library-package-json] Under
 [R1](../conventions/dependency-policy.md#r1-tiers-1-and-2-take-no-external-runtime-dependencies)
 that is a boundary package, and the tier flips back.
 
-The CLI stays a companion: its canonical use is the command, and the
-`AjvValidator` export exists so a program that drives `SchemaPipeline`
-itself can compose the same engine the command runs — nothing is hidden
-from a consumer with a reason to wire the layers differently. The peer
+The CLI stays a companion: its canonical use is the command, and its
+exports — `AjvValidator`, and with the `validate` command
+`AjvInstanceValidator` — exist so a program that drives `SchemaPipeline`
+or validates payloads itself can compose the same engines the commands
+run — nothing is hidden from a consumer with a reason to wire the layers
+differently. Both exports are engine layers over the library's own
+contracts, not surfaces of their own. The peer
 rule is untouched: `effect` and `@effected/schemastore` remain the
 CLI's peers.
 
@@ -122,8 +140,9 @@ declares, another package implements" shape without a peer.
   `emitDts: false` departure from the scaffold is gone.
 - The [companion package](../glossary/companion-package.md) definition
   narrows from "exports nothing" to "its API is not why you install it":
-  the tier still does not apply, because the one export is a layer over
-  the library's own contract, not a surface of its own.
+  the tier still does not apply, because the only exports are engine
+  layers over the library's own contracts (`AjvValidator`,
+  `AjvInstanceValidator`), not surfaces of their own.
 
 [^owner]: The owner's design conversation of 2026-09-15: silk-release-action
     moving `@effected/schemastore` to `dependencies` for `HostedSchema`,
@@ -132,6 +151,10 @@ declares, another package implements" shape without a peer.
 [^ajv-validator]: `packages/schemastore-cli/src/AjvValidator.ts` —
     `AjvValidator.layer`, the strict-mode engine with `KeywordFamilies`
     registration and `addFormats(ajv, { keywords: false })`.
+[^ajv-instance-validator]: `packages/schemastore-cli/src/AjvInstanceValidator.ts` —
+    `AjvInstanceValidator.layer`, the payload engine over the shared
+    `internal/ajv.ts` `makeAjv`; findings as `InstanceFinding` values,
+    compile failures as `InstanceValidatorError`.
 [^cli-package-json]: `packages/schemastore-cli/package.json` — the `.`
     export to `src/index.ts`, and `ajv` / `ajv-formats` as regular
     dependencies.

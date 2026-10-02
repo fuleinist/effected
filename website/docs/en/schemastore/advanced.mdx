@@ -17,7 +17,7 @@ This guide covers the four capabilities a real build leans on — the pipeline a
 
 Almost nothing here owns a service. `StoreDocument`, `DocumentLint`, `DocumentDiff`, `CanonicalJson`, `SchemaVersioning`, `CatalogEntry` and `KeywordFamilies` are pure — plain functions or plain `Effect` values — so they drop into an `Effect.fn` workflow and their tagged errors join your program's typed `E` channel with no wrapping.
 
-Two things are services, and each earns it. [`SchemaFile`](/schemastore/api/class/schemafile) is the package's only IO, over core `FileSystem` and `Path` required in `R`; there is no platform package here, so the consumer supplies one at the edge. [`SchemaValidator`](/schemastore/api/class/schemavalidator) is the engine seam, and it ships *closed* — `SchemaValidator.layer` is a real ajv implementation, not a contract you have to fill in. The seam survives as an interface (`noop` to switch validation off, `makeTest`/`layerTest` for doubles, a substitutable engine) rather than as a requirement.
+Two things are services, and each earns it. [`SchemaFile`](/schemastore/api/class/schemafile) is the package's only IO, over core `FileSystem` and `Path` required in `R`; there is no platform package here, so the consumer supplies one at the edge. [`SchemaValidator`](/schemastore/api/class/schemavalidator) is the engine seam, and it ships as a contract with its doubles — the one real implementation is `AjvValidator.layer` from the companion `@effected/schemastore-cli` (ajv in strict mode), not an adapter you have to fill in. The seam survives as an interface (`noop` to switch validation off, `makeTest`/`layerTest` for doubles, a substitutable engine) rather than as a requirement. The payload half has the same shape: an `InstanceValidator` contract here, its `AjvInstanceValidator.layer` engine there, composed by the `schemastore validate` command.
 
 `SchemaPipeline` is deliberately **not** a service. It needs `SchemaFile | SchemaValidator` in `R`, and those compose for free — making it a third service would only add wiring.
 
@@ -161,7 +161,7 @@ Labels order by real SemVer precedence — `1.10.0` above `1.9.0`, `2.0.0-beta.1
 
 What the package still owns is the boundary of what may be emitted, and four parts of it surprise people:
 
-**The declared families are always in, and nothing else is.** They are admitted whatever a caller-supplied `includeAnnotationKey` answers — that predicate cannot suppress one. A key it admits *outside* the families fails the build with `UndeclaredAnnotationKeyError`, which names every offending key. Nothing drops such a key any more, so emitting it would ship a document SchemaStore's own gate rejects, and omitting it silently would hide the mistake in the predicate. [`KeywordFamilies`](/schemastore/api/class/keywordfamilies) is the single registry that decides; the gate and the lint consume its one predicate, so they cannot drift on what counts as legitimate — and `SchemaValidator.layer` registers the same set with ajv before compiling, so the engine cannot reject what the lint deliberately allows.
+**The declared families are always in, and nothing else is.** They are admitted whatever a caller-supplied `includeAnnotationKey` answers — that predicate cannot suppress one. A key it admits *outside* the families fails the build with `UndeclaredAnnotationKeyError`, which names every offending key. Nothing drops such a key any more, so emitting it would ship a document SchemaStore's own gate rejects, and omitting it silently would hide the mistake in the predicate. [`KeywordFamilies`](/schemastore/api/class/keywordfamilies) is the single registry that decides; the gate and the lint consume its one predicate, so they cannot drift on what counts as legitimate — and the CLI's engines (both `AjvValidator` and `AjvInstanceValidator`, through one shared ajv setup) register the same set before compiling, so the engine cannot reject what the lint deliberately allows.
 
 **A declared-family value is opaque, all the way down.** The `#/definitions` → `#/$defs` `$ref` rewrite does not descend into one. A `$ref`-shaped string inside an `x-taplo` or `x-ai-*` payload survives verbatim, because that payload is addressed to a language server rather than being a schema position — rewriting it would corrupt whatever the tool means by it.
 
@@ -193,7 +193,7 @@ Effect.runPromise(program).then(console.log);
 
 **A depth cap guards three recursive surfaces.** Nesting beyond the cap degrades to a `DepthExceeded` finding in the lint — which stays total and never throws — and fails typed elsewhere: [`JsonDepthExceededError`](/schemastore/api/class/jsondepthexceedederror) from the serializer, and a [`SchemaConversionError`](/schemastore/api/class/schemaconversionerror) when the `$ref` rewrite inside `fromSchema` hits it. `DocumentDiff`'s leaf comparison uses a looser stack guard on purpose: one shared budget made a deep-but-identical document compare as *different*, which is the worst possible answer.
 
-**Findings are never errors, and errors are never findings.** A validator's error channel is for the mechanism failing — [`SchemaValidatorError`](/schemastore/api/class/schemavalidatorerror) — never for a document it successfully judged. ajv raises a strict-mode rejection by *throwing*; the layer converts that into a root-pathed [`ValidationFinding`](/schemastore/api/class/validationfinding), while meta-schema failures keep ajv's structured `instancePath` and `keyword`. Each call gets a fresh engine instance, so shared `$id`s never collide across targets.
+**Findings are never errors, and errors are never findings.** A validator's error channel is for the mechanism failing — [`SchemaValidatorError`](/schemastore/api/class/schemavalidatorerror) — never for a document it successfully judged. ajv raises a strict-mode rejection by *throwing*; the engine converts that into a root-pathed [`ValidationFinding`](/schemastore/api/class/validationfinding), while meta-schema failures keep ajv's structured `instancePath` and `keyword`. Each call gets a fresh engine instance, so shared `$id`s never collide across targets. The instance contract flips the subject: for `InstanceValidator` the payload is what is judged, so a document the engine cannot compile is itself an `InstanceValidatorError` — a document yielding no verdict means the engine could not run, and the document's own gate is `SchemaValidator`'s job.
 
 **The Draft-07 meta-schema constant keeps its trailing `#`** where core's URI constant omits it. That is a documented divergence matching what SchemaStore publishes, not a typo — [`DRAFT_07_META_SCHEMA`](/schemastore/api/variable/draft_07_meta_schema) is the value to compare against.
 
@@ -205,6 +205,7 @@ The two services are the only things needing wiring; everything else is pure, so
 
 ```ts
 import { DocumentLint, SchemaValidator, StoreDocument } from "@effected/schemastore";
+import { AjvValidator } from "@effected/schemastore-cli";
 import { assert, describe, it } from "@effect/vitest";
 import { Effect, Schema } from "effect";
 
@@ -231,7 +232,7 @@ describe("schema emission", () => {
 
       const findings = yield* validator.validate(document.toJson(), { strict: true });
       assert.strictEqual(findings.length, 0);
-    }).pipe(Effect.provide(SchemaValidator.layer)));
+    }).pipe(Effect.provide(AjvValidator.layer)));
 });
 ```
 

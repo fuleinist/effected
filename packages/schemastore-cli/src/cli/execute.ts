@@ -5,7 +5,13 @@
 // itself.
 
 import { CliRuntime } from "@effected/cli";
-import type { DriftTolerance, OnDrift, SchemaValidator, SchemastoreConfig } from "@effected/schemastore";
+import type {
+	DriftTolerance,
+	InstanceValidator,
+	OnDrift,
+	SchemaValidator,
+	SchemastoreConfig,
+} from "@effected/schemastore";
 import { SchemaFile } from "@effected/schemastore";
 import type { Layer } from "effect";
 import { Console, Effect, Option, Schema } from "effect";
@@ -146,6 +152,8 @@ export interface ExecuteDeps {
 	readonly importModule?: (path: string) => Promise<unknown>;
 	/** The validator engine; omitted, the real ajv layer. A test seam, like `importModule`. */
 	readonly validator?: Layer.Layer<SchemaValidator>;
+	/** The instance-validation engine `validate` uses; omitted, the real ajv layer. A test seam, like `validator`. */
+	readonly instanceValidator?: Layer.Layer<InstanceValidator>;
 }
 
 // `--force` is sugar for `--drift=allow` over every schema at once; absent

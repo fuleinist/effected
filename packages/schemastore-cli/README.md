@@ -5,7 +5,7 @@
 [![Node.js %3E%3D24.11.0](https://img.shields.io/badge/Node.js-%3E%3D24.11.0-5fa04e.svg)](https://nodejs.org/)
 [![TypeScript 7.0](https://img.shields.io/badge/TypeScript-7.0-3178c6.svg)](https://www.typescriptlang.org/)
 
-The `schemastore` command: build and check SchemaStore-shaped JSON Schema documents from a `schemastore.config.ts`. It is the companion to [`@effected/schemastore`](https://www.npmjs.com/package/@effected/schemastore), which owns the pipeline and every type a config needs; this package ships the plumbing every consumer used to write by hand — the config loader, the drift policy, the frozen-label checks, the catalog file, exit codes, a GitHub step summary — once, as a `bin`. It is also where the validation engine lives: `AjvValidator`, ajv in strict mode, composed by the command and exported for a program that drives the pipeline itself, so the library stays free of ajv.
+The `schemastore` command: build and check SchemaStore-shaped JSON Schema documents from a `schemastore.config.ts`, and validate a payload against a published document. It is the companion to [`@effected/schemastore`](https://www.npmjs.com/package/@effected/schemastore), which owns the pipeline and every type a config needs; this package ships the plumbing every consumer used to write by hand — the config loader, the drift policy, the frozen-label checks, the catalog file, exit codes, a GitHub step summary — once, as a `bin`. It is also where the validation engines live: `AjvValidator` (documents) and `AjvInstanceValidator` (payloads), both ajv in strict mode over one shared setup, composed by the commands and exported for a program that drives the pipeline or validates payloads itself, so the library stays free of ajv.
 
 > **Pre-`1.0.0`.** This package is part of the `@effected/*` kit, built on stable
 > Effect v4 (`effect` `^4.0.0`) and still in `0.x` development. Stable Effect
@@ -114,17 +114,19 @@ export default defineConfig({
 ```text
 schemastore build [config] [--drift=strict|semantic|allow] [--on-drift=error|warn] [--force] [--format=human|json]
 schemastore check [config] [--drift=strict|semantic|allow] [--on-drift=error|warn] [--force] [--format=human|json]
+schemastore validate <payload.json> [config] [--schema <path|$id|url>] [--format=human|json]
 ```
 
 - Before anything is generated, every frozen label is verified — present on disk, and self-identified by the derived `$id`.
 - `build` generates every schema, runs the gates (the structural lint and ajv strict mode), applies the drift policy, and writes what passes — content-compared, so an unchanged file is untouched — plus the config's catalog slice when any entry declares one, and the merged catalog over every slice.
 - `check` is the identical walk with no writes: it reports what `build` would do under the same flags and exits the same way, and also fails (exit `1`) whenever a build would write anything — a stale or missing document is fixed by running `schemastore build` and committing the result. A catalog slice left behind after the config's last `catalog` block was removed is reported `orphaned` and fails `check` the same way, but `build` never deletes it — and the merged catalog keeps advertising its entries until it is gone: delete the file by hand, or restore a `catalog` block; a merged `catalog.json` with no slice left is orphaned the same way. So is a document left behind under an old derived name — an `appendVersion` flip or a `layout` change moved its path, and nothing claims the old file any more: both commands probe the sibling shapes (`<name>.json`, `<name>-<v>.json`, `<v>/<name>.json`, `<v>/<name>-<v>.json`) of every label the config still declares and report each one that exists as an orphaned document, failed by `check`, never deleted by `build`. Nothing else in `outputDir` is looked at, so sharing it with another config, a deploy folder, or the repository root is safe (unless two configs derive the same schema name and version under different layouts into it); a `name` change or a dropped label leaves a file the command cannot know about — delete those by hand. A catalog URL advertised by two slices, or a slice that cannot be read or is not a catalog entry array (an undeclared key included), blocks the merged catalog: both commands fail (exit `1`) naming the URL and its slices or the invalid slice, and the merged file is left as it is until the configs or slices are fixed.
+- `validate` answers the question the publication story exists for: does THIS payload conform to the published document it names? The reference is the `--schema` flag or the payload's own `$schema`, resolved file-first and then against every identity a config schema derives (a target `$id`, a frozen version's `$id`/`url`, the catalog `url`) — CI validates an action's output against the committed document with no third-party tool and no network fetch. The payload's `$schema` self-reference is the pointer naming the document: it is stripped before validating only when the resolved document does not declare `$schema` as a root property, since a generated document's `additionalProperties: false` would otherwise reject the very self-reference that names it. A document that does declare `$schema` — the `HostedSchema` pattern above, where the source struct carries `$schema: Schema.Literal(...)` and the generated document requires and const-constrains the key — validates the payload verbatim. A non-conforming payload fails (exit `1`) with one finding per problem, each carrying the JSON pointer into the instance and the keyword; `--format=json` writes one report document to stdout and moves the human lines to stderr.
 - `--drift` and `--on-drift` override the config for one run; `--force` is sugar for `--drift=allow` (combined with a different explicit `--drift` it is a usage error).
 - `--format=json` emits one JSON document on stdout (per-schema outcome and effective tolerance, the catalog slice and merged-catalog outcomes, the `orphaned` document paths when any, `drift: { onDrift, policy? }`); human text moves to stderr. When `GITHUB_STEP_SUMMARY` is set, both commands append a markdown table.
 
-## The engine, as a library export
+## The engines, as library exports
 
-The command validates with ajv in strict mode — SchemaStore's own gate — registering the keyword families `@effected/schemastore` declares and the standard `ajv-formats` vocabulary (formats only, never the `formatMaximum` family), one fresh instance per document. The same layer is this package's one export, for a program composing the pipeline directly:
+The commands validate with ajv in strict mode — SchemaStore's own gate — registering the keyword families `@effected/schemastore` declares and the standard `ajv-formats` vocabulary (formats only, never the `formatMaximum` family), one fresh instance per document, through one shared setup both engines use so a document the `check` gate admits always compiles in the instance engine too. The two engine layers are this package's only exports, for a program composing the pipeline or validating payloads directly:
 
 ```ts
 import { SchemaFile, SchemaPipeline } from "@effected/schemastore";
@@ -137,17 +139,28 @@ const AppLayer = Layer.mergeAll(SchemaFile.layer, AjvValidator.layer).pipe(Layer
 const program = SchemaPipeline.run(targets).pipe(Effect.provide(AppLayer));
 ```
 
-Findings come back as values; the error channel carries `SchemaValidatorError` only when the engine fails as a mechanism.
+```ts
+import { InstanceValidator } from "@effected/schemastore";
+import { AjvInstanceValidator } from "@effected/schemastore-cli";
+import { Effect } from "effect";
+
+const program = Effect.gen(function* () {
+  const validator = yield* InstanceValidator;
+  return yield* validator.validate(document, payload);
+}).pipe(Effect.provide(AjvInstanceValidator.layer));
+```
+
+Findings come back as values — `ValidationFinding` pointers into the document for `AjvValidator`, `InstanceFinding` pointers into the payload for `AjvInstanceValidator`; the error channel carries `SchemaValidatorError` / `InstanceValidatorError` only when an engine fails as a mechanism.
 
 ## Exit codes
 
 | code | meaning |
 | ---- | -------------------------------------------------------------------------- |
 | 0 | success, including drift under `onDrift: warn` |
-| 1 | drift under `onDrift: error` (one line per drifting schema: `$id`, change, current and next version), a gate failure, a missing or mis-identified frozen version, a merged catalog blocked by a URL two slices advertise or an invalid slice, or — for `check` — anything `build` would write or an output nothing claims (an orphaned catalog slice or merged catalog, or an orphaned document at a sibling shape of a derived path) |
-| 2 | config not found, failed to load, failed `defineConfig` validation, or a `catalogDir` that is a file or cannot be listed (checked before anything is written) |
-| 3 | infrastructure failure |
-| 64 | usage error |
+| 1 | drift under `onDrift: error` (one line per drifting schema: `$id`, change, current and next version), a gate failure, a missing or mis-identified frozen version, a merged catalog blocked by a URL two slices advertise or an invalid slice, — for `check` — anything `build` would write or an output nothing claims (an orphaned catalog slice or merged catalog, or an orphaned document at a sibling shape of a derived path), or — for `validate` — a payload that does not conform to the resolved document (one finding per problem, pointer and keyword each) |
+| 2 | config not found, failed to load, failed `defineConfig` validation, a `catalogDir` that is a file or cannot be listed (checked before anything is written), or — for `validate` — a payload that cannot be read or parsed, or a `--schema`/`$schema` reference that is neither an existing file nor an identity any config schema derives, or names a document that cannot be read or parsed |
+| 3 | infrastructure failure (for `validate`, an engine mechanism failure — a document the instance engine cannot compile — included) |
+| 64 | usage error (for `validate`, a payload with no `$schema` and no `--schema` given, included) |
 
 ## License
 

@@ -137,10 +137,11 @@ console.log(Effect.runSync(program));
 
 ### Validate with the real engine
 
-[`SchemaValidator.layer`](/schemastore/api/class/schemavalidator) is ajv, shipped. There is no adapter to write — provide the layer and validation works, in the strict mode SchemaStore itself gates on:
+The library ships the [`SchemaValidator`](/schemastore/api/class/schemavalidator) contract and its doubles; the real engine is `AjvValidator.layer` from the companion `@effected/schemastore-cli` — ajv in the strict mode SchemaStore itself gates on. There is no adapter to write — provide the layer and validation works:
 
 ```ts with-api
 import { SchemaValidator, StoreDocument } from "@effected/schemastore";
+import { AjvValidator } from "@effected/schemastore-cli";
 import { Effect, Schema } from "effect";
 
 const program = Effect.gen(function* () {
@@ -149,13 +150,15 @@ const program = Effect.gen(function* () {
     $id: "https://example.com/schemas/mytool.json",
   });
   return yield* validator.validate(document.toJson());
-}).pipe(Effect.provide(SchemaValidator.layer));
+}).pipe(Effect.provide(AjvValidator.layer));
 
 Effect.runPromise(program).then((findings) => console.log(findings.length));
 // 0 — an empty array is a clean pass
 ```
 
 `validate` takes the flat serialized record that `toJson()` produces, so the seam stays engine-shaped rather than coupled to this package's classes. An empty array is a clean pass; findings come back as values.
+
+The payload half of the story has the same shape: the library ships the `InstanceValidator` contract — "does this instance conform to the published document it names in `$schema`" — with findings (`InstanceFinding`) pointing into the instance, and the CLI ships the one engine, `AjvInstanceValidator.layer`. The `schemastore validate <payload.json>` command composes it for you, resolving the reference file-first and then against every identity a config schema derives, with no network fetch.
 
 ### Assemble a catalog entry
 

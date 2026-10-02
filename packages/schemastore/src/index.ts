@@ -11,9 +11,11 @@
  * vocabulary with both versioning modes, the structural and hygiene lints,
  * canonical JSON text, content-comparing write-if-changed file IO
  * (`SchemaFile`), change classification for the versioning decision
- * (`DocumentDiff`), the validation contract and its doubles
- * (`SchemaValidator` — the shipped ajv engine is `AjvValidator` in
- * `@effected/schemastore-cli`, so this package installs no engine), the
+ * (`DocumentDiff`), the validation contracts and their doubles
+ * (`SchemaValidator` for documents, `InstanceValidator` for a payload
+ * against a published document — the shipped ajv engines are `AjvValidator`
+ * and `AjvInstanceValidator` in `@effected/schemastore-cli`, so this
+ * package installs no engine), the
  * hosted identity an application derives its `$schema` from and
  * `defineConfig` derives `$id` from (`HostedSchema`), and the emit pipeline
  * over all of it (`SchemaPipeline`).
@@ -66,6 +68,13 @@ export {
 	SCHEMASTORE_CATALOG_BASE,
 	SCHEMASTORE_ID_BASE,
 } from "./HostedSchema.js";
+export {
+	InstanceFinding,
+	InstanceValidator,
+	InstanceValidatorError,
+	type InstanceValidatorOptions,
+	type InstanceValidatorShape,
+} from "./InstanceValidator.js";
 export { KeywordFamilies } from "./KeywordFamilies.js";
 export {
 	type CheckResult,
