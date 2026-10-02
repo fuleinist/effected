@@ -888,8 +888,8 @@ importers:
         specifier: catalog:build
         version: 26.6.3
       rolldown-pnpm-config:
-        specifier: ^1.0.11
-        version: 1.0.11(@types/react@19.3.0)(redis@6.3.0)(rolldown@1.2.12)
+        specifier: ^2.0.0
+        version: 2.0.0(@effected/config-file@0.14.0(@effected/glob@0.10.0(effect@4.0.0))(@effected/jsonc@0.15.0(effect@4.0.0))(@effected/toml@0.11.0(effect@4.0.0))(@effected/walker@0.15.0(@effected/glob@0.10.0(effect@4.0.0))(effect@4.0.0))(@effected/yaml@0.19.0(effect@4.0.0))(effect@4.0.0))(@types/react@19.3.0)(redis@6.3.0)(rolldown@1.2.12)
       typescript:
         specifier: catalog:build
         version: 7.0.2
@@ -4615,17 +4615,6 @@ packages:
     resolution: {integrity: sha512-IBTdIkzZNOpqm7q3dRqJvMaldXjDHWkEDfrwGEQTs5eaQMWV+djAhR+wahyNNMAa+qpbDUhBMVt4ZKNwpPm7xQ==}
     engines: {node: ^20.17.0 || >=22.9.0}
 
-  ink-tab@5.2.0:
-    resolution: {integrity: sha512-ltLUqwHmeZBGNFTTEAU9pmhPdqLm3abLh+JNEp69Hb98jhzk1gaoZZIZjGBjwFC7U8tgT10rE+QkLTaqET1A1Q==}
-    engines: {node: '>=14.16'}
-    peerDependencies:
-      '@types/react': ^18.0.0 || ^19.0.0
-      ink: ^4.0.0 || ^5.0.0 || ^6.0.0
-      react: ^18.0.0 || ^19.0.0
-    peerDependenciesMeta:
-      '@types/react':
-        optional: true
-
   ink@7.1.1:
     resolution: {integrity: sha512-Y43xxa1ZSPvpmfLHcN5o+OdP8Rf8ykkNJEuKYOUNZKT8wXVNLFTtEm1nSDMQkfBH+YANF4Xuu0hhZ4ejqAtN2w==}
     engines: {node: '>=22'}
@@ -5614,8 +5603,8 @@ packages:
       vue-tsc:
         optional: true
 
-  rolldown-pnpm-config@1.0.11:
-    resolution: {integrity: sha512-OiIzkEX4mMdt3L1GS4yKVeVAaigumMsHL0HX7rxWgVZ74Lx88VxO5CaiBHrdNRe8DHva7WAqjK+dpQQVtE1PVw==}
+  rolldown-pnpm-config@2.0.0:
+    resolution: {integrity: sha512-heO5V6Io9YLGy4imMrTHsD5eMDnPn5EalROUr8GqbnF8z8JRgqUaIfDgJCJ0k8MSxy+vyCe6Qu27CAv8iAlAEw==}
     engines: {node: '>=24.11.0'}
     hasBin: true
     peerDependencies:
@@ -9498,13 +9487,6 @@ snapshots:
 
   ini@6.0.0: {}
 
-  ink-tab@5.2.0(@types/react@19.3.0)(ink@7.1.1(@types/react@19.3.0)(react@19.3.0))(react@19.3.0):
-    dependencies:
-      ink: 7.1.1(@types/react@19.3.0)(react@19.3.0)
-      react: 19.3.0
-    optionalDependencies:
-      '@types/react': 19.3.0
-
   ink@7.1.1(@types/react@19.3.0)(react@19.3.0):
     dependencies:
       '@alcalzone/ansi-tokenize': 0.3.1
@@ -11026,22 +11008,25 @@ snapshots:
     transitivePeerDependencies:
       - oxc-resolver
 
-  rolldown-pnpm-config@1.0.11(@types/react@19.3.0)(redis@6.3.0)(rolldown@1.2.12):
+  rolldown-pnpm-config@2.0.0(@effected/config-file@0.14.0(@effected/glob@0.10.0(effect@4.0.0))(@effected/jsonc@0.15.0(effect@4.0.0))(@effected/toml@0.11.0(effect@4.0.0))(@effected/walker@0.15.0(@effected/glob@0.10.0(effect@4.0.0))(effect@4.0.0))(@effected/yaml@0.19.0(effect@4.0.0))(effect@4.0.0))(@types/react@19.3.0)(redis@6.3.0)(rolldown@1.2.12):
     dependencies:
       '@effect/platform-node': 4.0.0(effect@4.0.0)(redis@6.3.0)
+      '@effected/cli': 0.11.0(@effected/config-file@0.14.0(@effected/glob@0.10.0(effect@4.0.0))(@effected/jsonc@0.15.0(effect@4.0.0))(@effected/toml@0.11.0(effect@4.0.0))(@effected/walker@0.15.0(@effected/glob@0.10.0(effect@4.0.0))(effect@4.0.0))(@effected/yaml@0.19.0(effect@4.0.0))(effect@4.0.0))(@effected/env@0.1.0(effect@4.0.0))(@effected/glob@0.10.0(effect@4.0.0))(@effected/walker@0.15.0(@effected/glob@0.10.0(effect@4.0.0))(effect@4.0.0))(@types/react@19.3.0)(effect@4.0.0)(ink@7.1.1(@types/react@19.3.0)(react@19.3.0))(react@19.3.0)
+      '@effected/env': 0.1.0(effect@4.0.0)
+      '@effected/glob': 0.10.0(effect@4.0.0)
       '@effected/npm': 0.20.0(@effected/semver@0.11.0(effect@4.0.0))(effect@4.0.0)
       '@effected/semver': 0.11.0(effect@4.0.0)
+      '@effected/walker': 0.15.0(@effected/glob@0.10.0(effect@4.0.0))(effect@4.0.0)
       '@effected/workspaces': 0.31.0(effect@4.0.0)
       '@effected/yaml': 0.19.0(effect@4.0.0)
       effect: 4.0.0
       ink: 7.1.1(@types/react@19.3.0)(react@19.3.0)
-      ink-tab: 5.2.0(@types/react@19.3.0)(ink@7.1.1(@types/react@19.3.0)(react@19.3.0))(react@19.3.0)
       oxc-parser: 0.152.0
       react: 19.3.0
-      std-env: 4.3.0
     optionalDependencies:
       rolldown: 1.2.12
     transitivePeerDependencies:
+      - '@effected/config-file'
       - '@types/react'
       - bufferutil
       - react-devtools-core
