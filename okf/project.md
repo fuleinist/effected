@@ -7,15 +7,15 @@ tags:
   - architecture
 generated:
   by: "claude-code/opus-5"
-  at: 2026-09-28T18:00:23Z
-  body_sha256: cffa2476f35856091eeda0efe8a4fe7999a53e49014e236fa85630930517f8d9
+  at: 2026-10-01T17:24:58Z
+  body_sha256: 84cc2876023c2daddced1975200fc679655735d0ff9649350080318c868e4599
 ---
 
 # effected
 
 ## Purpose
 
-effected (GitHub `spencerbeggs/effected`, npm org `@effected`) is a pnpm monorepo building an **Effect v4 app kit**: a coherent set of libraries designed v4-first rather than a grab-bag of utilities that happen to share a repo. It replaces per-repo development of a family of predecessor `*-effect` libraries that suffered cross-repo release loops and dependency-interaction bugs surfacing only after publishing. The unit of design is the kit, not the package — packages are carved along the seams real applications press on, and a capability with no named consumer is not built. Scope is closed by five consuming applications (below), not by how much surface an ecosystem could have. All `@effected/*` packages target Effect v4, currently prerelease and pinned via the `effect` pnpm catalog, tracking prereleases (the release line renamed `-beta` to `-rc` at `4.0.0-rc.108`) until v4 stabilizes. Everything published is `0.x` and unstable; `1.0.0` waits for Effect v4 GA. Releases are changeset-driven: CI builds the changesets present on a branch and releases the packages they name, whether that is the whole kit behind a catalog advance or a single package on a patch — both are ordinary outcomes of the same mechanism, not different processes.
+effected (GitHub `spencerbeggs/effected`, npm org `@effected`) is a pnpm monorepo building an **Effect v4 app kit**: a coherent set of libraries designed v4-first rather than a grab-bag of utilities that happen to share a repo. It replaces per-repo development of a family of predecessor `*-effect` libraries that suffered cross-repo release loops and dependency-interaction bugs surfacing only after publishing. The unit of design is the kit, not the package — packages are carved along the seams real applications press on, and a capability with no named consumer is not built. Scope is closed by five consuming applications (below), not by how much surface an ecosystem could have. All `@effected/*` packages target Effect v4, now stable: the `effect` pnpm catalog gives it the caret range `^4.0.0` and the lockfile fixes the exact release. Everything published is `0.x` and unstable; Effect v4 being stable makes a kit `1.0.0` possible, not automatic, and the kit takes it when it chooses to. Releases are changeset-driven: CI builds the changesets present on a branch and releases the packages they name, whether that is the whole kit behind a catalog advance or a single package on a patch — both are ordinary outcomes of the same mechanism, not different processes.
 
 ## Design posture
 
@@ -46,7 +46,8 @@ The repository holds **libraries and their companions**. Standalone tools and ap
 | `spdx` | pure | invention; vendored SPDX license expressions as pure schemas |
 | `app` | integrated | invention; thin composition over `xdg` + `config-file` + `store` |
 | `engine` | pure | invention; platform-free primitives shared across front ends (distribution identity, remediation, launch context) |
-| `cli` | boundary | invention; the CLI boundary (logger, failure reporting, issue rendering) over `effect/cli` |
+| `env` | boundary | invention; who is running a program and in what terminal (`RuntimeEnv`, `TerminalEnv`, `Audience`, `EnvOverride`) read through `Config`, with no `node:` import; a required peer of `cli`, so an MCP server or engine detects without a CLI dependency |
+| `cli` | boundary (`./ui` integrated on opt-in) | invention; the CLI presentation boundary over `effect/cli`: audience, theme and messages, the document IR and its renderers, links, failure reports, logging and prompts in a React-free root; interactive Ink screens and the live view behind `./ui` (`ink` and `react` optional peers) and their harness behind `./ui/testing` |
 | `mcp` | boundary | invention; the MCP boundary (stdio wiring, tool-failure shaping, strict-input walkers) over `effect/ai`, plus `./testing` clients |
 | `markdown` | pure | invention; CommonMark + GFM as pure schemas |
 | `commands` | boundary | part-port of `@savvy-web/silk-effects`' `ToolDiscovery` plus invention |
@@ -54,6 +55,7 @@ The repository holds **libraries and their companions**. Standalone tools and ap
 | `memfs` | pure | invention; a virtual POSIX volume behind core's `FileSystem` key — carries **no `@effected/*` edge, ever** |
 | `github` | integrated | port-with-redesign of `@savvy-web/github-action-effects`'s GitHub half |
 | `github-references` | pure | extraction from `github`; the issue-reference grammar as pure functions |
+| `github-commands` | pure | extraction from `github-actions`; the workflow-command grammar (`WorkflowCommand`, and `CommandNeutralizer`, the runner's two-parser rule) as pure functions; a regular dependency of `github-actions` and `cli` |
 | `github-actions` | integrated | port-with-redesign of the same package's Actions half |
 | `sbom` | integrated | port-with-redesign of the same package's `Attest` knot |
 | `schemastore` | boundary (integrated 2026-08-04 → 2026-09-15) | invention; SchemaStore-shaped JSON Schema documents from Effect Schema sources |
@@ -61,6 +63,8 @@ The repository holds **libraries and their companions**. Standalone tools and ap
 | `schema-org` | pure | invention; schema.org vocabulary as Effect Schema classes |
 | `jsonl` | boundary | invention; append-only schema-validated JSONL journals |
 | `pnpm-plugin-effect` | companion — no tier | invention; publishes the Effect catalogs the kit pins against |
+
+The roster is **36 packages**: 34 libraries and two companions (`pnpm-plugin-effect` and `schemastore-cli`). 31 have published; `env`, `github-commands`, `engine`, `mcp` and `schemastore-cli` await their first release.
 
 ### Consumers
 
@@ -77,8 +81,10 @@ The kit's scope is closed by the applications that consume it, surveyed read-onl
 | savvy-web/systems | [systems](consumers/systems.md) |
 | spencerbeggs/reposets | [reposets](consumers/reposets.md) |
 | spencerbeggs/tsdoctor | [tsdoctor](consumers/tsdoctor.md) |
+| spencerbeggs/okfit | [okfit](consumers/okfit.md) |
+| spencerbeggs/vitest-agent | [vitest-agent](consumers/vitest-agent.md) |
 
-Two named applications resolved the "library wearing app clothing" question differently rather than joining the kit outright: `type-registry-effect` stays entirely outside, in its own repo, because it carries `typescript` / `@typescript/vfs` peers the kit refuses; `runtime-resolver`'s library half ships from the kit as `runtimes`, while its CLI ships from the external `runtime-resolver` repo against the published package, so the library's consumers never install `@effect/platform-node`. Further external consumers — `rolldown-pnpm-config`, `vitest-agent`, `rspress-plugin-api-extractor`, and `soda3js/tools` via `@soda3js/config` — take published packages without a register entry of their own in this bundle.
+Two named applications resolved the "library wearing app clothing" question differently rather than joining the kit outright: `type-registry-effect` stays entirely outside, in its own repo, because it carries `typescript` / `@typescript/vfs` peers the kit refuses; `runtime-resolver`'s library half ships from the kit as `runtimes`, while its CLI ships from the external `runtime-resolver` repo against the published package, so the library's consumers never install `@effect/platform-node`. Further external consumers — `rolldown-pnpm-config`, `rspress-plugin-api-extractor`, and `soda3js/tools` via `@soda3js/config` — take published packages without a register entry of their own in this bundle.
 
 The repository's monorepo tooling and layout are documented in [the workspace module](modules/workspace.md); the two agent plugins, the probe workspace and the docs site each have their own Module: [claude-code-plugin](modules/claude-code-plugin.md), [copilot-plugin](modules/copilot-plugin.md), [scratchpad](modules/scratchpad.md), [website](modules/website.md).
 

@@ -1,9 +1,9 @@
 {
 	"name": "@effected/cli",
-	"version": "0.10.0",
+	"version": "0.11.0",
 	"private": true,
-	"description": "The boundary layer of an effect/cli program: plain CLI output, failure reporting, and schema-issue rendering",
-	"keywords": ["effect", "cli", "logger", "terminal"],
+	"description": "The presentation boundary of an effect/cli program: audience-aware output, a document IR and renderers, editor links, failure reports and logging, plus opt-in Ink screens, widgets and a live view",
+	"keywords": ["effect", "cli", "logger", "terminal", "ink", "tui"],
 	"homepage": "https://github.com/spencerbeggs/effected/tree/main/packages/cli#readme",
 	"bugs": {
 		"url": "https://github.com/spencerbeggs/effected/issues"
@@ -24,6 +24,8 @@
 	"exports": {
 		".": "./src/index.ts",
 		"./testing": "./src/testing.ts",
+		"./ui": "./src/ui.ts",
+		"./ui/testing": "./src/ui-testing.ts",
 		"./package.json": "./package.json"
 	},
 	"scripts": {
@@ -32,27 +34,52 @@
 		"prepare": "turbo run build:dev",
 		"types:check": "tsc --noEmit"
 	},
+	"dependencies": {
+		"@effected/github-commands": "workspace:^"
+	},
 	"devDependencies": {
 		"@effect/platform-node": "catalog:effect",
 		"@effect/vitest": "catalog:effect",
 		"@effected/config-file": "workspace:*",
+		"@effected/env": "workspace:*",
 		"@effected/glob": "workspace:*",
 		"@effected/jsonc": "workspace:*",
+		"@effected/markdown": "workspace:*",
+		"@effected/memfs": "workspace:*",
 		"@effected/toml": "workspace:*",
 		"@effected/walker": "workspace:*",
 		"@effected/workspaces": "workspace:*",
 		"@effected/yaml": "workspace:*",
-		"@savvy-web/bundler": "^2.4.18",
+		"@savvy-web/bundler": "^2.4.20",
 		"@types/node": "catalog:build",
+		"@types/react": "catalog:build",
 		"effect": "catalog:effect",
+		"ink": "7.1.1",
+		"react": "catalog:build",
+		"string-width": "^8.3.0",
 		"typescript": "catalog:build"
 	},
 	"peerDependencies": {
 		"@effected/config-file": "workspace:^",
-		"effect": "catalog:effect:peers"
+		"@effected/env": "workspace:^",
+		"@effected/glob": "workspace:^",
+		"@effected/walker": "workspace:^",
+		"@types/react": "^19.2.0",
+		"effect": "catalog:effect:peers",
+		"ink": "^7.1.1",
+		"react": "^19.2.0"
 	},
 	"peerDependenciesMeta": {
 		"@effected/config-file": {
+			"optional": true
+		},
+		"@types/react": {
+			"optional": true
+		},
+		"ink": {
+			"optional": true
+		},
+		"react": {
 			"optional": true
 		}
 	},

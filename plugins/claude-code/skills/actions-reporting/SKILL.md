@@ -15,7 +15,8 @@ For the general `Effect.log*`/span rules every package follows, see `effect-v4-o
 | Construct | Import | Reach for it when |
 | --- | --- | --- |
 | `ActionLogger.group` / `.withBuffer` / `.notice` / `.annotated` | `import { ActionLogger } from "@effected/github-actions"` | grouping log output, holding a quiet-green transcript, or attaching source annotations to `Effect.log*` |
-| `WorkflowCommand` | same | rendering a command's exact wire text with no runner or service — mostly internal |
+| `WorkflowCommand` | same (re-exported from `@effected/github-commands`) | rendering a command's exact wire text with no runner or service — mostly internal |
+| `CommandNeutralizer` | `import { CommandNeutralizer } from "@effected/github-commands"` | writing text you did not author (an error message, file contents) to the log by a route other than `ActionLogger`, so the runner never reads it as a command |
 | `ActionOutputs.summary` / `.setSecret` | `import { ActionOutputs } from "@effected/github-actions"` | writing the job summary, or masking a value in the runner's log filter |
 | `CheckRun.withCheckRun` / `.create` / `.update` / `.complete` | `import { CheckRun } from "@effected/github"` | creating, updating or reaching a terminal state on a GitHub check run |
 | `PullRequestComment.upsert` / `CommentMarker` | `import { PullRequestComment, CommentMarker } from "@effected/github"` | posting or updating a sticky, marker-findable PR comment |
@@ -31,7 +32,7 @@ For the general `Effect.log*`/span rules every package follows, see `effect-v4-o
 - **Let `CheckRun.withCheckRun`'s bracket reach a terminal state; call `conclude` when the verdict isn't a plain pass/fail.** The bracket always concludes from the `Exit` unless `use` records a verdict — that's how `neutral`, `timed_out`, `action_required` and `skipped` become reachable without dropping to a raw `create`/`complete` pair.
 - **Treat check-run output and comment payloads as budgeted, at design time.** `CheckRunOutput`'s 65535-byte cap is automatic on every `update`/`complete`, but a program that assembles a large findings table should design its own truncation rather than discover the cap at runtime.
 - **Follow the five managed-section rules for any sticky comment or PR description**: write the running state before doing the work, never blank a section, sha-stamp staleness, keep sections independent, write monotonically. See `references/managed-sections.md`.
-- **Reach for `Effect.partition` instead of a hand-rolled accumulator when fanning out over a collection.** It runs every effect and never fails, separating successes from failures in one call.
+- **Reach for `Effect.partition` instead of a hand-rolled accumulator when fanning out over a collection.** It runs every effect and never fails, returning `[successes, failures]` in one call.
 
 ## Footguns
 

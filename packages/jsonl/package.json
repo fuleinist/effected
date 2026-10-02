@@ -1,6 +1,6 @@
 {
 	"name": "@effected/jsonl",
-	"version": "0.8.0",
+	"version": "0.9.0",
 	"private": true,
 	"description": "Append-only, schema-validated JSONL journals as a definable Effect service.",
 	"keywords": ["jsonl", "journal", "append-only", "watch", "effect", "effected"],
@@ -35,7 +35,7 @@
 		"@effect/platform-node": "catalog:effect",
 		"@effect/vitest": "catalog:effect",
 		"@effected/memfs": "workspace:*",
-		"@savvy-web/bundler": "^2.4.18",
+		"@savvy-web/bundler": "^2.4.20",
 		"@types/node": "catalog:build",
 		"effect": "catalog:effect",
 		"typescript": "catalog:build"

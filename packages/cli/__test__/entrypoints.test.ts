@@ -28,7 +28,7 @@ const reachableFrom = (entry: string): ReadonlySet<string> => {
 describe("entrypoint boundary", () => {
 	it("nothing reachable from `.` imports CliTest", () => {
 		const reachable = reachableFrom(resolve(SRC, "index.ts"));
-		const offenders = [...reachable].filter((file) => /src\/(CliTest|testing)\.ts$/.test(file));
+		const offenders = [...reachable].filter((file) => /src\/(CliTest|testing|TestTerminal)\.ts$/.test(file));
 		assert.deepStrictEqual(offenders, [], "test utilities belong behind ./testing");
 	});
 
@@ -41,5 +41,38 @@ describe("entrypoint boundary", () => {
 	it("the walker resolves the main entry's modules, or it proves nothing", () => {
 		const reachable = reachableFrom(resolve(SRC, "index.ts"));
 		assert.isTrue([...reachable].some((file) => /src\/CliRuntime\.ts$/.test(file)));
+	});
+
+	it("the main entry exports the whole presentation layer, and only testing exports the test doubles", async () => {
+		const main = await import("../src/index.js");
+		const testing = await import("../src/testing.js");
+		assert.deepStrictEqual(Object.keys(main).sort(), [
+			"Cancelled",
+			"CliAudience",
+			"CliColor",
+			"CliDoc",
+			"CliEnv",
+			"CliExit",
+			"CliFailure",
+			"CliInteractive",
+			"CliLinks",
+			"CliLog",
+			"CliLogger",
+			"CliMessage",
+			"CliPrompt",
+			"CliRuntime",
+			"CliTheme",
+			"ConfigIssueRenderer",
+			"Doc",
+			"Fmt",
+			"GithubAnnotation",
+			"Glyphs",
+			"NotInteractive",
+			"Render",
+			"SchemaIssueRenderer",
+			"Status",
+			"Token",
+		]);
+		assert.deepStrictEqual(Object.keys(testing).sort(), ["CliTest", "TestTerminal"]);
 	});
 });

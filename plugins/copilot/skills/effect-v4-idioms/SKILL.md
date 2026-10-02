@@ -19,7 +19,7 @@ see `effect-v4-source-lookup`. Every identifier below was verified to exist, and
 every `file:line` citation checked against the vendored tree; when you reach
 past this list, run one runtime probe
 (`node --input-type=module -e "import * as Effect from 'effect/Effect'; console.log(typeof Effect.X)"`)
-before writing — v4 prereleases move fast and muscle memory lies.
+before writing — v4 is a ground-up redesign and muscle memory lies.
 
 ## Generators — `Effect.gen` for workflows
 
@@ -86,6 +86,16 @@ body that can throw belongs in `Effect.try`, or the throw escapes as a defect.
 Wrapping a callback API is **`Effect.callback`**. There is no `Effect.async` —
 the name resolves to `undefined`, so reaching for it fails at the call site with
 a "not a function" that points nowhere near the cause.
+
+**Resuming runs the fiber synchronously, on the caller's stack.** Once the
+effect has suspended, `resume(effect)` evaluates the fiber right there (the
+`Async` primitive's `fiber.evaluate`, `callbackOptions` in
+`internal/effect.ts`), so everything after the `yield*` runs *inside* whatever
+called `resume` — React's commit phase, an event emitter's dispatch loop, a
+stream's `data` handler — before that call returns. When the caller is
+mid-operation and must finish first (React has not yet reported a frame that
+threw; an emitter is still iterating its listeners), defer the resume:
+`queueMicrotask(() => resume(Effect.void))`.
 
 ## Error handling — `catch*` recovery
 
@@ -508,6 +518,19 @@ Effect.scoped(
 an effect's `Scope` requirement without closing the scope, use **`Scope.provide`**
 — both `Scope.provide(effect, scope)` and
 `effect.pipe(Scope.provide(scope))` work.
+
+**Clearing a reference and closing its scope is two steps, not one.** An
+interrupt that lands between `Ref.set(current, Option.none())` and
+`Scope.close(scope, Exit.void)` leaves the scope open and unreachable: its
+finalizers never run, and whatever it held (a permit, a mounted view, a
+forked tick) leaks. Make the pair one uninterruptible step:
+
+```ts
+Effect.uninterruptible(Effect.andThen(Ref.set(current, Option.none()), Scope.close(scope, Exit.void)))
+```
+
+A low `Scheduler.MaxOpsBeforeYield` in a test is how to prove the window
+exists — see `effect-v4-testing`.
 
 ## Forking and fibers
 

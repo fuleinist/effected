@@ -1,6 +1,6 @@
 {
 	"name": "@effected/tsconfig-json",
-	"version": "0.12.2",
+	"version": "0.13.0",
 	"private": true,
 	"description": "Composable tsconfig.json handling for Effect: schemas, extends-chain resolution, and config discovery.",
 	"keywords": ["tsconfig", "typescript", "config", "extends", "resolution", "effect", "schema", "effected"],
@@ -37,12 +37,13 @@
 		"@effected/jsonc": "workspace:*",
 		"@effected/memfs": "workspace:*",
 		"@effected/walker": "workspace:*",
-		"@savvy-web/bundler": "^2.4.18",
+		"@savvy-web/bundler": "^2.4.20",
 		"@types/node": "catalog:build",
 		"effect": "catalog:effect",
 		"typescript": "catalog:build"
 	},
 	"peerDependencies": {
+		"@effected/glob": "workspace:^",
 		"@effected/jsonc": "workspace:^",
 		"@effected/walker": "workspace:^",
 		"effect": "catalog:effect:peers"

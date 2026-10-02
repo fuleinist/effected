@@ -46,7 +46,9 @@ Every package is `unstable`; see [release strategy](#release-strategy).
 | [@effected/commands](packages/commands) | unstable | Structured command running and CLI tool discovery over Effect's core ChildProcessSpawner contract |
 | [@effected/templates](packages/templates) | unstable | Managed-section blocks in user-editable files: parse, reconcile, sync and check delimited regions |
 | [@effected/jsonl](packages/jsonl) | unstable | Append-only, schema-validated JSONL journals as a definable Effect service |
-| [@effected/cli](packages/cli) | unstable | The boundary layer of an `effect/unstable/cli` program: plain CLI output, failure reporting and schema-issue rendering |
+| [@effected/cli](packages/cli) | unstable | The presentation boundary of an `effect/unstable/cli` program: audience-aware output, a document IR and renderers, editor links, failure reports and logging, plus opt-in Ink screens, widgets and a live view |
+| [@effected/env](packages/env) | unstable | Environment detection read through `Config`: agent, CI, terminal colour level, hyperlinks, columns and audience, swapped in tests with `layerTest` |
+| [@effected/mcp](packages/mcp) | unstable | The boundary layer of an `effect/ai` MCP server: stdio wiring that keeps stdout the wire, tool-failure shaping, strict-input walkers and test clients |
 
 ### Pure
 
@@ -63,37 +65,40 @@ Every package is `unstable`; see [release strategy](#release-strategy).
 | [@effected/markdown](packages/markdown) | unstable | CommonMark 0.31.2 and GFM as pure schemas: parse to mdast-shaped nodes with byte offsets, edit, format and project to and from mdast |
 | [@effected/memfs](packages/memfs) | unstable | An isolated virtual POSIX volume behind Effect's core FileSystem service: the kit's filesystem test double, for tests and dry-run programs |
 | [@effected/github-references](packages/github-references) | unstable | GitHub's issue-reference grammar as pure functions: inline-in-prose harvesting with offsets, bare-line parsing and the closing-list dialect |
+| [@effected/github-commands](packages/github-commands) | unstable | The GitHub Actions workflow-command grammar as pure functions: render a command, and neutralize text so the runner cannot read it as one |
+| [@effected/engine](packages/engine) | unstable | Platform-free primitives shared by every front end of an Effect v4 tool: distribution identity, remediation and launch context |
 
 ### Companion
 
 | Package | Stability | Description |
 | ------- | --------- | ----------- |
 | [@effected/pnpm-plugin-effect](packages/pnpm-plugin-effect) | unstable | pnpm config dependency shipping the catalogs that pin Effect and the `@effected/*` kit, for dependencies and peer ranges alike |
+| [@effected/schemastore-cli](packages/schemastore-cli) | unstable | The `schemastore` command: build and check SchemaStore-shaped JSON Schema documents from a `schemastore.config.ts`, with a per-schema published flag and a drift policy |
 
 ## Release strategy
 
 Every package here is published to npm. Releases are changeset-driven: a change that affects a published package carries a changeset, and CI releases the packages those changesets name. That release is sometimes the whole kit and sometimes a single package — both are ordinary, and package versions move independently as a result. Each package's own npm page and `package.json` are the source of truth for where it stands.
 
-What does not move independently is the Effect pin. Every package is built and tested against the one Effect v4 prerelease named in the `effect` catalog, so their peer ranges agree with each other by construction rather than by luck. Publishing runs ahead of the applications that consume the kit rather than behind them, which surfaces integration problems against real published packages instead of a stand-in.
+What does not move independently is the Effect line. Every package is built and tested against the one Effect v4 release the workspace lockfile resolves, and every package peers `effect` at the same `^4.0.0`, so their peer ranges agree with each other by construction rather than by luck. Publishing runs ahead of the applications that consume the kit rather than behind them, which surfaces integration problems against real published packages instead of a stand-in.
 
 ### Pre-1.0.0
 
-The kit stays pre-`1.0.0` until Effect `4.0.0` reaches general availability. Through development each package pins one Effect v4 prerelease rather than a floating range, which keeps the whole workspace building and testing against the exact same core. Packages graduate to `1.0.0` after Effect `4.0.0` is officially released.
+Effect v4 is stable, and the kit builds on it, but every package is still `0.x`. Stable Effect makes a kit `1.0.0` possible, not automatic: packages graduate when their APIs settle, not on Effect's schedule. Until then, a breaking change can ride an ordinary minor release, so read the changeset before you advance.
 
 ### Version and stability
 
 Two independent dimensions describe where a package stands:
 
-- **Version** — pre-`1.0.0`, built against a single pinned Effect v4 prerelease. Each package carries its own version and advances when a release names it.
+- **Version** — pre-`1.0.0`, built on stable Effect v4. Each package carries its own version and advances when a release names it.
 - **Stability** — `stable` or `unstable`, whether a package's API shape is considered complete. This is tracked per package.
 
-Every package is `unstable` today. Treat the two as separate: even a package marked `stable` before `1.0.0` can break by accident, so pin exact versions. An exact pin turns an unexpected change into a type-check error at your own boundary instead of a runtime surprise in production.
+Every package is `unstable` today. Treat the two as separate: even a package marked `stable` before `1.0.0` can break by accident, so pin each package to a minor (a caret on `0.x` does exactly that) and read the changeset before advancing. A pinned minor turns an unexpected change into a type-check error at your own boundary instead of a runtime surprise in production.
 
 ### Version alignment
 
 [`@effected/pnpm-plugin-effect`](packages/pnpm-plugin-effect) keeps a consumer's versions aligned with the kit's. It is a pnpm config dependency, installed ahead of the rest of the tree, that ships four pnpm catalogs: two for Effect and two for the kit itself.
 
-The `effect` catalog carries the exact pinned prerelease for `effect` and its `@effect/*` satellites, under a `lock` strategy (`@effect/tsgo` is the exception: it versions independently and is pinned exactly at its own release), so once the plugin is installed everything in your workspace resolves to that one pinned version rather than drifting apart. `effect:peers` carries the same package set at the peer floor a library should advertise.
+The `effect` catalog carries `effect` and its `@effect/*` satellites at `^4.0.0` (`@effect/tsgo` is the exception: it versions independently on its own line). Effect releases all of them together at one version, so once the plugin is installed everything in your workspace resolves to one `4.x`, and your lockfile holds the exact version. `effect:peers` carries the same package set at the peer range a library should advertise.
 
 The `effected` catalog does the same job for the kit's own packages — every one except `@effected/pnpm-plugin-effect` itself, which is the package the catalog ships inside. Write `"@effected/workspaces": "catalog:effected"` in `dependencies`, or `catalog:effected:peers` in `peerDependencies`, instead of a hand-maintained range. That matters more than it sounds on `0.x`, where a caret does not cross a minor: a range written by hand stops resolving anything current as soon as the package it names cuts a minor, and it does so silently across every manifest that repeats it. The catalog is rebuilt as packages release, so upgrading the config dependency advances the whole kit surface in one step.
 
@@ -108,7 +113,7 @@ The `effected` catalog does the same job for the kit's own packages — every on
 
 ### A note on peers
 
-Upstream Effect manifests occasionally introduce peer-dependency wrinkles (a caret range where an exact pin was expected, for instance) that need an override rule to keep resolution clean. Expect this corner to be revisited a few times before Effect `4.0.0` ships.
+Upstream Effect manifests occasionally introduce peer-dependency wrinkles that need an override rule to keep resolution clean. `@effected/pnpm-plugin-effect` ships the ones the kit knows about: today, scoped pins that keep tools still built on an Effect release candidate on their own `@effect/platform-node-shared`.
 
 ## Contributing
 

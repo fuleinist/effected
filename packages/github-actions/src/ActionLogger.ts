@@ -1,7 +1,7 @@
+import type { AnnotationProperties } from "@effected/github-commands";
+import { CommandNeutralizer, WorkflowCommand } from "@effected/github-commands";
 import { Console, Context, Effect, Exit, Inspectable, Layer, LogLevel, Logger, References } from "effect";
 import { ActionEnvironment } from "./ActionEnvironment.js";
-import type { AnnotationProperties } from "./WorkflowCommand.js";
-import { WorkflowCommand } from "./WorkflowCommand.js";
 
 /**
  * Render a log message, which arrives as an array of the values passed to
@@ -76,7 +76,11 @@ const annotationRecord = (properties: AnnotationProperties): Record<string, unkn
  * @remarks
  * `Info` is deliberately plain text with no command prefix — it is ordinary
  * step output, and prefixing it would make every informational line an
- * annotation in the workflow summary.
+ * annotation in the workflow summary. It is neutralized, though: the text is
+ * whatever the program logged, and the runner reads every line of stdout, so a
+ * message carrying `::add-mask::` or a `##[` would be a command. The levels that
+ * render AS a command escape their data instead, and a line that starts `::` is
+ * read by the runner as that command alone.
  */
 const renderEntry = (
 	level: LogLevel.LogLevel,
@@ -90,7 +94,7 @@ const renderEntry = (
 			? WorkflowCommand.error(text, properties)
 			: WorkflowCommand.warning(text, properties);
 	}
-	return LogLevel.isGreaterThanOrEqualTo(level, "Info") ? text : WorkflowCommand.debug(text);
+	return LogLevel.isGreaterThanOrEqualTo(level, "Info") ? CommandNeutralizer.text(text) : WorkflowCommand.debug(text);
 };
 
 /** The line the runner should see for one log event, with the fiber's annotations. */
@@ -140,7 +144,8 @@ const flush = (state: BufferState): Effect.Effect<void> =>
 			`--- End buffered output for "${state.label}" ---`,
 		];
 		state.entries.length = 0;
-		return Effect.forEach(body, (line) => Console.log(line), { discard: true });
+		// The transcript is the program's own log text and the label a step name: neutralized, as the live lines were.
+		return Effect.forEach(body, (line) => Console.log(CommandNeutralizer.text(line)), { discard: true });
 	});
 
 /**
@@ -179,7 +184,8 @@ export interface WithStepOptions {
 }
 
 /**
- * The {@link ActionLogger} service shape.
+ * The members of the {@link ActionLogger} service: log groups, buffered steps,
+ * notices and source annotations.
  *
  * @public
  */
@@ -236,10 +242,9 @@ export interface ActionLoggerShape {
 	 * test.
 	 *
 	 * The header and the summary are the whole difference from `withBuffer`, and
-	 * they are why this is a member rather than a documented recipe: the recipe
-	 * was independently derived wrong three times by careful readers during one
-	 * port, because `group` + `withBuffer` looks like complete parity until you
-	 * notice nothing emits the success line.
+	 * they are why this is a member rather than a documented recipe: `group` +
+	 * `withBuffer` looks like complete parity until you notice nothing emits the
+	 * success line.
 	 *
 	 * The summary survives step debugging. Buffering is skipped when the runner
 	 * asks for verbose output, but the line naming what succeeded is still the
@@ -263,7 +268,7 @@ export interface ActionLoggerShape {
 	 *
 	 * @remarks
 	 * The point is that a caller never spells an annotation key: the fields go in
-	 * as {@link AnnotationProperties} and come out as `file=`/`line=` on the
+	 * as `AnnotationProperties` (from `@effected/github-commands`) and come out as `file=`/`line=` on the
 	 * rendered command.
 	 */
 	readonly annotated: <A, E, R>(
@@ -330,7 +335,7 @@ const make = Effect.gen(function* () {
 				// ahead of the flush instead of into the buffer it is announcing — and
 				// so a failed step does not mint a second `::error::` beside the one
 				// `Action.run` already renders for the failure itself.
-				Effect.tapCause(effect, () => Console.log(`❌ ${name}`)),
+				Effect.tapCause(effect, () => Console.log(CommandNeutralizer.text(`❌ ${name}`))),
 				{ onSuccess: "discard" },
 			).pipe(
 				// Outside the buffered region on purpose: a line emitted inside it is
@@ -372,6 +377,14 @@ const make = Effect.gen(function* () {
 export class ActionLogger extends Context.Service<ActionLogger, ActionLoggerShape>()(
 	"@effected/github-actions/ActionLogger",
 ) {
+	/**
+	 * The service: groups, the buffered step renderer, notices and annotations.
+	 *
+	 * @remarks
+	 * This installs no `Logger`. Without {@link ActionLogger.layerLogger} (or `Action.run`, which installs it) Effect's
+	 * default logger writes `Effect.log*` text raw, so a message carrying `::add-mask::` or `##[` is a workflow command
+	 * to the runner. Install both: the service for its structure, the logger for its neutralizing of every log line.
+	 */
 	static readonly layer: Layer.Layer<ActionLogger, never, ActionEnvironment> = Layer.effect(this, make);
 
 	/**
@@ -387,7 +400,13 @@ export class ActionLogger extends Context.Service<ActionLogger, ActionLoggerShap
 	 */
 	static readonly logger: Logger.Logger<unknown, void> = commandLogger;
 
-	/** {@link ActionLogger.logger} installed as the only logger. */
+	/**
+	 * {@link ActionLogger.logger} installed as the only logger.
+	 *
+	 * @remarks
+	 * Bound to a constant so every composition site shares one layer;
+	 * `ActionRuntime.layer` already includes it.
+	 */
 	static readonly layerLogger: Layer.Layer<never> = Logger.layer([ActionLogger.logger]);
 
 	/**
@@ -417,10 +436,9 @@ export class ActionLogger extends Context.Service<ActionLogger, ActionLoggerShap
 	 * A silent service **and** a silent `Effect.log*`.
 	 *
 	 * @remarks
-	 * This one layer replaces the bare `Effect.provide(Logger.layer([]))` that
-	 * appeared thirteen times in one consuming action and twenty-three in
-	 * another, purely to keep test output quiet. Bound to a constant rather than
-	 * exposed as a factory, so composing it twice is free.
+	 * This one layer stands in for a bare `Effect.provide(Logger.layer([]))`
+	 * repeated in every suite just to keep test output quiet. Bound to a
+	 * constant rather than exposed as a factory, so composing it twice is free.
 	 */
 	static readonly layerSilent: Layer.Layer<ActionLogger> = Layer.mergeAll(ActionLogger.layerTest(), Logger.layer([]));
 }

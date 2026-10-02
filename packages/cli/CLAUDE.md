@@ -7,6 +7,18 @@ exporting `CliTest`, for spawning a built bin hermetically in tests. Every
 export but `CliTest` is presentation, and `CliTest` is test tooling behind
 its own entrypoint so it never enters a CLI's runtime import graph.
 
+It also owns how a program's output is written for whoever is reading it: the
+document IR (`Doc`, plain frozen nodes), the pure renderers over a
+`RenderContext` (`Render.plain`, `ansi`, `markdown`, `githubLog`, and
+`Render.context(stream)` to build one from the services), `Doc.print`,
+`GithubAnnotation`, editor-aware `CliLinks`, and `CliFailure`, which is how the
+default failure report is drawn. An agent is never written an escape of any
+kind. Every string that enters a document is sanitised: escape sequences and
+control characters are removed, a tab becomes a space, and line breaks are kept
+as breaks. The glyph strings of a vocabulary or a theme are configuration and
+are not sanitised.
+`okf/modules/cli.md` has the rows.
+
 **Design doc:** `@./okf/modules/cli.md` — Load when:
 changing the public surface, the logger's stream routing, the failure-reporting
 combinator or the renderers. It carries the reasoning this file only
@@ -18,15 +30,109 @@ new request against what the first consumer actually reported.
 
 **Not a CLI framework.** `effect/cli` owns parsing, flags, the command
 tree and help. If a change here starts to look like parsing, it belongs upstream
-or nowhere. No prompts, no spinners — `Prompt` already exists in core.
+or nowhere. Presentation and interactive UI are in scope —
+`@./okf/decisions/cli-grows-presentation-layer.md` — Load when: deciding
+whether a capability belongs in this package.
 
-Tier: **boundary**. No platform package, required or optional. The moment
-`@effect/platform-node` appears here the package stops being usable from Bun and
-Deno for no benefit.
+Tier: **boundary** for the root. No platform package, required or optional. The
+moment `@effect/platform-node` appears here the package stops being usable from
+Bun and Deno for no benefit. `./ui` is integrated, but only for a consumer who
+installs its optional peers — `@./okf/decisions/ui-tier-is-integrated-on-opt-in.md`
+— Load when: adding a dependency or a peer to this package.
 
-**Nothing in the kit may depend on this but an application**, same posture as
-`app`. The two are siblings, not layers — `app` is the control plane, `cli` the
-presentation boundary, and neither imports the other.
+**Nothing in the kit may depend on this but an application or a companion.**
+The one kit package that does is `schemastore-cli`, a companion that carries no
+tier and imports only the boundary root, so nothing inherits a tier from `./ui`.
+Same posture as `app`: the two are siblings, not layers — `app` is the control
+plane, `cli` the presentation boundary, and neither imports the other.
+
+## The `./ui` and `./ui/testing` subpaths
+
+`./ui` holds the interactive screens: `CliUi` (`run`, `prompt`, `fallback`,
+`lazy`, `live`, `context`), `DocView`, `UiProvider`, the widgets (`Select`, `TextInput`, `MultiSelect`, `Confirm`,
+`Toggle`, `Tabs`, `Viewport`), the key layer (`UiKey`, `KeyTable`, `useKeys`,
+`KeyHelp`) and the theme bridge (`Styled`, `inkProps`, `useTheme`,
+`useGlyphs`, `useTerminalSize`). `./ui/testing` holds `CliUiTest`: `render`
+for one screen, `view` for a display-only element (no `result`), `session`
+for a program that runs several, `live` for a live view, and `chunk` on every handle to send keys in
+one read. `okf/modules/cli.md` has the rows.
+
+- **Optional peers `ink` (^7.1.1) and `react` (^19.2.0).** The root never
+  reaches them, and `./ui` imports them only when a screen mounts (`loadInk`),
+  so importing `./ui` or running a non-interactive program loads neither,
+  except that an owned live view loads them to print its final frame as a
+  string.
+  `src/ui/**` may only `import type` from them: only `ui/internal/ink.ts`
+  loads them as values (held by `boundary.test.ts`); a missing peer in an interactive run is a defect
+  naming both, never a silent fallback.
+- **The ui declarations name the root by its package name.** `src/ui/**`
+  imports root types as `import type * as Cli from "@effected/cli"`, and
+  `savvy.build.ts` keeps `@effected/cli` and `@effected/cli/ui` external
+  (`dtsExternals`), so `ui.d.ts` imports the root instead of inlining a copy
+  a consumer's root layers could not satisfy —
+  `@./okf/decisions/ui-declarations-reference-the-root-by-name.md` — Load
+  when: touching `savvy.build.ts`, an entrypoint, or a root type a ui
+  signature names. API Extractor's per-module pass cannot read those
+  entries, so `declarations.test.ts` stands in for it: the built exports
+  match the source and the pinned reviewed lists, every export carries a
+  release tag, nothing is left unexported, and a consumer compiled against
+  `dist/dev` resolves `CliTheme` from the root. `tsdocLinks.test.ts` keeps
+  `{@link}` targets resolvable. The two "could not harvest per-module source
+  locations" build warnings are those entries and are accepted.
+- **`CliUi.live` is a scoped live view over a `Stream`, not a screen.** It folds
+  events into state in a fiber of the caller's scope and draws runs: a run begins
+  at `isStart` (or where an optional `begins(event, before, after)` says, for a
+  consumer that joins mid-run) and ends at `isTerminal`; an event outside a run
+  that begins none is folded and not drawn, so post-run events never mount a
+  second copy, where Ink's own unmount leaves its frame on the terminal; the next
+  run mounts afresh below, and `clear()` is never called —
+  `@./okf/decisions/live-view-runs-and-modes.md`, `live-never-clears.md` — Load
+  when: changing how runs start, end or redraw. One controller fiber owns every
+  transition (events, the run's `Schedule.spaced` tick in the run's scope, render
+  failures, the stream ending or dying); a failed render degrades the run (unmount
+  first, then one warning, the last good frame kept), never kills the view; a
+  start during a degraded run ends it and mounts afresh. Clearing a run and
+  closing its scope is one uninterruptible step (an interrupt between them
+  orphans the mount permit).
+  - **Modes** differ only when not interactive (`CliInteractive`: a pipe, a
+    non-human audience, or `TERM=dumb`, which cannot move the cursor): `owned`
+    prints each run's final frame once as a string at stdout's width, `hosted`
+    prints nothing. Neither
+    mounts input: Ctrl-C stays the platform's SIGINT and closes the scope.
+  - **Subscription and the end:** `events` is a `PubSub.Subscription` (subscribe
+    first: the surest) or a stream, whose first pull `live` makes before
+    returning (`Stream.fromPubSub` is subscribed; a stream that forks its
+    upstream is not). End a view with `handle.close`, which folds what is still
+    queued, a subscription's included, and ends the run as the events ending
+    would; then close the scope. `PubSub.end(pubsub, last)` is lossless too (the
+    view folds the buffer and `last` once, though core repeats it to every take).
+    `PubSub.shutdown` drops what the view has not taken, and a bare scope close
+    stops the fold at once: both lose a tail. A subscription is taken from
+    directly (never `Stream.fromSubscription`), yield-free from a take to the
+    inbox, so `close` never drops a taken message.
+  - **Height, not width:** the frame is clipped to `rows - 1` (its content keeps
+    its height and is clipped, never squeezed); the root takes no width at all —
+    `@./okf/decisions/live-height-clamp-not-width.md` — Load when: touching the
+    clamp or a widget's width.
+  - **Logging while drawn goes through `handle.logConsole`**, which writes every
+    `Console` method through Ink's own writers so lines land above the frame, and
+    straight to `UiStreams` otherwise; any other write tears the frame —
+    `@./okf/decisions/live-logs-through-ink.md`.
+  - **An agent and the Actions runner:** an agent gets the colourless theme
+    (`themeForAudience`, the same rule `Render.context` uses) in every tree the
+    kit mounts; under GitHub Actions `DocView` neutralizes workflow commands and a
+    printed frame is neutralized whole.
+  - **`DocView`** draws the `Doc` IR through `Render.ansi`/`Render.plain` as
+    `truncate-end` rows, byte for byte the static output; **`UiProvider`** gives a
+    tree the kit did not mount the same context (value from `CliUi.context`).
+  - **`CliUiTest.live`** drives a view on the production render path under
+    `it.effect` (`advance` moves the `TestClock`); `transcript` models the
+    terminal, `written` is every raw byte.
+- **Ink hands every key of one stdin read over before React re-renders.** A
+  key handler must step from current state (a functional update, a reducer
+  or a ref), never render-closure state; test it with `chunk` —
+  `@./okf/gotchas/ink-delivers-a-chunk-of-keys-before-rerender.md` — Load
+  when: writing or reviewing a key handler or a widget.
 
 ## Load-bearing decisions
 
@@ -99,13 +205,13 @@ a second provide creates a second, unrelated cell: `CliExit.set` calls made
 against that shadow cell never reach the one `main` reads, and a findings run
 silently exits `0`.
 
-**`CliColor` reads `NO_COLOR` through `ConfigProvider`, never `process`.**
-Follows the no-color.org rule: colour is off when stdout is not a terminal,
-or `NO_COLOR` is set to any non-empty value; an empty `NO_COLOR=""` does not
-disable colour. `FORCE_COLOR` is ignored, matching core's own formatter. The
-environment read goes through the ambient `ConfigProvider`, so a test swaps
-it with `Effect.provideService(ConfigProvider.ConfigProvider, ...)` instead
-of mutating `process.env`.
+**`CliColor` delegates to `@effected/env`, which reads the environment through `ConfigProvider`, never `process`.**
+`enabled` is `TerminalEnv.colorLevel("stdout") !== "none"`, so it follows Node's
+`getColorDepth` precedence: `FORCE_COLOR` first (and it beats `NO_COLOR`), then a
+non-empty `NO_COLOR`, `NODE_DISABLE_COLORS` and `TERM=dumb`, then the TTY gate
+([decision](../../okf/decisions/force-color-honoured-node-precedence.md)). A test
+swaps the environment with `Effect.provideService(ConfigProvider.ConfigProvider, ...)`
+instead of mutating `process.env`, or fixes the answer with `TerminalEnv.layerTest`.
 
 **The `./testing` split has a reachability test.** `entrypoints.test.ts`
 walks the import graph from `src/index.ts` and asserts nothing reachable from

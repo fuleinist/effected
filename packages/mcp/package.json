@@ -1,6 +1,6 @@
 {
 	"name": "@effected/mcp",
-	"version": "0.3.0",
+	"version": "0.4.0",
 	"private": true,
 	"description": "The boundary layer of an effect/ai MCP server: stdio wiring that keeps stdout the wire, tool-failure shaping, strict-input walkers, and test clients",
 	"keywords": ["effect", "mcp", "model-context-protocol", "stdio", "json-rpc", "effected"],
@@ -38,7 +38,7 @@
 		"@effect/vitest": "catalog:effect",
 		"@effected/engine": "workspace:*",
 		"@effected/workspaces": "workspace:*",
-		"@savvy-web/bundler": "^2.4.18",
+		"@savvy-web/bundler": "^2.4.20",
 		"@types/node": "catalog:build",
 		"effect": "catalog:effect",
 		"typescript": "catalog:build"

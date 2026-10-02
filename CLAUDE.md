@@ -6,7 +6,7 @@ This is **effected**, a pnpm monorepo (npm org `@effected`) building an **Effect
 
 The monorepo holds libraries only — applications stay in external repos.
 
-**Releases are changeset-driven: CI builds the changesets and releases the packages they name.** A release may be the whole kit or a single package — both are ordinary. Everything published is `0.x` and unstable; `1.0.0` waits for Effect v4 GA.
+**Releases are changeset-driven: CI builds the changesets and releases the packages they name.** A release may be the whole kit or a single package — both are ordinary. Everything published is `0.x` and unstable. Effect v4 is now stable, which makes a kit `1.0.0` possible, not automatic: the kit takes it when it chooses to.
 
 ## Knowledge bundle
 
@@ -37,7 +37,7 @@ Durable project knowledge lives as OKF concepts under `okf/`, not in prose here.
 
 ### Kit composition
 
-The kit is **34 publishable packages**: 32 libraries plus two companions (`pnpm-plugin-effect` and `schemastore-cli`); 31 have published (`schema-org`, the newest, on 2026-08-26) and `schemastore-cli` awaits its first release, as do `@effected/engine` and `@effected/mcp`, the newest library. New packages follow `okf/runbooks/add-a-kit-package.md`: an `okf/modules/<pkg>.md` Module concept first, then port.
+The kit is **36 publishable packages**: 34 libraries plus two companions (`pnpm-plugin-effect` and `schemastore-cli`); 31 have published (`schema-org` on 2026-08-26) and `schemastore-cli` awaits its first release, as do `@effected/engine`, `@effected/mcp`, `@effected/env` and `@effected/github-commands`, the two newest libraries. New packages follow `okf/runbooks/add-a-kit-package.md`: an `okf/modules/<pkg>.md` Module concept first, then port.
 
 `@effected/config-file` holds every config **codec**; the `jsonc`, `yaml` and `toml` **format** packages stay independent. The four codecs are **free-standing named exports** — `JsonCodec`, `JsoncCodec`, `YamlCodec`, `TomlCodec`, one module each — with `ConfigCodec` the interface only. **Never collect them into a namespace object**: it would drag every parsing engine into a JSON-only consumer's bundle, killing tree-shaking silently. Read `okf/modules/config-file.md` and `okf/decisions/codecs-are-free-standing-named-exports.md` before touching it.
 
@@ -55,7 +55,7 @@ The kit is **34 publishable packages**: 32 libraries plus two companions (`pnpm-
 
 ### Package context files
 
-Each package has its own `CLAUDE.md` and documents itself. Read it before working there; do not duplicate its content here. The roster of all 34 — what each one is, and the parenthetical tier tag every **library** carries (pure / boundary / integrated, per `okf/glossary/library-tier.md`) — lives in `okf/project.md`'s packages table. Load it when: choosing which package owns a capability, or checking a package's tier or scope before working in it.
+Each package has its own `CLAUDE.md` and documents itself. Read it before working there; do not duplicate its content here. The roster of all 36 — what each one is, and the parenthetical tier tag every **library** carries (pure / boundary / integrated, per `okf/glossary/library-tier.md`) — lives in `okf/project.md`'s packages table. Load it when: choosing which package owns a capability, or checking a package's tier or scope before working in it.
 
 ## Build Pipeline
 
@@ -105,7 +105,7 @@ Biome, commitlint, lint-staged and markdownlint take their presets from `@savvy-
 
 Shared dependency versions come from pnpm catalogs in `pnpm-workspace.yaml`, managed via `packages/pnpm-plugin-effect`. Catalog detail and the expected peer-warning class → `okf/modules/pnpm-plugin-effect.md`, `okf/conventions/peer-dependency-discipline.md`, `okf/gotchas/expected-peers-check-occupant.md`.
 
-**`catalog:effect` uses the `lock` strategy: exact prerelease pins (`4.0.0-rc.112`), never a caret.** A caret on a prerelease floats across the release line and silently desynchronizes the installed `effect` from the `.repos/effect` submodule, the authority on what v4 exports.
+**`catalog:effect` uses the `lock-minor` strategy: caret ranges on the stable line (`^4.0.0`), so the exact `effect` the kit builds and tests against is the lockfile's resolution, not the catalog literal.** `.repos/effect`, the authority on what v4 exports, is pinned to the tag matching that resolution; re-pin it whenever the lockfile's `effect` moves, or the vendored source and the installed package drift apart silently.
 
 **Always check the lockfile diff after an install** — a plain `pnpm install` can strip turbo/biome/tsgo platform binaries from it.
 

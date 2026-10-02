@@ -1,6 +1,6 @@
 {
 	"name": "@effected/config-file",
-	"version": "0.13.1",
+	"version": "0.14.0",
 	"private": true,
 	"description": "Composable config file loading for Effect: JSON, JSONC, YAML and TOML codecs, resolution strategies, and merge behaviors.",
 	"keywords": [
@@ -53,12 +53,13 @@
 		"@effected/toml": "workspace:*",
 		"@effected/walker": "workspace:*",
 		"@effected/yaml": "workspace:*",
-		"@savvy-web/bundler": "^2.4.18",
+		"@savvy-web/bundler": "^2.4.20",
 		"@types/node": "catalog:build",
 		"effect": "catalog:effect",
 		"typescript": "catalog:build"
 	},
 	"peerDependencies": {
+		"@effected/glob": "workspace:^",
 		"@effected/jsonc": "workspace:^",
 		"@effected/toml": "workspace:^",
 		"@effected/walker": "workspace:^",

@@ -1,6 +1,6 @@
 {
 	"name": "@effected/engine",
-	"version": "0.2.0",
+	"version": "0.3.0",
 	"private": true,
 	"description": "Platform-free primitives shared by every front end of an Effect v4 tool: distribution identity, remediation, and launch context",
 	"keywords": ["effect", "cli", "mcp", "carrier", "distribution", "effected"],
@@ -35,7 +35,7 @@
 		"@effect/platform-node": "catalog:effect",
 		"@effect/vitest": "catalog:effect",
 		"@effected/workspaces": "workspace:*",
-		"@savvy-web/bundler": "^2.4.18",
+		"@savvy-web/bundler": "^2.4.20",
 		"@types/node": "catalog:build",
 		"effect": "catalog:effect",
 		"typescript": "catalog:build"
