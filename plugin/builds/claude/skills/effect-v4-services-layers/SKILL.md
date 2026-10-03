@@ -118,6 +118,17 @@ A class-form key's instance type is `ServiceClass.Shape<Identifier, Shape>`
 and a `Service` member holding the real shape. The interface you want is nested
 one level inside it, which is exactly what both spellings above unwrap.
 
+**Taking a consumer's key over your shape?** Pin the shape. A
+parameter typed `Context.Key<I, Shape>` or `Context.Service<I, Shape>`
+accepts a key over a **wider** shape, because class keys compare structurally
+and method bivariance makes that covariant. The fix is
+`Context.Key<I, S> & ([Shape] extends [S] ? unknown : never)` with
+`S extends Shape`; a key that adds members then errors as "not assignable to
+parameter of type 'never'". It cannot see through method-syntax parameter
+bivariance (a member redeclared as a method with a wider parameter still
+passes). See
+[references/edge-cases.md](./references/edge-cases.md).
+
 ## Access a service: prefer `yield*`
 
 `yield*` on the class pulls the implementation and leaves the dependency
@@ -399,14 +410,23 @@ hand-rolled-`Path` recipe and the honest `runSyncExit` unwrap:
 
 ## Memoization: layers build once, by reference
 
-v4 shares one `MemoMap` **across `Effect.provide` calls**, so the same
-layer *value* is built exactly once and deduplicated — even if you provide
-it twice:
+Within one provided layer graph, the same layer *value* is built exactly
+once, however many composites reference it. Across `Effect.provide` calls
+the rule depends on nesting: a provide's build adds its `MemoMap` to the
+context (`Layer.ts:659`), and a provide running **inside** it forks that
+map (`CurrentMemoMap.forkOrCreate`, `Layer.ts:583`), so a nested provide
+reuses what the enclosing one built:
 
 ```ts
 const main = program.pipe(Effect.provide(DbSubsystem), Effect.provide(DbSubsystem));
-// The Database pool is built ONCE — one shared MemoMap, not one per provide.
+// Built ONCE — the inner provide forks the outer provide's MemoMap.
 ```
+
+Provides that are **not** nested — one after another, or siblings under a
+common parent — each start their own map and build again (probed: nested
+1 build, sequential 2, siblings under one outer provide 2). A warm-up
+`Effect.scoped(Layer.build(L))` followed by `program.pipe(Effect.provide(L))`
+is two sequential builds.
 
 Identity is **by reference**, and that is the footgun. A function that
 *returns* a layer mints a **fresh reference every call**, defeating

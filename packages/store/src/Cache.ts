@@ -5,8 +5,8 @@ import * as SqlClient from "effect/sql/SqlClient";
 import * as SqlError from "effect/sql/SqlError";
 import { bytesToUtf8, utf8ToBytes } from "./Bytes.js";
 import type { MigratorMigration } from "./internal/migrator.js";
-import { ensureLedger, runPending } from "./internal/migrator.js";
-import { walCheckpointOnClose } from "./internal/sqlite.js";
+import { ensureLedger, failureCause, runPending } from "./internal/migrator.js";
+import { walCheckpointOnClose, withOnConnect } from "./internal/sqlite.js";
 
 /**
  * A stored cache entry: its key, value and bookkeeping fields.
@@ -367,6 +367,17 @@ export interface CacheSqliteOptions extends CacheOptions {
 	 * never checkpoints.
 	 */
 	readonly checkpointOnClose?: boolean;
+	/**
+	 * Run once against the freshly opened connection, before the cache's
+	 * schema is ensured and outside any transaction — for per-connection
+	 * settings `client` cannot carry.
+	 *
+	 * @remarks
+	 * The SQLite driver opens one connection per layer build, so once per
+	 * build is once per connection. A failure fails the layer as a
+	 * `CacheError` with `operation: "setup"`.
+	 */
+	readonly onConnect?: (sql: SqlClient.SqlClient) => Effect.Effect<unknown, SqlError.SqlError>;
 }
 
 const CACHE_LEDGER_TABLE = "_cache_migrations";
@@ -474,9 +485,11 @@ const make = (options: CacheOptions): Effect.Effect<CacheShape, CacheError, SqlC
 		const sql = yield* SqlClient.SqlClient;
 		const pubsub = yield* PubSub.unbounded<CacheEvent>();
 
-		yield* ensureLedger(sql, CACHE_LEDGER_TABLE).pipe(Effect.mapError((failure) => cacheError("setup", failure.cause)));
+		yield* ensureLedger(sql, CACHE_LEDGER_TABLE).pipe(
+			Effect.mapError((failure) => cacheError("setup", failureCause(failure))),
+		);
 		yield* runPending(sql, CACHE_LEDGER_TABLE, cacheMigrations).pipe(
-			Effect.mapError((failure) => cacheError("setup", failure.cause)),
+			Effect.mapError((failure) => cacheError("setup", failureCause(failure))),
 		);
 
 		const emit = (event: CacheEventPayload): Effect.Effect<void> =>
@@ -850,10 +863,54 @@ export class Cache extends Context.Service<Cache, CacheShape>()("@effected/store
 			...passthrough
 		} = (options.client ?? {}) as Partial<SqliteClient.SqliteClientConfig>;
 		const client = SqliteClient.layer({ ...passthrough, filename: options.filename });
-		const cache = Layer.provide(Cache.layer(options), client);
+		const connected = withOnConnect(
+			client,
+			options.onConnect,
+			(cause) => new CacheError({ operation: "setup", cause }),
+		);
+		const cache = Layer.provide(Cache.layer(options), connected);
 		return options.checkpointOnClose === true
 			? Layer.merge(cache, Layer.provide(walCheckpointOnClose(), client))
 			: cache;
+	}
+
+	/**
+	 * {@link Cache.layerSqlite} provided under a service key the consumer
+	 * defines, for an application that keeps more than one cache.
+	 *
+	 * @remarks
+	 * `tag` is a `Context.Service` whose service type is {@link CacheShape}.
+	 * A key whose shape is incompatible is a compile error, and so is one that
+	 * adds members (`CacheShape & { … }`), reported as an argument "not
+	 * assignable to parameter of type 'never'" because this layer could not
+	 * supply them. The check cannot see through method-syntax parameter
+	 * bivariance: a shape that redeclares a member as a method with a wider
+	 * parameter still compiles. The output is `I` alone: the `Cache` built internally
+	 * never leaks, so a keyed cache composes beside a primary `Cache` — each
+	 * with its own file, bound, TTL default and `CacheEvent` stream.
+	 *
+	 * A layer-returning function, like every factory here: bind the result to
+	 * a `const` once and reuse that binding.
+	 *
+	 * @example
+	 * ```ts
+	 * import { Cache } from "@effected/store";
+	 * import type { CacheShape } from "@effected/store";
+	 * import { Context } from "effect";
+	 *
+	 * class TarballCache extends Context.Service<TarballCache, CacheShape>()("myapp/TarballCache") {}
+	 *
+	 * const TarballCacheLive = Cache.layerSqliteAs(TarballCache, { filename: "/abs/tarballs.db", maxEntries: 200 });
+	 * ```
+	 */
+	static layerSqliteAs<I, S extends CacheShape>(
+		tag: Context.Key<I, S> & ([CacheShape] extends [S] ? unknown : never),
+		options: CacheSqliteOptions,
+	): Layer.Layer<I, CacheError> {
+		// The constraint rejects keys whose shape adds members or is incompatible with CacheShape, so the key
+		// is read at CacheShape. It cannot see through method-syntax parameter bivariance: a member redeclared
+		// as a method with a wider parameter still passes.
+		return Layer.effect(tag as Context.Key<I, CacheShape>, Cache).pipe(Layer.provide(Cache.layerSqlite(options)));
 	}
 
 	/** An in-memory (`:memory:`) `Cache` layer for tests; each build is a fresh, empty cache. */

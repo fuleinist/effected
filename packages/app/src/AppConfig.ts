@@ -174,8 +174,8 @@ export interface AppConfigOptions<A, I, RR = never> {
 }
 
 // Implementation of AppConfig.layer; the public contract lives on the static.
-const layer = <Self, A, I, RR = never>(
-	tag: Context.Key<Self, ConfigFileShape<A>>,
+const layer = <Self, A, I, RR = never, S extends ConfigFileShape<A> = ConfigFileShape<A>>(
+	tag: Context.Key<Self, S> & ([ConfigFileShape<A>] extends [S] ? unknown : never),
 	options: AppConfigOptions<A, I, RR>,
 ): Layer.Layer<Self, never, FileSystem.FileSystem | Path.Path | AppDirs | Xdg | RR> =>
 	Layer.unwrap(
@@ -213,7 +213,10 @@ const layer = <Self, A, I, RR = never>(
 				...(options.resolversAfter ?? []),
 			];
 
-			return ConfigFile.layer(tag, {
+			// The constraint rejects keys whose shape adds members or is incompatible with ConfigFileShape<A>, so the key
+			// is read at ConfigFileShape<A>. It cannot see through method-syntax parameter bivariance: a member redeclared
+			// as a method with a wider parameter still passes.
+			return ConfigFile.layer(tag as Context.Key<Self, ConfigFileShape<A>>, {
 				schema: options.schema,
 				codec: options.codec,
 				strategy: options.strategy ?? MergeStrategy.firstMatch<A>(),
@@ -264,6 +267,14 @@ export class AppConfig {
 	 * `AppDirs` service at layer build time, so it is typed exactly once, in
 	 * `App.layer` — the two-strings drift where an app passes `"myapp"` to
 	 * `App.layer` and `"my-app"` to its config preset cannot happen.
+	 *
+	 * `tag` is a `ConfigFile.Service` key — its service type
+	 * `ConfigFileShape<A>` for the schema's `A`. A key whose shape adds members
+	 * (`ConfigFileShape<A> & { … }`) is a compile error, reported as an argument
+	 * "not assignable to parameter of type 'never'", because this layer could
+	 * not supply them. The check cannot see through method-syntax parameter
+	 * bivariance: a member redeclared as a method with a wider parameter still
+	 * compiles.
 	 *
 	 * This is a layer-returning function: bind the result to a `const` and reuse
 	 * that binding, or two provide sites mint two independent service instances.

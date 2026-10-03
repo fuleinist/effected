@@ -43,14 +43,24 @@ could be sequenced last.
 ## Four modules, and the split is load-bearing
 
 `App.ts` (`AppOptions`, `AppTestOptions`, `AppError`, `App.layer`,
-`App.layerTest`) · `AppStore.ts` · `AppCache.ts` · `AppConfig.ts`. There is no
-engine here, only composition — the one `internal/` module is
-`internal/filename.ts`, a 16-line guard rejecting any `filename` that is not a
-single path component (the same wiring-defect rule `xdg` applies to
-`namespace`). `AppStore`, `AppCache` and `AppConfig` all import it, so a newly
-rejected shape is added there once; its test-side mirror is
-`__test__/filenameGuard.ts`. It is load-bearing, not a helper: without it a
-`filename` containing a separator escapes the app's own directory.
+`App.layerDirs`, `App.layerTest`) · `AppStore.ts` (`layer`, `layerAs`) ·
+`AppCache.ts` (`layer`, `layerAs`) · `AppConfig.ts`. There is no
+engine here, only composition — two `internal/` modules. `internal/filename.ts`
+holds the path guards: `badFilename` rejects any `filename` that is not a single
+path component (the same wiring-defect rule `xdg` applies to `namespace`), and
+`badSubdir` rejects a `subdir` that is not a relative path of such components.
+`AppStore`, `AppCache` and `AppConfig` import it, so a newly rejected shape is
+added there once; its test-side mirror is `__test__/filenameGuard.ts`
+(`filenameGuardCases`, `subdirGuardCases`). It is load-bearing, not a helper:
+without it a path option escapes the app's own directory.
+`internal/location.ts` holds the location's two halves. `resolveLocation`
+guards `filename`/`subdir` and joins `AppDirs.dirs[kind]`, the subdir and the
+filename, creating nothing. It is the ONE derivation behind both the public
+`AppStore.location` / `AppCache.location` and the layers. A consumer reports
+or persists the path the layer opens, so a second derivation would be a drift
+bug; the integration suite asserts equality. `ensureLocation` is the
+ensure-before-open half: the matching `AppDirs.ensure*`, then a recursive
+`mkdir` of the subdir mapped onto `AppDirsError` (directory kind, full path).
 
 `App.ts` imports `AppStore.ts` and `AppCache.ts`. **`App.ts` does not import
 `AppConfig.ts`**, and that is the point: `AppConfig` reaches `xdg` +
@@ -120,19 +130,82 @@ composition defect; do not reorder the two.
   config loader report a typo'd section or a field the schema deliberately
   removed; `validate` cannot, because it runs after decoding has already dropped
   the excess keys. Absent = core's `"ignore"`, so it is additive.
+- **`AppConfig.layer`'s key is pinned against wider shapes**, with
+  the same conditional as `layerAs` (`S extends ConfigFileShape<A>`, defaulted,
+  so explicit four-argument calls still compile). Before, a class key over
+  `ConfigFileShape<A> & { extra }` was accepted. `ConfigFile.Service` keys —
+  every caller in the repo and in reposets — are unaffected.
+  `@effected/config-file`'s own `ConfigFile.layer` / `testLayer` carry the same
+  pin.
 - **The codec stays required** on `AppConfigOptions` — never defaulted, never
   inferred from the filename's extension. Hard-coding a *format* choice into a
   composition layer is exactly what `XdgFullLive` was killed for, and the named
   import is what keeps the other three engines out of the consumer's bundle.
-- **`App.layer` always provides both databases.** Passing no `cache` options
-  **still opens `cache.db`** — `CacheOptions` are all-optional, so absence means
-  defaults, not absence. An app that wants only one composes `AppStore.layer` or
-  `AppCache.layer` directly.
+- **`App.layer` always provides both databases, and opens them eagerly.**
+  Building it creates and migrates `store.db` and `cache.db` whether or not the
+  program touches them. Passing no `cache` options **still opens `cache.db`** —
+  `CacheOptions` are all-optional, so absence means defaults, not absence. An app
+  that wants only one, or wants them only on some code paths, composes
+  `App.layerDirs` with `AppStore.layer` / `AppCache.layer` (#923).
+- **`App.layerDirs` opens no database.** It is exactly
+  `Layer.provideMerge(AppDirs.layer(options), Xdg.layer)` — `Xdg | AppDirs` on
+  `XdgEnvError`, `R = FileSystem | Path` — and `App.layer` is built on it, so the
+  two cannot drift. It exists for the CLI shape: directories provided once at
+  `CliRuntime.main`, each database bound once at module scope and attached with
+  `Command.provide` only on the commands that use it. Reposets hit the eager
+  open in production: every command created both files, and `nuke` deleted a
+  `store.db` its own process held open. The integration suite pins the property
+  with a positive control (`App.layer` built and unused DOES create both files).
+- **`layerAs` is the multi-database surface, and its `filename` is required**
+  (#97). `AppStore.layerAs(tag, options)` / `AppCache.layerAs(tag, options)` take
+  a consumer-defined `Context.Service` key over `StoreShape` /
+  `CacheShape` and output **that key alone**: they resolve the path and hand it
+  to `Store.layerSqliteAs` / `Cache.layerSqliteAs`, whose re-tag never leaks the
+  inner `Store` / `Cache`, so a keyed layer composes beside the primary without
+  shadowing it. `filename` has
+  no default because a defaulted `store.db` / `cache.db` would land silently on
+  the primary's file — two connections and two ledgers on one database. Do not
+  give it one.
+- **The key's shape is pinned against wider shapes.** A class key
+  is checked against `Context.Key` structurally and method bivariance makes that
+  effectively covariant, so a plain `Context.Service<I, StoreShape>` parameter
+  accepted a `StoreShape & { extra }` key and handed it a value missing `extra`.
+  The signature is `<I, S extends StoreShape>(tag: Context.Key<I, S> &
+  ([StoreShape] extends [S] ? unknown : never), …)`; the type tests pin
+  unrelated, wider and missing-filename as compile errors. The cost is a
+  cryptic "not assignable to `never`" for the wider case, documented on the
+  static. **The limit:** the pin proves mutual assignability, not identity, so
+  it cannot see through method-syntax parameter bivariance — a shape that
+  redeclares a member as a method with a wider parameter
+  (`rollback(toId: number | string)`) still compiles. Never describe the key as
+  "exactly" the shape.
+- **A keyed map was rejected.** `App.layer({ stores: { registry: … } })` would
+  reintroduce #923's eager open for every store and need an app-owned service
+  to hold the map — the one thing this package never defines. N stores are N
+  bound `layerAs` consts, composed by the application.
 - **`AppOptions` is `AppDirsOptions` pass-through.** `namespace`, `native`,
   `fallbackDir`, `dirs` mean what xdg says they mean, five-level precedence
   ladder included. This package re-documents none of it.
+- **`location` resolves without creating.** `AppStore.location(options)` /
+  `AppCache.location(options?)` return `Effect<string, never, AppDirs | Path>`.
+  `R` deliberately has no `FileSystem`: if it needed one, it would be doing IO
+  the contract says it does not. The same bad-`filename`/`subdir` dies as the
+  layers, with the `.location` context.
+- **`directory` and `subdir` are the location, and the failure stays typed.**
+  `AppStoreOptions` / `AppCacheOptions` take `directory: "state" | "data" |
+  "cache"` (defaults: state for stores, cache for caches) and a relative
+  `subdir` created with `mkdir -p` after the directory is ensured. That `mkdir`
+  is why `AppStore.*` and `AppCache.*` carry `FileSystem` in `R`, and its
+  failure is mapped onto `AppDirsError` — `directory` the kind, `path` the full
+  subdir path — because its shape fits exactly and this package defines no error
+  of its own. An absolute or host-chosen path is **not** an app option: that is
+  `Store.layerSqliteAs` / `Cache.layerSqliteAs` from `@effected/store`, which
+  `layerAs` builds on. The rest of the options (`client`, `checkpointOnClose`,
+  `adoptMigratorLedger`) are store's, passed through untouched.
 - **A `filename` must be a single path component**, or it dies at construction —
-  for all three filename options. The guard rejects the empty string, anything
+  for all five filename options (store, cache and config, plus both `layerAs`;
+  the die names `AppStore.layerAs` / `AppCache.layerAs` for the keyed ones), and
+  every component of a `subdir` (which additionally may not be absolute). The guard rejects the empty string, anything
   containing `/` or `\`, and the traversal names `.` and `..`. Do not weaken it
   to "empty or contains a separator": `filename: ".."` contains no separator and
   still escapes the namespace directory. It can only come from code — the same

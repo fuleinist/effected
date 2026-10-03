@@ -106,11 +106,36 @@ holds. Not for writing feature code from scratch — that is the developer.
    method signature. In repos that gate on API Extractor, the synthesized
    `_base` warning is suppressed in the build config and the report is
    zero-warning (base entries in the `suppressed` bucket).
-4. **Check the hardening class** for parser/engine code: depth guards in both
+4. **Check database and state wiring** (`@effected/store`, `@effected/app`).
+   Flag each of these; the package references in `effected-packages` carry
+   the reasoning:
+   - `App.layer(…)`, `AppStore.layer(…)` or any store factory called **inline
+     at two provide sites** — two connections, two ledgers, split event
+     streams. Bind once to a const. And `App.layer` at a CLI's entry point
+     opens both databases for every command: directories go at the edge via
+     `App.layerDirs`, databases on the commands that use them.
+   - a keyed `layerAs` store whose file could land on the primary's: its
+     `filename` is required for exactly that reason, so a value copied from
+     the primary (or a shared constant) defeats it.
+   - **per-connection PRAGMAs set inside a migration** (`busy_timeout`,
+     `journal_mode`, `synchronous`, `foreign_keys`): a migration runs once per
+     database, not per connection. They belong in `client`
+     (`busyTimeout`, `disableWAL`) or `onConnect`; `foreign_keys` is already
+     on under `node:sqlite`.
+   - a retry wrapped around a **whole program** on `SQLITE_BUSY`: a program
+     that already did work re-runs. Retry only a warm-up
+     `Effect.scoped(Layer.build(layer))`, matched on
+     `code === "ERR_SQLITE_ERROR" && errcode === 5`, with jittered backoff.
+   - a function taking a consumer's service key typed as `Context.Key<I, Shape>`
+     or `Context.Service<I, Shape>`: it accepts keys over wider shapes. Ask
+     for the pin `Context.Key<I, S> & ([Shape] extends [S] ? unknown : never)`,
+     and for its limit (method-syntax bivariance) to be stated rather than
+     "exactly the shape".
+5. **Check the hardening class** for parser/engine code: depth guards in both
    pipeline stages, code-point range checks before `String.fromCodePoint`,
    `__proto__` as an own property, C0 rejection — each with a hostile-input test.
    See `hardening-a-parser-port`.
-5. **Run it.** Run the host repo's own gates: its test suite, its linter, its
+6. **Run it.** Run the host repo's own gates: its test suite, its linter, its
    typecheck. Prefer structured tools when the session exposes them (a
    vitest-agent MCP `run_tests`, a Biome MCP check); otherwise the repo's
    scripts — and when running vitest directly, read both the `Tests:` line
@@ -146,6 +171,25 @@ reference). Flag, as findings:
 - ANY `FileSystem.layerNoop` double — the one rule is "a `FileSystem` double
   is `@effected/memfs`, never `FileSystem.layerNoop`"; an "unchanged" proof
   faults the write members with `MemoryFileSystem.die` instead.
+
+CLI code on `@effected/cli` follows `effect-v4-cli`. Flag, as findings:
+
+- any escape sequence reaching an agent audience, a hand-copied "agent gets no
+  colour" rule instead of `CliTheme.forAudience`, or a glyph hand-painted into
+  `Effect.log*` (the logger strips it; `CliLog.status` keeps it painted);
+- a `TextInput` `mask` predicate that matches a giveaway as a prefix
+  (`/^ghp_/`) instead of anywhere in the value, or a `validate` message that
+  echoes the value (drawn unmasked);
+- a hand-written `Screen<boolean>` adapter around `Confirm` (`CliUi.map` is the
+  mapper), or `import()` plumbing around a live view's `render`
+  (`CliUi.lazyView` is the lazy form);
+- a live view on a path an agent or CI runs with no `final` document, which
+  loads Ink and React only to print an unread frame;
+- a bin installed under `node_modules/@effected/` run through
+  `CliRuntime.main` without `env.appModule` — `spans: "app"` is the default and
+  then leaves out the bin's own spans with the kit's;
+- a `CliUiTest.session` layer provided outside a presentation layer whose
+  theme or interactivity it is meant to replace (it is shadowed quietly).
 
 ## Output format
 

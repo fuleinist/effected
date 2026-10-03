@@ -16,8 +16,8 @@ sources:
     resource: ../../packages/store/CLAUDE.md
 generated:
   by: "okfit/claude-code"
-  at: 2026-09-28T18:00:23Z
-  body_sha256: 9a9450555b1fa1b4fa1f454ff6494fe214c2dfa07b7ab25c67317b3cbb1bdc84
+  at: 2026-10-03T16:14:05Z
+  body_sha256: 809f239caadf89392395839b8b092e020a7234c7442715822ed3ac2bbbe923bf
 ---
 
 # store
@@ -90,6 +90,21 @@ Both `Store` and `Cache` publish the same three statics:
 - **`layerTest`** — `layerSqlite` at `:memory:`, hermetic; what the
   suites use.
 
+Both also publish **`layerSqliteAs(tag, options)`**: `layerSqlite`
+provided under a consumer-defined `Context.Service` key, for an
+application with a second database. The inner service is provided to a
+re-tagging `Layer.effect` and never leaks, so a keyed layer composes
+beside the primary. The key parameter rejects a service type wider than
+`StoreShape` / `CacheShape` with a conditional (`Context.Key<I, S> &
+([StoreShape] extends [S] ? unknown : never)`): a plain
+`Context.Service<I, StoreShape>` parameter is checked structurally, and
+method bivariance lets a class key over a *wider* shape through, handing
+its consumer a value missing members. The pin proves mutual
+assignability, not identity, so it cannot see through method-syntax
+parameter bivariance: a member redeclared as a method with a wider
+parameter still passes. [app](app.md)'s keyed layers build
+on these.
+
 **The memoization trap.** These statics are parameterized factories, not
 layer values: each call builds a new `Layer`, and Effect memoizes layers
 by reference. Calling `Store.layerSqlite({...})` inline at two provide
@@ -102,10 +117,12 @@ where it bites hardest).
 
 Deliberately not done: no `mkdir: true` on `layerSqlite` — directory
 creation is path policy, owned by the caller or [xdg](xdg.md). No
-`Store.adoptLedger(fromTable)` API — adoption from core's own
-`effect/sql/Migrator` ledger is a documented one-time SQL recipe
-in the package README rather than an API, until a consumer's migrations
-are not idempotent enough to run the recipe by hand.
+`onConnect` / PRAGMA hook — `SqliteClient` opens one serialized
+connection per layer build and itself sets `busy_timeout`
+(`client.busyTimeout`, default five seconds) and `journal_mode = WAL`
+(unless `client.disableWAL`), both reachable through the `client`
+passthrough. A consumer setting them inside a migration, which runs
+once per database rather than once per connection, moves them there.
 
 ### Store
 
@@ -120,6 +137,79 @@ without `down` therefore leaves its schema change in place while its
 ledger row disappears**, so a later `migrate` re-runs its `up` against a
 database that still has the table; give every migration a `down`, or
 treat one without as a floor `rollback(toId)` may never cross.
+
+**Adopting a Migrator ledger.** `StoreOptions.adoptMigratorLedger`
+(`true`, or `{ table }`) moves a live database off core's
+`effect/sql/Migrator` without re-running its history. The Migrator's
+ledger is `migration_id`, `name`, `created_at`, and its loaders record
+names with the numeric key prefix stripped — `fromRecord`'s
+`"0001_initial"` is id 1, name `"initial"`. Adoption is one-shot,
+decided by the first layer build with the option on: after the ledger is
+ensured and before pending migrations run, in one write-locked
+transaction, the foreign rows are copied in when `_store_migrations` is
+empty and the foreign table exists, and in every case a marker row is
+written to `_store_meta` in the same transaction. Every later build sees
+the marker and skips — which is what keeps `rollback(0)` followed by a
+reopen from re-adopting history the rollback unwound. The foreign table
+is never written, a failed adoption records nothing (marker included),
+an unreadable `created_at` is refused rather than defaulted, and any
+dialect other than SQLite is refused. Adoption honours rollback history: a foreign row unchanged
+since a Store rollback is stale and re-runs instead of being adopted, a
+changed or new one is adopted, and an untracked one is refused. Matching is exact: each foreign row needs
+a migration with the same id and name, and no migration at or below the
+foreign high-water mark may be missing from the foreign ledger, because
+the Migrator never runs an id at or below its latest and such a
+migration was therefore never applied. Any disagreement is a typed
+`StoreError` with `operation: "adopt"` before anything is recorded.
+
+**Concurrent openers.** The pending plan is read outside any
+transaction, so each migration's transaction re-checks the ledger before
+running `up` and skips an id another connection already recorded. The
+SQLite driver opens a writable transaction with `BEGIN IMMEDIATE`, so
+that re-check holds the write lock and several processes opening one
+file never run an `up` twice; per-migration commits are unchanged. This
+rests on the driver's lock, so it holds for `layerSqlite` and for the
+abstract `layer` only over a driver that locks the same way. One limit
+sits below the package, in the SQLite driver: the first open of a
+brand-new file. The driver sets `busy_timeout` and then switches the
+journal to WAL, and SQLite refuses that switch at once under contention
+without waiting out the timeout, so concurrent first openers can die with
+`database is locked`. Once the file is in WAL mode nothing contends. The
+README carries the two mitigations verified against it: create the file
+in WAL from one process first, or warm the database up with a scoped
+`Layer.build` retried with jittered backoff on `SQLITE_BUSY` alone
+(`code` `ERR_SQLITE_ERROR`, `errcode` 5), then run the program once,
+unretried.
+
+**Mirroring the Migrator ledger.** `StoreOptions.mirrorMigratorLedger`
+covers the reverse of adoption: an older program still migrating
+through effect/sql's `Migrator` opening a database the new program
+created. It is two-way for matching rows: every build creates
+effect/sql's ledger with its own SQLite DDL if absent, imports foreign
+rows that match a migration by id and name (an older program may have
+migrated forward), then backfills from `_store_migrations`; every apply
+re-checks the foreign table under the write lock and imports rather than
+re-runs, otherwise inserts, and every rollback deletes the matching row,
+inside the migration's own transaction. Import is validated like
+adoption and refused typed on an unknown id, a name mismatch, an
+unreadable timestamp, or a gap below the imported high-water mark.
+Every rollback, mirror on or off, tombstones the unwound ids in
+`_store_meta` with a snapshot of each foreign ledger's row, so a later
+import tells a row Store rolled back (unchanged → re-run) from one an
+older program re-applied (changed → import), and refuses a table it never
+snapshotted. Paired with adoption, both default to the same table.
+SQLite only. **Connection hook.** `onConnect` on the SQLite layers runs
+once per build (one connection per build), before the ledger and outside
+any transaction. Foreign keys need no hook: `node:sqlite` enables them on
+every connection by default. **Messages and logs.** `StoreError.message`
+folds in the cause's message, and migration progress is logged at
+`Debug` in effect/sql's `Migrator` record shape (`Running migration`,
+`Migrations complete`), from the shared engine, so `Cache` logs too.
+
+Adoption replaced a hand-run SQL seeding recipe once the
+[vitest-agent](../consumers/vitest-agent.md) consumer needed to move
+three populated databases whose first migration is a bare `CREATE
+TABLE`.
 
 A migration's `up`/`down` return `Effect<unknown, SqlError>`, not
 `Effect<void, ...>` — a `SqlClient` tagged template resolves to the
@@ -203,6 +293,10 @@ carries the migration's `direction`, `id` and `name`. `SqlError` is
 wrapped, never leaked. No defect laundering: only typed failures map into
 a domain error, and a throwing `onRemoved` or migration callback
 propagates as a defect (`withTransaction` still rolls back on it).
+`StoreError.operation` includes `"adopt"`: an adopted Migrator ledger
+that disagrees with the migration list is data the caller can repair
+(rename or renumber a migration), so it is typed, its `cause` an `Error`
+naming the mismatched migration.
 Wiring errors are construction defects: duplicate or non-positive-integer
 migration ids, a `maxEntries` that is not a positive integer, a
 non-integer or negative rollback target, each guarded
