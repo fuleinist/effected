@@ -2,20 +2,23 @@
 type: Decision
 title: Each plugin versions via its own private tracking package
 description: Both plugins version and release independently of the kit's library waves, each through a private, never-published workspace package that exists only to give changesets something to version.
-status: draft
+status: deprecated
 tags:
   - release
 sources:
   - id: claude-code-plugin-package-json
-    resource: ../../plugins/claude-code/package.json
+    resource: https://github.com/spencerbeggs/effected/blob/41327b9656d86db47749ee161e198c716853d391/plugins/claude-code/package.json
   - id: copilot-plugin-package-json
-    resource: ../../plugins/copilot/package.json
+    resource: https://github.com/spencerbeggs/effected/blob/41327b9656d86db47749ee161e198c716853d391/plugins/copilot/package.json
   - id: plugins-claude-md
-    resource: ../../plugins/CLAUDE.md
+    resource: https://github.com/spencerbeggs/effected/blob/41327b9656d86db47749ee161e198c716853d391/plugins/CLAUDE.md
 generated:
   by: "okfit/claude-code"
   at: 2026-09-13T05:33:04Z
   body_sha256: f32557198fd122fe96ce9cda39b07d14198aa10e2a43c30764c9438fd4d8d655
+verified:
+  - by: human:spencer
+    at: 2026-10-03T04:58:49Z
 ---
 
 # Each plugin versions via its own private tracking package
