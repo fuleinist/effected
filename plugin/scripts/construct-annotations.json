@@ -118,6 +118,7 @@
 		"Distribution": "the carrier package name and version a tool's bins were installed through",
 		"DistributionField": "the nullable distribution field of a machine-readable envelope, null for a direct install",
 		"LaunchContext": "resolve a launched tool's project directory from argv, env keys, then cwd, rejecting unsubstituted placeholders",
+		"ProcessGuard": "transport-neutral crash guards for an lsp or any server process before its graph loads, mark connected yourself, exit only before connect, startup failure exits 1, parse a crash-injection env value",
 		"Remediation": "what a caller, usually an agent, should do after a failure: hint plus optional suggested tool and args",
 		"distributionSuffix": "render the via name version suffix for a --version line or startup log, empty for a direct install"
 	},
@@ -407,6 +408,15 @@
 		"fromFilename": "detect which lockfile format a conventional filename identifies",
 		"isUnsupportedLockfileVersion": "check if a lockfile parse error means the version is too old"
 	},
+	"lsp": {
+		"LspFrame": "encode an lsp message with a byte-counted content-length header, decode lsp frames from chunked bytes or a stream",
+		"LspFrameError": "malformed or truncated lsp frame, missing or bad content-length, stray stdout log line",
+		"LspFrameErrorCode": "lsp frame error codes, missing content-length, header too large, truncated",
+		"LspProbe": "smoke-test a built language server bin, initialize then shutdown and exit 0",
+		"LspProcess": "drive a spawned language server bin from a test, send content-length frames, read until a response, wait for a stderr report, assert stdout carried only lsp frames",
+		"LspStdio": "launch an effect language server over stdio, keep runMain's failure report off stdout, exit 1 on exit without shutdown, end the process on exit when stdin stays open",
+		"LspTestFailure": "lsp probe or process failure, stream ended, invalid frame, not json-rpc, timeout"
+	},
 	"markdown": {
 		"Blockquote": "build a blockquote node, construct quoted content, mdast blockquote",
 		"Break": "build a hard line break node, construct a break for stringify",
@@ -523,12 +533,12 @@
 		"NodeSyncFileSystem": "read real disk under Effect.runSync, synchronous read-only node filesystem"
 	},
 	"mcp": {
-		"McpGuard": "crash guards before the server graph loads, exit only before connect, startup failure exits 1",
+		"McpGuard": "crash guards before the server graph loads, exit only before connect, startup failure exits 1, parse a crash-injection env value",
 		"McpHarness": "test mcp server in-process, call tools over queue-backed stdio",
 		"McpProbe": "smoke-test a built mcp bin, initialize then clean exit",
-		"McpProcess": "drive a spawned mcp bin, read json-rpc lines, never hang on exit",
+		"McpProcess": "drive a spawned mcp bin, read json-rpc lines, wait for a stderr report with a timeout, never hang on exit",
 		"McpStdio": "serve mcp over stdio, keep stdout the json-rpc wire, exit 0 on stdin close",
-		"McpTestFailure": "mcp test client failure, stream ended, server stopped",
+		"McpTestFailure": "mcp test client failure, stream ended, server stopped, timed out",
 		"McpToolAudit": "lint served tools list, closed inputs, titles, hints, object-rooted outputs",
 		"McpToolkit": "name every unknown tool argument in one InvalidParams, strict by default",
 		"ToolFailure": "fold remediation into tool error message, truncate echoed caller values",

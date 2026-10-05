@@ -7,8 +7,8 @@ tags:
   - architecture
 generated:
   by: "claude-code/opus-5.5"
-  at: 2026-10-03T04:19:44Z
-  body_sha256: 51489803df199e2db15f8778c5d11aa1391b1efc1f299016049a79b94f202142
+  at: 2026-10-05T18:09:34Z
+  body_sha256: 739e7470d009ee808999904826fbdf578d0a51c43f95f389f3af8e815a8c428e
 ---
 
 # effected
@@ -45,10 +45,11 @@ The repository holds **libraries and their companions**. Standalone tools and ap
 | `git` | boundary | invention; typed git introspection over core's `ChildProcessSpawner` |
 | `spdx` | pure | invention; vendored SPDX license expressions as pure schemas |
 | `app` | integrated | invention; thin composition over `xdg` + `config-file` + `store` |
-| `engine` | pure | invention; platform-free primitives shared across front ends (distribution identity, remediation, launch context) |
+| `engine` | pure | invention; platform-free primitives shared across front ends (distribution identity, remediation, launch context, and transport-neutral process crash guards on the import-free `./guard` subpath) |
 | `env` | boundary | invention; who is running a program and in what terminal (`RuntimeEnv`, `TerminalEnv`, `Audience`, `EnvOverride`) read through `Config`, with no `node:` import; a required peer of `cli`, so an MCP server or engine detects without a CLI dependency |
 | `cli` | boundary (`./ui` integrated on opt-in) | invention; the CLI presentation boundary over `effect/cli`: audience, theme and messages, the document IR and its renderers, links, failure reports, logging and prompts in a React-free root; interactive Ink screens and the live view behind `./ui` (`ink` and `react` optional peers) and their harness behind `./ui/testing` |
 | `mcp` | boundary | invention; the MCP boundary (stdio wiring, tool-failure shaping, strict-input walkers) over `effect/ai`, plus `./testing` clients |
+| `lsp` | boundary | invention; LSP base-protocol framing (byte-counted `Content-Length` encode, an incremental decoder and a `Stream` transform) as pure functions, plus `LspProbe`, the packed-install boot proof for a Language Server bin, behind `./testing` |
 | `markdown` | pure | invention; CommonMark + GFM as pure schemas |
 | `commands` | boundary | part-port of `@savvy-web/silk-effects`' `ToolDiscovery` plus invention |
 | `templates` | boundary | port of `@savvy-web/silk-effects`' `ManagedSection` |
@@ -64,7 +65,7 @@ The repository holds **libraries and their companions**. Standalone tools and ap
 | `jsonl` | boundary | invention; append-only schema-validated JSONL journals |
 | `pnpm-plugin-effect` | companion — no tier | invention; publishes the Effect catalogs the kit pins against |
 
-The roster is **36 packages**: 34 libraries and two companions (`pnpm-plugin-effect` and `schemastore-cli`). 31 have published; `env`, `github-commands`, `engine`, `mcp` and `schemastore-cli` await their first release.
+The roster is **37 packages**: 35 libraries and two companions (`pnpm-plugin-effect` and `schemastore-cli`). 31 have published; `env`, `github-commands`, `engine`, `mcp`, `lsp` and `schemastore-cli` await their first release.
 
 ### Consumers
 

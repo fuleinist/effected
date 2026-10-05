@@ -32,7 +32,9 @@ importing it from `src/`.
 
 `@effected/engine` (workspace `^`) and `effect` (`catalog:effect:peers`).
 `Remediation` from `@effected/engine` is the shape `ToolFailure` folds into a
-wire message; nothing else in `@effected/engine` is consumed yet.
+wire message, and `ProcessGuard` from `@effected/engine/guard` is the whole
+guard half of `McpGuard.run`. The peer floor must include an engine version
+that ships `./guard`.
 
 ## Exports
 
@@ -45,23 +47,28 @@ wire message; nothing else in `@effected/engine` is consumed yet.
 `UnionToolOptions`, `UnknownKeysLevel` and `FormatUnknownKeysOptions`
 types. `McpToolkit` also carries `unionTool` and `unionHandler`.
 
-`@effected/mcp/guard` (`src/guard.ts`): `McpGuard` (`run`), plus the
+`@effected/mcp/guard` (`src/guard.ts`): `McpGuard` (`run`, and `parseInjectCrash`, which is `ProcessGuard.parseInjectCrash`), plus the
 `McpGuardHost`, `McpGuardPolicy`, `McpGuardedServer` and
-`McpGuardRunOptions` types. **It has no static runtime import**, only
-`import type`: the guards must be listening before `effect` or the
-server graph evaluates. The server half lives in
-`src/internal/guardLaunch.ts` behind a dynamic `import()`;
-`entrypoints.test.ts` pins the graph, so a static import added to
+`McpGuardRunOptions` types. **Its only static runtime import is
+`@effected/engine/guard`, which itself imports nothing**: the guards must
+be listening before `effect` or the server graph evaluates. `McpGuard.run`
+is `ProcessGuard.run` (listeners, policy, `startup failed`, `injectCrash`,
+formatter) with an MCP launch in its `load`: it hands the loaded `format`
+to `guard.useFormat` and `guard.markConnected` to `McpStdio.launch`'s
+`onReady`. Behaviour belongs in the engine, not here. The server half
+lives in `src/internal/guardLaunch.ts` behind a dynamic `import()`;
+`entrypoints.test.ts` pins the graph (and walks the installed
+`@effected/engine/guard` to zero packages), so a static import added to
 `McpGuard.ts` fails it.
 
 `@effected/mcp/testing` (`src/testing.ts`): `McpHarness` (`make`; instances
 carry `initialize`, `initializeWith`, `sentSoFar`, `discover`, `listTools`, `listResources`, `callTool`, `readResource`, `request`,
 `startRequest`, `notify`, `sendRaw`, `awaitOutboundMethod`, `stderrSoFar`,
-`consoleLogSoFar`, `close`), `McpProcess` (`spawn`; instances carry `send`,
+`consoleLogSoFar`, `close`, `stop`), `McpProcess` (`spawn`; instances carry `send`,
 `sendRaw`, `nextLine`, `readUntilResponse`, `handshake`, `closeStdin`,
-`exitCode`, `stderrSoFar`, `stderrFinal`), `McpProbe` (`initialize`),
+`exitCode`, `stderrSoFar`, `stderrUntil`, `stderrFinal`), `McpProbe` (`initialize`),
 `McpTestFailure`, `McpToolAudit` (`check`), plus the `McpHarnessOptions`,
-`McpProbeOptions`, `McpProbeResult`, `McpToolAuditPolicy`, `JsonRpcMessage`,
+`McpProbeOptions`, `McpProbeResult`, `McpProcessStderrUntilOptions`, `McpToolAuditPolicy`, `JsonRpcMessage`,
 `ServedTool` and `ServedResource` types.
 
 ## Load-bearing decisions
@@ -81,6 +88,15 @@ carry `initialize`, `initializeWith`, `sentSoFar`, `discover`, `listTools`, `lis
   `Layer.provideMerge`, not `Layer.provide` — so every layer composed WITH
   it logs to stderr too, not only the wiring `McpStdio.layer` builds
   internally.
+- **`LogToStderr` does not reach `Logger.consoleJson`, `consoleLogFmt` or
+  `consoleStructured`.** All three are `Logger.withConsoleLog(format)`,
+  which calls `console.log` unconditionally (vendored
+  `packages/effect/src/Logger.ts:265-271`, the three at `:917`, `:942`,
+  `:965`); only the default logger and `consolePretty` read the reference
+  (`internal/effect.ts:6898` and `:6754`). Under `McpStdio` a server must
+  not install them: stdout is the wire. Wrap a formatter in
+  `Logger.withConsoleError` instead. `McpHarness.test.ts` pins both sides
+  through `consoleLogSoFar`.
 - **`McpStdio.layer` guards the server's stdin.** Core's stdio decoder
   skips a line it cannot use and keeps serving (Effect-TS/effect PR #8541),
   but sends no reply, where JSON-RPC 2.0 requires one; an over-cap line is
@@ -137,18 +153,29 @@ carry `initialize`, `initializeWith`, `sentSoFar`, `discover`, `listTools`, `lis
   interrupts that fiber when its stdin loop ends
   (`ensuring(forkDetach(Fiber.interrupt(fiber)))`), which closing the
   provide's scope does. Tests serve a server through `McpHarness`.
-- **The harness never hangs.** Every `McpHarness` response wait and
-  `awaitOutboundMethod` races a stop signal and a corruption signal, so a
+- **No harness wait outlives the server.** Every `McpHarness` response wait
+  and `awaitOutboundMethod` races a stop signal and a corruption signal, so a
   server that stops before responding, or writes a non-JSON-RPC line under
-  `strictStdout`, fails or dies the wait instead of hanging the test.
+  `strictStdout`, fails or dies the wait instead of hanging the test. The stop
+  signal fires only after the stdout router has routed every line the server
+  wrote (`Queue.end(stdout)` then `Fiber.await(router)`): a draining server's
+  last responses are written just before it stops, and failing the waits
+  first raced them (the drain test caught it).
+- **Core's stdio server drains at stdin EOF.** In-flight requests still
+  answer, then the server stops and the process exits 0 (pinned against a
+  spawned process in `McpStdio.test.ts` and in-process in
+  `McpHarness.test.ts`). So `McpHarness.close` (stdin EOF) leaves a request
+  that never completes pending forever; `McpHarness.stop` interrupts the
+  server fiber instead, failing every wait with `ServerStopped`.
 - **`closeStdin` (`McpProcess`) and `close` (`McpHarness`) both use
   `Queue.end`, never `Queue.shutdown`.** `end` delivers every frame already
   offered before closing; `shutdown` would drop a frame sent immediately
   before close.
 - **`McpProbe` holds stdin open until the id-1 response arrives, then
   closes it.** Closing stdin right after writing — every hand-rolled smoke
-  test did this — makes an Effect server drop the in-flight response and
-  exit 0, reading as a pass with no response.
+  test did this — proves nothing against a server that stops at EOF without
+  answering what is in flight: it drops the in-flight response, exits
+  0, and reads as a pass with no response.
 - **`McpProcess.handshake` always uses id 1.** A test's own requests should
   start at id 2 or above — the harness does not reserve or check this, so
   reusing id 1 collides with the handshake's own response.

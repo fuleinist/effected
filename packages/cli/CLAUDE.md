@@ -214,6 +214,10 @@ a second provide creates a second, unrelated cell: `CliExit.set` calls made
 against that shadow cell never reach the one `main` reads, and a findings run
 silently exits `0`.
 
+**The kit never defaults `env.stderrIsTerminal` from the host.** Core's `Stdio` reports only stdout (Effect-TS/effect#8639), so without the option a redirected stderr is painted because it mirrors stdout. Reading `process.stderr.isTTY` inside the root would break the no-`process` rule ([ui-binds-process-streams](../../okf/decisions/ui-binds-process-streams.md)), so the bin's entry passes it, the one place a bin reads its host. Once core has a stderr check, `CliEnv.layer` reads that instead.
+
+**`FailureDetails.isCancelled` / `isNotInteractive` are flags, `isDefect` is not redefined.** A fallback prompt's quit is a defect and a `CliUi.run` quit a typed failure, so `isDefect` cannot say "not a bug"; the flags test the squashed error's class and hold on either channel. `isDefect` stays `!Cause.hasFails(cause)` and no exit code depends on either.
+
 **`CliColor` delegates to `@effected/env`, which reads the environment through `ConfigProvider`, never `process`.**
 `enabled` is `TerminalEnv.colorLevel("stdout") !== "none"`, so it follows Node's
 `getColorDepth` precedence: `FORCE_COLOR` first (and it beats `NO_COLOR`), then a

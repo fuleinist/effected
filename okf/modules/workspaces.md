@@ -27,8 +27,8 @@ sources:
     resource: ../../packages/workspaces/src/testing.ts
 generated:
   by: "okfit/claude-code"
-  at: 2026-10-01T14:11:47Z
-  body_sha256: 925272d3d9ee134553c94517a91e0f6822d0de163be0423bbed296cddff3ba00
+  at: 2026-10-05T17:55:16Z
+  body_sha256: cb09e590b56e0e0e6a1a94ee7a0bf1f3659fabcabacb4db849d4b60749f36672
 ---
 
 # @effected/workspaces: monorepo tooling
@@ -200,10 +200,14 @@ constructor:[^testing-ts]
 - `PackedInstall` (with `PackedInstallError`, `PackedInstallResult`,
   `InstalledConsumer`, `PackSource`, `PackedInstallOptions`,
   `PackedInstallClosureOptions`, `PackedInstallBudget`, `BinCommandOptions`,
-  `RunBinOptions` and `BinProvenance`): packs a carrier, its closure and any `overrides`,
+  `RunBinOptions` (which takes `stdin`; omitted means an immediately ended
+  input) and `BinProvenance`): packs a carrier, its closure and any `overrides`,
   then installs it into a scratch consumer under every available package
-  manager; `closure` names what a run will pack without packing it, and
-  `timeoutBudgetFor` budgets a run from its own options.
+  manager; `closure` names what a run will pack without packing it,
+  `timeoutBudgetFor` budgets a run from its own options, and `preflight` /
+  `gate` (with `PackedInstallPreflight`, `PackedInstallPreflightOptions` and
+  `PackedInstallGate`) decide run, skip or fail when the prod build is
+  missing.
 
 The contracts are
 [the repo-shape checks interface](../interfaces/workspaces-repo-shape-checks.md).

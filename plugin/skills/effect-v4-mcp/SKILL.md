@@ -23,6 +23,7 @@ clients.
 | `ToolInputSchema` | `@effected/mcp` | naming unknown keys in a `Tool.dynamic` tool's raw payload, inside its own handler — core never validates a raw JSON Schema |
 | `McpToolkit.unionTool` / `unionHandler` | `@effected/mcp` | a tool whose parameters are a `Schema.Union` of objects, rejected like a `Tool.make` decode failure |
 | `McpGuard` | `@effected/mcp/guard` | crash guards installed before the server graph loads, with an exit-before-connect policy |
+| `ProcessGuard` | `@effected/engine/guard` | the same guards for a server on another transport (an LSP), which reports `markConnected` itself |
 | `Remediation`, `LaunchContext` | `@effected/engine` | a structured `{ hint, suggestedTool? }` shape, or resolving an agent-launched project directory |
 | `McpHarness`, `McpProcess`, `McpProbe`, `McpToolAudit` | `@effected/mcp/testing` | testing the server layer in process, a spawned child, a packed install, or auditing what `tools/list` actually serves |
 
@@ -40,13 +41,14 @@ clients.
 - Two stdio servers in one process share one stdio protocol and one tool registry unless each **whole** bundle (toolkit + server) is wrapped in `Layer.fresh`: merged or nested without it, the second never reads its own stdin; `Layer.fresh` around the server alone, toolkit outside, serves no tools — see [`McpStdio.layer`](./references/server-wiring.md#mcpstdiolayer).
 - `runMain`'s own failure report runs outside anything the program provides and lands on stdout, the wire — see [`McpStdio.launch`](./references/server-wiring.md).
 - Stdin EOF interrupts the main fiber; the default teardown exits `130` — see [`McpStdio.teardown`](./references/server-wiring.md).
-- A declared failure reaches the agent as message text only, never `structuredContent` — see [Failures on the wire](./references/tools.md#failures-on-the-wire).
+- A declared failure reaches the agent as message text only, never `structuredContent`, under either failure mode, so `ToolRefusal.refuse` takes no data argument — see [Failures on the wire](./references/tools.md#failures-on-the-wire).
+- `injectCrash: { at: "connected" }` reports on a later tick, after the first responses a test may read; wait with `McpProcess.stderrUntil`, never one `stderrSoFar` read — see [`McpGuard.run`](./references/server-wiring.md#mcpguardrun-packages-both-policies).
 - `InvalidParams` moves to an `isError` tool result on the newer protocol revisions only for a known tool's own bad parameters — an unknown tool or non-object `arguments` stays a JSON-RPC error on every revision — see [Failures on the wire](./references/tools.md#failures-on-the-wire).
 - A top-level union `parameters` schema dies the server at registration, not at the first call — use `McpToolkit.unionTool` — see [Failures on the wire](./references/tools.md#failures-on-the-wire).
 - A pattern-keyed `Schema.Record` parameter is served open unless its key RegExp has the `u` flag, while core still rejects a non-matching key — see [Strict input](./references/tools.md#strict-input).
 - A `Schema.String` success is sent as raw text with no `structuredContent` on the stateful revisions, and as JSON-quoted text plus a string `structuredContent` on `2026-07-28` — see [Failures on the wire](./references/tools.md#failures-on-the-wire).
 - `Schema.Struct({})` is not `Tool.EmptyParams` — it fails server registration outright — see [Defining a tool](./references/tools.md#defining-a-tool).
-- Closing stdin with a request in flight drops that response — see [`McpStdio.teardown`](./references/server-wiring.md).
+- Closing stdin does not cancel requests in flight: the server answers them, then stops — so `McpHarness.close` never releases a wait on a request that never completes; `McpHarness.stop` does — see [`McpStdio.teardown`](./references/server-wiring.md).
 - A bare-string resource `content` loses its `mimeType` on the read itself, even though it still appears in `resources/list` — see [The `mimeType` trap](./references/resources.md#the-mimetype-trap).
 - A resource URI template variable cannot span a slash — an id containing one needs a static resource per id, not a template — see [A template variable cannot span a slash](./references/resources.md#a-template-variable-cannot-span-a-slash).
 - An `Effect.timeout` guard inside `it.effect` never fires — `TestClock` never advances on its own, so the test hangs until vitest's own default timeout kills it instead. Use `it.live` or a real-clock `layer(...)` — see [Timeouts](./references/testing.md#timeouts).

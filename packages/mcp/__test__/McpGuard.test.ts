@@ -64,6 +64,17 @@ const stop = (fibers: ReadonlyArray<Fiber.Fiber<never, Error>>) =>
 
 const settle = () => new Promise((resolve) => setTimeout(resolve, 20));
 
+describe("McpGuard.parseInjectCrash", () => {
+	it("is ProcessGuard's parser: one grammar for every launcher", () => {
+		assert.deepStrictEqual(McpGuard.parseInjectCrash("connected:unhandledRejection"), {
+			at: "connected",
+			kind: "unhandledRejection",
+		});
+		for (const value of [undefined, "", "load:boom", "later:uncaughtException", "load:uncaughtException:x"])
+			assert.isUndefined(McpGuard.parseInjectCrash(value), String(value));
+	});
+});
+
 describe("McpGuard.run with a host double", () => {
 	it("installs both listeners before load runs", async () => {
 		const { host, listeners } = fakeHost();
@@ -294,11 +305,9 @@ const guardMain = (...flags: ReadonlyArray<string>) =>
 		{ env: { PATH: process.env.PATH ?? "" } },
 	);
 
-/** Wait until the child's stderr contains `text`. */
+/** Wait until the child's stderr contains `text`: the "connected" report lands on a later tick than the first responses. */
 const stderrShows = (server: McpProcess, text: string) =>
-	Effect.gen(function* () {
-		while (!(yield* server.stderrSoFar).includes(text)) yield* Effect.sleep("20 millis");
-	});
+	server.stderrUntil((stderr) => stderr.includes(text), { timeout: "8 seconds" });
 
 describe("McpGuard.run in a real process", () => {
 	it.live("exitBeforeConnect: an uncaught exception after connect is logged and the server keeps serving", () =>

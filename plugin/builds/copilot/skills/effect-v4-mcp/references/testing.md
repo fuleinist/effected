@@ -124,14 +124,14 @@ describe("McpHarness behaviour", () => {
     }),
   )
 
-  it.effect("read the response before close: closing with a request in flight drops it", () =>
+  it.effect("close drains: a request in flight at close still answers", () =>
     Effect.gen(function* () {
       const harness = yield* McpHarness.make(ServerLayer)
       yield* harness.initialize
       const { response } = yield* harness.startRequest("ping")
       yield* harness.close
-      const exit = yield* Effect.exit(response)
-      assert.isTrue(Exit.isFailure(exit))
+      const result = yield* response
+      assert.isUndefined(result.error)
     }),
   )
 
@@ -290,7 +290,7 @@ id `1`, so a test's own requests start at `2` or above — the harness does
 not reserve or check this, so reusing id `1` collides with the handshake's
 own response. `closeStdin` is `Queue.end`, never `Queue.shutdown` — the same
 guarantee `McpHarness.close` makes: a frame already offered still reaches
-the child's stdin. `nextLine` fails typed with `StreamEnded` the moment
+the child's stdin, and the server answers it before it exits. `nextLine` fails typed with `StreamEnded` the moment
 stdout ends, instead of hanging, so a child that exits early fails the test
 rather than timing it out:
 
@@ -328,15 +328,42 @@ send a valid request in the same `sendRaw` write after it to prove a
 co-batched frame is still answered. Match replies by `id`, never by
 position: a guard reply can precede core's answer to an earlier line.
 
+### Waiting on stderr: `stderrUntil`
+
+`stderrSoFar` is one read. A report the server writes on a later tick than
+its responses (a crash guard's `injectCrash: { at: "connected" }` report,
+a log line flushed after serving starts) can be missing from a read taken
+right after the first response. `stderrUntil(predicate, { timeout })` waits
+instead: it checks the stderr so far at once, re-checks on every chunk the
+child writes (no polling timer), and returns the text that matched. It fails
+`McpTestFailure` with reason `StreamEnded` as soon as stderr ends without a
+match, and `TimedOut` once `timeout` passes, each message carrying the
+stderr seen so far. The timeout is real time — under `it.effect`'s
+`TestClock` it never fires — so the test runs under `it.live`:
+
+~~~ts
+it.live("a crash once connected is logged and the server keeps answering", () =>
+  Effect.gen(function* () {
+    const server = yield* McpProcess.spawn(command)
+    yield* server.handshake()
+    const stderr = yield* server.stderrUntil((text) => text.includes("[injected]"), { timeout: "5 seconds" })
+    assert.include(stderr, "uncaughtException")
+    yield* server.closeStdin
+    assert.strictEqual(yield* server.exitCode, 0)
+  }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
+)
+~~~
+
 ## Packed install proof
 
 `McpProbe.initialize(command)` is the smallest proof that an installed MCP
 bin boots: it sends one `initialize` (or `server/discover` on a stateless
 revision) as id `1`, keeps stdin open until that response arrives, closes
 it, and collects stdout, stderr and the exit code. Holding stdin open until
-the response arrives matters: every hand-rolled smoke test that closed stdin
-right after writing made an Effect server drop the in-flight response and
-exit `0`, reading a slow or broken boot as a pass with no response at all.
+the response arrives matters for any server that stops at stdin EOF without
+answering what is in flight: a hand-rolled smoke test that closes stdin right
+after writing gets no response and exit `0`, reading a slow or broken boot as
+a pass with no response at all.
 
 The caller asserts `response.error === undefined`, `stderr === ""` and
 `exitCode === 0`. Checking `stderr` and the exit code alone is not enough —

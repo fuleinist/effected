@@ -59,13 +59,22 @@ internally would win over the harness's and talk to the real terminal.
 
 `McpStdio.layer(options)` is `McpServer.layerStdio` (`layerStdio`) with
 `LogToStderr` **merged** into its own output via `Layer.provideMerge`, then
-`Layer.orDie`. Two consequences:
+`Layer.orDie`. Three consequences:
 
 - Every layer composed **with** `McpStdio.layer` inherits the stderr routing.
   A sibling merged in beside it with `Layer.mergeAll` instead of
   `Layer.provideMerge` is not provided *by* it, so that sibling's own build
   still logs through the default logger, which lands on stdout when nothing
   else has set `LogToStderr`.
+- `LogToStderr` only reaches a logger that reads it: Effect's default logger
+  and `Logger.consolePretty`. `Logger.consoleJson`, `Logger.consoleLogFmt`
+  and `Logger.consoleStructured` are built with `Logger.withConsoleLog`,
+  which writes through `console.log` whatever `LogToStderr` says (`effect`'s
+  `src/Logger.ts`: `withConsoleLog` at 265-271, `consoleLogFmt` at 917,
+  `consoleStructured` at 942, `consoleJson` at 965; the default logger reads
+  the reference at `src/internal/effect.ts:6898`). Never install them in an MCP server: every log
+  line lands on stdout, the wire. For JSON logs on stderr, install
+  `Logger.layer([Logger.withConsoleError(Logger.formatJson)])`.
 - A malformed `protocols` list — more than one stateless adapter — is the
   implementer's own defect: `Layer.orDie` turns the `IllegalArgumentError`
   core would otherwise raise into a die, since there is no way to recover
@@ -258,13 +267,13 @@ Evidence: the complete `main.ts` snippet above, run with stdin `/dev/null`,
 exits `0` with empty stdout — closing stdin immediately reproduces the EOF a
 real client's disconnect produces.
 
-Closing stdin while a request is still in flight drops that response
-silently, in either direction: `McpProcess.closeStdin` and `McpHarness.close`
-are both `Queue.end`, never `Queue.shutdown`, precisely so every frame
-already sent is delivered first — but that only protects frames already
-*written*, not a response still in flight when stdin ends. Read the
-response before closing stdin, both in a hand-rolled test client and in
-production usage of a spawned server.
+Closing stdin while a request is still in flight does not drop it: the
+server answers every request it has already read, then stops, and the
+process exits `0`. `McpProcess.closeStdin` and `McpHarness.close` are both
+`Queue.end`, never `Queue.shutdown`, so every frame already sent reaches the
+server before the EOF does. The flip side: a request that never completes
+keeps the server alive after EOF. In a test, `McpHarness.stop` interrupts the
+server instead, failing every pending wait with `ServerStopped`.
 
 ## Protocol ordering
 
@@ -430,11 +439,51 @@ drive the same listener logic the real `process` runs; a double whose
   exits 1; only `onRejection: "log"` goes on to load and serve. The report
   uses the guard's own formatter, since no `format` is loaded yet.
 - `at: "connected"` raises it on a timer just after the server is serving,
-  where `"exitBeforeConnect"` logs and keeps serving.
+  where `"exitBeforeConnect"` logs and keeps serving. **The report is
+  asynchronous**: it lands on a later tick, possibly after the first
+  responses the test reads, so a test that reads `stderrSoFar` once right
+  after its `tools/list` response can see an empty buffer. Wait for it:
+
+~~~ts
+const stderr = yield* server.stderrUntil((text) => text.includes("[injected]"), { timeout: "5 seconds" })
+~~~
+
+  `McpProcess.stderrUntil` re-checks on every stderr chunk, fails
+  `StreamEnded` if the child exits first and `TimedOut` at the real-time
+  timeout, so run the test under `it.live`.
 
 Test both phases under the same `"exitBeforeConnect"` policy: exit 1 at
 `"load"` and a handshake that still succeeds at `"connected"` is the pair
 that proves the policy switches on the connect signal.
+
+### Another transport: `ProcessGuard.run`
+
+`McpGuard.run` is `ProcessGuard.run` from `@effected/engine/guard` with an
+MCP launch in its `load`. A server on another transport, such as an LSP
+over `vscode-languageserver`, takes the engine guard directly: same
+listeners, policy, `startup failed` exit, `injectCrash` and formatter, and
+the same import-free entrypoint, but it launches nothing. `load` receives a
+control with `markConnected()` (the only thing that makes
+`"exitBeforeConnect"` stop exiting) and `useFormat(fn)`:
+
+~~~ts
+import { ProcessGuard } from "@effected/engine/guard"
+
+await ProcessGuard.run({
+  label: "my-lsp",
+  host: process,
+  policy: { onUncaught: "exitBeforeConnect", onRejection: "exitBeforeConnect" },
+  load: async (guard) => {
+    const { startServer } = await import("./server.js")
+    await startServer()
+    guard.markConnected()
+  },
+})
+~~~
+
+The report lines are fixed (`<label>: uncaughtException (<origin>): …`,
+`<label>: unhandledRejection: …`, `<label>: startup failed: …`); only
+`label` is configurable.
 
 ## Project directory
 
