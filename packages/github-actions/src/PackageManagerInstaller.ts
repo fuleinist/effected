@@ -214,8 +214,10 @@ export class AmbientPackageManager extends Schema.Class<AmbientPackageManager>("
  * `binDir` is the directory a consumer hands to `ActionOutputs.addPath` to
  * make the manager invokable by name in subsequent workflow steps. For the
  * npm-registry managers it is the entry's `.bin` directory of executable
- * shims this installer writes (`#!/bin/sh` exec wrappers, or `.cmd` wrappers
- * on Windows); for bun it is the entry directory itself, because the cached
+ * shims this installer writes (`#!/bin/sh` exec wrappers; on Windows a
+ * `.cmd` wrapper plus an extensionless Git Bash sibling per bin, because
+ * Git Bash does not apply `PATHEXT` and never resolves the `.cmd` by the
+ * bare name); for bun it is the entry directory itself, because the cached
  * `bun` binary is directly executable and a shim would add nothing but a
  * fork. `bins` still maps each published bin name to the underlying entry —
  * a Node script to run with `node` for npm, yarn and pnpm 11 and earlier; an
@@ -327,6 +329,17 @@ const posixShim = (target: string): string =>
 const cmdShim = (target: string): string =>
 	isNodeScript(target) ? `@echo off\r\nnode "${target}" %*\r\n` : `@echo off\r\n"${target}" %*\r\n`;
 
+/**
+ * The Git Bash shim body written beside every Windows `.cmd` shim: the POSIX
+ * wrapper's own shape — same shebang, same `exec`, same `"$@"`, same
+ * node-vs-direct rule — with the target rendered in forward slashes, because
+ * `/bin/sh` treats `\` as an escape while Git Bash resolves `C:/…` paths
+ * verbatim. Git Bash does not apply `PATHEXT`, so a bare name never finds the
+ * `.cmd` twin on its own; npm's global installs write the same extensionless
+ * sibling for the same reason.
+ */
+const gitBashShim = (target: string): string => posixShim(target.replaceAll("\\", "/"));
+
 /** The bin names pnpm's wrapper publishes, every one of which becomes the native binary on Windows. */
 const PNPM_NATIVE_BIN_NAMES: ReadonlyArray<string> = ["pnpm", "pn", "pnpx", "pnx"];
 
@@ -406,8 +419,22 @@ const make = Effect.gen(function* () {
 	// pnpm's glibc and musl native binaries on linux and nothing else.
 	const musl = detectMusl();
 	const bunBinaryName = windows ? "bun.exe" : "bun";
-	const shimFileName = (name: string): string => (windows ? `${name}.cmd` : name);
-	const shimBody = windows ? cmdShim : posixShim;
+	/**
+	 * The shim files one bin gets, as file-name/body pairs: the extensionless
+	 * `#!/bin/sh` exec wrapper on POSIX; on Windows the `.cmd` wrapper for
+	 * `cmd.exe` and PowerShell PLUS the extensionless Git Bash sibling — Git
+	 * Bash does not apply `PATHEXT`, so a bare name never resolves to the
+	 * `.cmd`. Both flavours derive from the same target, so every distinction
+	 * the `.cmd` applies (pnpm 12's native binary vs its aliases, node-vs-
+	 * direct dispatch) the sibling applies identically.
+	 */
+	const shimFiles = (name: string, target: string): ReadonlyArray<readonly [file: string, body: string]> =>
+		windows
+			? [
+					[`${name}.cmd`, cmdShim(target)],
+					[name, gitBashShim(target)],
+				]
+			: [[name, posixShim(target)]];
 
 	const errorFor =
 		(pin: PackageManagerPin) =>
@@ -603,8 +630,9 @@ const make = Effect.gen(function* () {
 		Object.fromEntries(Object.entries(bins).map(([name, relative]) => [name, path.join(directory, relative)]));
 
 	/**
-	 * Write one executable shim per bin into `<into>/.bin`, each invoking
-	 * `node <finalDirectory>/<relative>`.
+	 * Write the shim files of every bin into `<into>/.bin`, each naming
+	 * `<finalDirectory>/<relative>` — the POSIX exec wrapper, or on Windows
+	 * BOTH the `.cmd` wrapper and its extensionless Git Bash sibling.
 	 *
 	 * @remarks
 	 * `into` and `finalDirectory` are DIFFERENT on the install path on purpose:
@@ -612,8 +640,9 @@ const make = Effect.gen(function* () {
 	 * ToolInstaller renames into place (the cache only ever contains complete
 	 * entries), while their contents must name the *final* cache path the entry
 	 * is about to land at. On the cache-hit regeneration path the two coincide.
-	 * When `skipExisting` is set, a shim already present is left untouched — the
-	 * regeneration path must not rewrite a shared cache entry another writer owns.
+	 * When `skipExisting` is set, a shim file already present is left untouched,
+	 * file by file — the regeneration path must not rewrite what another writer
+	 * owns, but it does add a sibling a previous version never wrote.
 	 */
 	const writeShims = (
 		pin: PackageManagerPin,
@@ -628,17 +657,17 @@ const make = Effect.gen(function* () {
 				errorFor(pin)({ reason: "cacheFailed", subject, cause });
 			yield* fs.makeDirectory(shimDir, { recursive: true }).pipe(Effect.mapError(cacheError(shimDir)));
 			for (const [name, relative] of Object.entries(bins)) {
-				const shim = path.join(shimDir, shimFileName(name));
-				if (options.skipExisting) {
-					if ((yield* typeAt(fs, shim)) === "File") {
-						continue;
+				for (const [file, body] of shimFiles(name, path.join(finalDirectory, relative))) {
+					const shim = path.join(shimDir, file);
+					if (options.skipExisting) {
+						if ((yield* typeAt(fs, shim)) === "File") {
+							continue;
+						}
 					}
-				}
-				yield* fs
-					.writeFileString(shim, shimBody(path.join(finalDirectory, relative)))
-					.pipe(Effect.mapError(cacheError(shim)));
-				if (!windows) {
-					yield* fs.chmod(shim, 0o755).pipe(Effect.mapError(cacheError(shim)));
+					yield* fs.writeFileString(shim, body).pipe(Effect.mapError(cacheError(shim)));
+					if (!windows) {
+						yield* fs.chmod(shim, 0o755).pipe(Effect.mapError(cacheError(shim)));
+					}
 				}
 			}
 		});

@@ -1,6 +1,16 @@
 import { execFileSync } from "node:child_process";
 import { createHash } from "node:crypto";
-import { chmodSync, existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, statSync, writeFileSync } from "node:fs";
+import {
+	chmodSync,
+	existsSync,
+	mkdirSync,
+	mkdtempSync,
+	readFileSync,
+	readdirSync,
+	rmSync,
+	statSync,
+	writeFileSync,
+} from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { NodeServices } from "@effect/platform-node";
@@ -337,6 +347,34 @@ describe("PackageManagerInstaller", () => {
 			),
 		);
 
+		it.live("on Windows a cache hit regenerates the missing Git Bash sibling and leaves the .cmd untouched", () =>
+			withRoot(
+				(root) =>
+					Effect.gen(function* () {
+						// An entry a previous writer cached on Windows: the `.cmd` exists,
+						// the extensionless Git Bash sibling does not. Regeneration adds
+						// the missing file only — the `.cmd` the previous writer owns
+						// survives verbatim.
+						const cached = ToolInstaller.cachePath({ root, tool: "pnpm", version: "7.8.1", arch: process.arch });
+						mkdirSync(join(cached, "bin"), { recursive: true });
+						mkdirSync(join(cached, ".bin"), { recursive: true });
+						writeFileSync(join(cached, "package.json"), JSON.stringify({ bin: { pnpm: "bin/pnpm.cjs" } }));
+						writeFileSync(join(cached, "bin", "pnpm.cjs"), "console.log('pnpm')");
+						const sentinel = "@echo off\r\nrem sentinel: a previous writer's .cmd\r\n";
+						writeFileSync(join(cached, ".bin", "pnpm.cmd"), sentinel);
+
+						const installed = cachedOf(yield* install("pnpm@7.8.1"));
+						assert.strictEqual(installed.directory, cached);
+						assert.strictEqual(readFileSync(join(cached, ".bin", "pnpm.cmd"), "utf8"), sentinel);
+						assert.strictEqual(
+							readFileSync(join(cached, ".bin", "pnpm"), "utf8"),
+							`#!/bin/sh\nexec node "${join(cached, "bin", "pnpm.cjs").replaceAll("\\", "/")}" "$@"\n`,
+						);
+					}),
+				{ env: { RUNNER_OS: "Windows", RUNNER_ARCH: "X64" } },
+			),
+		);
+
 		it.live("a shim that cannot be regenerated is a typed cacheFailed", () =>
 			withRoot((root) =>
 				Effect.gen(function* () {
@@ -607,6 +645,8 @@ describe("PackageManagerInstaller", () => {
 					`#!/bin/sh\nexec node "${join(installed.directory, "bin", "pnpx.cjs")}" "$@"\n`,
 				);
 				assert.notStrictEqual(statSync(join(installed.binDir, "pnpm")).mode & 0o111, 0, "shims must be executable");
+				// POSIX gets exactly one file per bin — no Windows-style siblings.
+				assert.deepStrictEqual(readdirSync(installed.binDir).sort(), ["pnpm", "pnpx"]);
 				rmSync(root, { recursive: true, force: true });
 			}),
 		);
@@ -657,6 +697,44 @@ describe("PackageManagerInstaller", () => {
 				assert.strictEqual(error.reason, "cacheFailed");
 				const destination = ToolInstaller.cachePath({ root, tool: "pnpm", version: "5.0.2", arch: process.arch });
 				assert.isFalse(existsSync(destination), "a failed shim write must not leave a cached entry behind");
+				rmSync(root, { recursive: true, force: true });
+			}),
+		);
+
+		it.live("on Windows every bin gets the .cmd wrapper AND an extensionless Git Bash sibling", () =>
+			Effect.gen(function* () {
+				// RUNNER_OS drives the Windows branch from any host; the filesystem
+				// is real. Git Bash does not apply PATHEXT, so the `.cmd` alone is
+				// invisible to a `shell: bash` step — the sibling is what it runs.
+				// The scratch prefix carries a space so the sibling's quoting is
+				// pinned by the assertion, not assumed.
+				const root = mkdtempSync(join(tmpdir(), "effected-pminstall 947 "));
+				const archive = makeManagerTarball(root, {
+					name: "pnpm",
+					version: "5.0.3",
+					bin: { pnpm: "bin/pnpm.cjs" },
+					binFiles: ["bin/pnpm.cjs"],
+				});
+				const script = scriptedFetch({ "https://registry.npmjs.org/pnpm/-/pnpm-5.0.3.tgz": tgzResponse(archive) });
+				const installed = cachedOf(
+					yield* install("pnpm@5.0.3").pipe(
+						Effect.provide(live(root, script.fetch, { RUNNER_OS: "Windows", RUNNER_ARCH: "X64" })),
+					),
+				);
+				const target = join(installed.directory, "bin", "pnpm.cjs");
+				assert.isTrue(target.includes(" "), "the scratch root must carry a space for this pin");
+				assert.deepStrictEqual(readdirSync(installed.binDir).sort(), ["pnpm", "pnpm.cmd"]);
+				assert.strictEqual(
+					readFileSync(join(installed.binDir, "pnpm.cmd"), "utf8"),
+					`@echo off\r\nnode "${target}" %*\r\n`,
+				);
+				// The sibling is the POSIX body with the target rendered in forward
+				// slashes, quoted so the space survives, and the same node-vs-direct
+				// rule the `.cmd` applies (a `.cjs` target runs under node).
+				assert.strictEqual(
+					readFileSync(join(installed.binDir, "pnpm"), "utf8"),
+					`#!/bin/sh\nexec node "${target.replaceAll("\\", "/")}" "$@"\n`,
+				);
 				rmSync(root, { recursive: true, force: true });
 			}),
 		);
@@ -1589,42 +1667,51 @@ describe("PackageManagerInstaller", () => {
 			}),
 		);
 
-		it.live("on Windows the binary lands as <name>.exe for every wrapper bin, and the .cmd shims target the .exe", () =>
-			Effect.gen(function* () {
-				// The Windows branch reached from any host: RUNNER_OS decides the file
-				// names, the shim flavour and the chmod skip; the filesystem is real.
-				const root = scratch();
-				const version = "12.0.8";
-				const wrapper = makePnpm12Wrapper(root, version);
-				const exeStaging = join(root, "exe-staging", "package");
-				mkdirSync(exeStaging, { recursive: true });
-				writeFileSync(join(exeStaging, "package.json"), JSON.stringify({ name: "@pnpm/exe.win32-x64", version }));
-				writeFileSync(join(exeStaging, "pnpm.exe"), "MZ-native-pnpm-win32");
-				const exe = join(root, "exe-win32-x64.tgz");
-				execFileSync("tar", ["czf", exe, "-C", join(root, "exe-staging"), "package"]);
-				const urls = pnpm12Urls(version, "win32-x64");
-				const script = scriptedFetch({
-					[urls.wrapper]: tgzResponse(wrapper),
-					[urls.packument]: jsonResponse({ dist: { integrity: sha512Sri(exe) } }),
-					[urls.exe]: tgzResponse(exe),
-				});
-				const installed = cachedOf(
-					yield* install(`pnpm@${version}`).pipe(
-						Effect.provide(live(root, script.fetch, { RUNNER_OS: "Windows", RUNNER_ARCH: "X64" })),
-					),
-				);
-				assert.deepStrictEqual(script.calls, [urls.wrapper, urls.packument, urls.exe]);
-				for (const name of ["pnpm", "pn", "pnpx", "pnx"]) {
-					assert.strictEqual(installed.bins[name], join(installed.directory, `${name}.exe`));
-					assert.strictEqual(readFileSync(join(installed.directory, `${name}.exe`), "utf8"), "MZ-native-pnpm-win32");
-					assert.strictEqual(readFileSync(join(installed.directory, name), "utf8"), "MZ-native-pnpm-win32");
-					assert.strictEqual(
-						readFileSync(join(installed.binDir, `${name}.cmd`), "utf8"),
-						`@echo off\r\n"${join(installed.directory, `${name}.exe`)}" %*\r\n`,
+		it.live(
+			"on Windows the binary lands as <name>.exe for every wrapper bin, and both shim flavours target the .exe",
+			() =>
+				Effect.gen(function* () {
+					// The Windows branch reached from any host: RUNNER_OS decides the file
+					// names, the shim flavour and the chmod skip; the filesystem is real.
+					const root = scratch();
+					const version = "12.0.8";
+					const wrapper = makePnpm12Wrapper(root, version);
+					const exeStaging = join(root, "exe-staging", "package");
+					mkdirSync(exeStaging, { recursive: true });
+					writeFileSync(join(exeStaging, "package.json"), JSON.stringify({ name: "@pnpm/exe.win32-x64", version }));
+					writeFileSync(join(exeStaging, "pnpm.exe"), "MZ-native-pnpm-win32");
+					const exe = join(root, "exe-win32-x64.tgz");
+					execFileSync("tar", ["czf", exe, "-C", join(root, "exe-staging"), "package"]);
+					const urls = pnpm12Urls(version, "win32-x64");
+					const script = scriptedFetch({
+						[urls.wrapper]: tgzResponse(wrapper),
+						[urls.packument]: jsonResponse({ dist: { integrity: sha512Sri(exe) } }),
+						[urls.exe]: tgzResponse(exe),
+					});
+					const installed = cachedOf(
+						yield* install(`pnpm@${version}`).pipe(
+							Effect.provide(live(root, script.fetch, { RUNNER_OS: "Windows", RUNNER_ARCH: "X64" })),
+						),
 					);
-				}
-				rmSync(root, { recursive: true, force: true });
-			}),
+					assert.deepStrictEqual(script.calls, [urls.wrapper, urls.packument, urls.exe]);
+					for (const name of ["pnpm", "pn", "pnpx", "pnx"]) {
+						assert.strictEqual(installed.bins[name], join(installed.directory, `${name}.exe`));
+						assert.strictEqual(readFileSync(join(installed.directory, `${name}.exe`), "utf8"), "MZ-native-pnpm-win32");
+						assert.strictEqual(readFileSync(join(installed.directory, name), "utf8"), "MZ-native-pnpm-win32");
+						assert.strictEqual(
+							readFileSync(join(installed.binDir, `${name}.cmd`), "utf8"),
+							`@echo off\r\n"${join(installed.directory, `${name}.exe`)}" %*\r\n`,
+						);
+						// The Git Bash sibling execs the same native binary directly,
+						// forward-slash rendered — the same distinction the `.cmd`
+						// applies, from the same target.
+						assert.strictEqual(
+							readFileSync(join(installed.binDir, name), "utf8"),
+							`#!/bin/sh\nexec "${join(installed.directory, `${name}.exe`).replaceAll("\\", "/")}" "$@"\n`,
+						);
+					}
+					rmSync(root, { recursive: true, force: true });
+				}),
 		);
 	});
 
