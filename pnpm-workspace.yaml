@@ -139,6 +139,7 @@ configDependencies:
   "@savvy-web/pnpm-plugin-silk": 0.47.0
 loglevel: info
 minimumReleaseAgeExclude:
+  - "@savvy-web/pnpm-plugin-silk"
   - "@effect/*"
   - "@effect/tsgo-*"
   - effect

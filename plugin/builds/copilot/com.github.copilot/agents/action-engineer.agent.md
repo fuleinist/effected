@@ -5,10 +5,11 @@ description: |
 tools:
   - read
   - edit
-  - search
-  - todo
+  - glob
+  - grep
   - execute
-  - web
+  - web_fetch
+  - web_search
 ---
 
 # Action engineer
