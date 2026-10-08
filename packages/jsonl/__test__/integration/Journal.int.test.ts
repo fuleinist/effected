@@ -16,6 +16,7 @@ import {
 	Stream,
 } from "effect";
 import { Envelope, Journal, JsonlEvent, Line } from "../../src/index.js";
+import { NodeJournalWatcher } from "../../src/node.js";
 
 /**
  * The only tests that provide a platform layer — the boundary discipline made
@@ -42,7 +43,7 @@ class TmpJournal extends Journal.Service<TmpJournal>()("test/TmpJournal", {
 /** The journal at `file`. Each BUILD of it is its own journal, as a separate process's would be. */
 const journalAt = (file: string) => TmpJournal.layer.pipe(Layer.provide(Layer.succeed(TmpPath, file)));
 
-const platform = Layer.mergeAll(NodeFileSystem.layer, NodePath.layer);
+const platform = Layer.mergeAll(NodeFileSystem.layer, NodePath.layer, NodeJournalWatcher.layer);
 
 /** Run `body` against a real journal file in a scoped temp directory. */
 const withJournal = <A, E>(
@@ -212,6 +213,54 @@ describe("Journal integration", () => {
 			assert.strictEqual(envelope.position.offset, 0, "offsets are post-BOM relative");
 			assert.deepStrictEqual(envelope.data, { round: 1, phase: "p" });
 		}).pipe(Effect.scoped, Effect.provide(platform)),
+	);
+
+	// `it.live` for the same reason as the flagship below: it waits on real
+	// filesystem events, which a TestClock-bound timeout could never bound.
+	it.live(
+		"a journal REPLACED by a rename-over is followed onto the new file",
+		() =>
+			Effect.gen(function* () {
+				const fs = yield* FileSystem.FileSystem;
+				const path = yield* Path.Path;
+				const dir = yield* fs.makeTempDirectoryScoped();
+				const file = path.join(dir, "replaced.jsonl");
+				const lineFor = (round: number) =>
+					`${JSON.stringify({ at: "2026-01-01T00:00:00.000Z", event: "started", data: { round, phase: "theirs" } })}\n`;
+				yield* fs.writeFileString(file, lineFor(1));
+
+				const scope = yield* Scope.make();
+				const context = yield* Layer.build(journalAt(file)).pipe(Effect.provideService(Scope.Scope, scope));
+				const reader = Context.get(context, TmpJournal);
+
+				const reaches = (round: number) =>
+					reader.latestChanges.pipe(
+						Stream.filter((latest) => Option.isSome(latest) && latest.value.data.round === round),
+						Stream.take(1),
+						Stream.runDrain,
+					);
+
+				// Atomic replacement, as an editor or a `mv tmp journal` does it: a new
+				// inode takes the path. A node watch stays on the old inode and reports
+				// nothing more, so unless the watch ENDS here and re-arms, the journal
+				// is blind to everything appended from now on.
+				const temporary = path.join(dir, "replaced.jsonl.tmp");
+				yield* fs.writeFileString(temporary, lineFor(5));
+				yield* fs.rename(temporary, file);
+				yield* reaches(5);
+
+				// A cooperating foreign writer appends to the replacement.
+				yield* Effect.scoped(
+					Effect.gen(function* () {
+						const handle = yield* fs.open(file, { flag: "a" });
+						yield* handle.writeAll(new TextEncoder().encode(lineFor(7)));
+					}),
+				);
+				yield* reaches(7);
+
+				yield* Scope.close(scope, Exit.void);
+			}).pipe(Effect.scoped, Effect.provide(platform), Effect.timeout(Duration.seconds(20))),
+		30_000,
 	);
 
 	// THE FLAGSHIP — acceptance criterion 3.
