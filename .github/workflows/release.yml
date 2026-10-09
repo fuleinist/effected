@@ -61,7 +61,8 @@ jobs:
       # the kit's next release versions, or when the committed plugin builds
       # lag their source: plugin:check runs pluginfinity build --check, then
       # diffs plugin/builds, which catches a validation build that already
-      # rewrote them. Exit-code only: the gates' own non-zero exit is the sole
+      # rewrote them, then fails on untracked or modified paths git diff
+      # cannot see. Exit-code only: the gates' own non-zero exit is the sole
       # failure signal; stderr is not inspected.
       on-build: pnpm catalog:check && pnpm plugin:check
       # Fork PRs wait on this environment's required reviewer before any run

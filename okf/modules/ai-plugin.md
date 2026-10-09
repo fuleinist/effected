@@ -106,7 +106,8 @@ From `plugin/`:
   either committed build differs from what the source produces. The
   pre-push hook runs it on every push, and CI runs it through the root
   `pnpm plugin:check` script in release.yml's `on-build` gate, which
-  also diffs `plugin/builds/` against the commit.
+  also diffs `plugin/builds/` against the commit and fails on untracked
+  or modified paths the diff cannot see.
 - `pnpm exec pluginfinity validate` runs each host's validation over its
   build.
 

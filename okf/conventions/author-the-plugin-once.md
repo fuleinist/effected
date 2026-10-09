@@ -47,10 +47,12 @@ Two gates enforce rule 2. The pre-push hook runs
 `pluginfinity build --check` on every push outside CI, and CI's
 validation phase runs `pnpm plugin:check` as release.yml's `on-build`
 gate, which a `--no-verify` push cannot skip.[^plugin-check] That script
-runs `pluginfinity build --check` and then
+runs `pluginfinity build --check`, then
 `git diff --exit-code -- plugin/builds`, because a validation build that
 rewrote the builds in the runner would make `--check` alone pass
-trivially. The construct-index gate also checks the builds after a
+trivially, and then fails when `git status --porcelain -- plugin/builds`
+reports untracked or modified paths the diff cannot see. The
+construct-index gate also checks the builds after a
 regeneration.[^check-construct-index-sh]
 
 [^pluginfinity-config]: `plugin/pluginfinity.config.ts` — the per-target
