@@ -1,10 +1,22 @@
 # Log
 
+## 2026-10-09
+
+* Added Image formats are read by in-house header readers
+* Added The image cache backend is a structural port, not a store dependency
+* Updated effected
+* Updated @effected/images
+* Added A package that names its own root types shows one warning or none, depending on whether the second pass crashes
+
 ## 2026-10-08
 
 * Updated @effected/cli
 * Updated React 19's development reconciler leaked user-timing entries on every render, until react-reconciler 0.34
 * Updated lockfiles
+* Updated @effected/jsonl
+* Updated @effected/jsonl journal service
+* Updated A flaky jsonl watcher is probably an arming-order window, not an unreliable platform watch
+* Added jsonl's watch is a service in R that succeeds only once registered, with a Node backend behind ./node
 
 ## 2026-10-07
 
