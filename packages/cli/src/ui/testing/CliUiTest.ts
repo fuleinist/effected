@@ -272,6 +272,25 @@ export interface CliUiTestLive<E, S> {
 	/** Resize the terminal, then wait as `publish` does. */
 	readonly resize: (columns: number, rows: number) => Effect.Effect<void>;
 	/**
+	 * Write `bytes` straight to the terminal's `stream`, past Ink and past the view: what a child process or another
+	 * library writing to the process's own stdout or stderr does while a frame is drawn.
+	 *
+	 * @remarks
+	 * The bytes go to the same in-memory stream the view draws on, so `written` and `transcript` hold them in the order
+	 * they were written. Nothing is redrawn and nothing is waited for: a raw line under a mounted frame does its harm at
+	 * the frame's next redraw (`advance`, `publish`), which erases as many lines as the frame had, counted from the
+	 * cursor the raw line moved, and so leaves the frame's top row stranded in the scrollback above it. That is the
+	 * failure to reproduce before proving a fix routes the line through `handle.printAbove` or `handle.logConsole`.
+	 *
+	 * Write whole lines (end `bytes` with `\n`) to model a line landing under the frame. A write made while a frame is
+	 * still due from Ink's throttle can be read as that frame by `frame` and `frames`, which are best-effort;
+	 * `transcript` and `written` are the authority.
+	 *
+	 * @param stream - the terminal stream to write to
+	 * @param bytes - the bytes to write, as given: escapes are not removed
+	 */
+	readonly write: (stream: "stdout" | "stderr", bytes: string) => Effect.Effect<void>;
+	/**
 	 * The last frame drawn, as token markup (see {@link CliUiTest.styled}); empty before the first.
 	 *
 	 * @remarks
@@ -302,7 +321,18 @@ export interface CliUiTestLive<E, S> {
 	 * (a scrollback wipe) anywhere in a run.
 	 */
 	readonly written: Effect.Effect<string>;
-	/** The view's own handle: its `state`, its `logConsole`, `done` and `close`. */
+	/**
+	 * Every byte written to the terminal's stdout alone, escapes included: {@link CliUiTestLive.written} without stderr.
+	 *
+	 * @remarks
+	 * With {@link CliUiTestLive.stderrWritten}, what to assert a line's stream on. Ink draws the frame, and erases and
+	 * repaints it around a line logged above it, on stdout whichever stream the line is for, so a line routed to stderr
+	 * shows in `stderrWritten` and never here.
+	 */
+	readonly stdoutWritten: Effect.Effect<string>;
+	/** Every byte written to the terminal's stderr alone, escapes included: {@link CliUiTestLive.written} without stdout. */
+	readonly stderrWritten: Effect.Effect<string>;
+	/** The view's own handle: its `state`, its `logConsole`, `printAbove`, `done` and `close`. */
 	readonly handle: LiveHandle<S>;
 }
 
@@ -1137,6 +1167,10 @@ export class CliUiTest {
 				end: Effect.andThen(Queue.end(queue), handle.done),
 				advance: (duration) => settled(TestClock.adjust(duration)),
 				resize: (nextColumns, nextRows) => settled(Effect.sync(() => terminal.fake.resize(nextColumns, nextRows))),
+				write: (stream, bytes) =>
+					Effect.sync(() => {
+						terminal.fake.streams[stream].write(bytes);
+					}),
 				frame: Effect.sync(() => trimLines(styled(last()))),
 				rawFrame: Effect.sync(last),
 				plainFrame: Effect.sync(() => trimLines(last().replace(ESCAPES, ""))),
@@ -1145,6 +1179,8 @@ export class CliUiTest {
 					screenAfter(terminal.fake.written(), terminal.fake.streams.stdout.rows).join("\n"),
 				),
 				written: Effect.sync(() => terminal.fake.written()),
+				stdoutWritten: Effect.sync(() => terminal.fake.stdout()),
+				stderrWritten: Effect.sync(() => terminal.fake.stderr()),
 				handle,
 			};
 		});
