@@ -15,8 +15,8 @@ sources:
     resource: ../../plugin/scripts/check-construct-index.sh
 generated:
   by: "claude-code/opus-5.5"
-  at: 2026-10-07T21:32:23Z
-  body_sha256: 33551c179777a7629327145dfdbecef5d967765a2210d6b513df63c17b2224e8
+  at: 2026-10-09T19:40:15Z
+  body_sha256: f7dcfe56e0aef21afe88adae8fd350fafe0df0626d9f3cdc111cde58f5a681eb
 ---
 
 # Author the plugin once in plugin/, never edit its builds
@@ -51,7 +51,7 @@ runs `pluginfinity build --check`, then
 `git diff --exit-code -- plugin/builds`, because a validation build that
 rewrote the builds in the runner would make `--check` alone pass
 trivially, and then fails when `git status --porcelain -- plugin/builds`
-reports untracked or modified paths the diff cannot see. The
+reports untracked or staged paths the diff cannot see. The
 construct-index gate also checks the builds after a
 regeneration.[^check-construct-index-sh]
 

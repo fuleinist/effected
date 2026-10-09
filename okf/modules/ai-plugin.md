@@ -19,8 +19,8 @@ sources:
     resource: "npm:pluginfinity"
 generated:
   by: "claude-code/opus-5.5"
-  at: 2026-10-07T21:32:23Z
-  body_sha256: bc15ebd9b2caf0af4c8dff815e4df20f04d7728ff9752e7a581a324daa5777a6
+  at: 2026-10-09T19:40:15Z
+  body_sha256: 79e92680e6ae1f36739534654946a4ea63421b5fcf779990107bb2448970edc6
 ---
 
 # ai-plugin
@@ -107,7 +107,7 @@ From `plugin/`:
   pre-push hook runs it on every push, and CI runs it through the root
   `pnpm plugin:check` script in release.yml's `on-build` gate, which
   also diffs `plugin/builds/` against the commit and fails on untracked
-  or modified paths the diff cannot see.
+  or staged paths the diff cannot see.
 - `pnpm exec pluginfinity validate` runs each host's validation over its
   build.
 
