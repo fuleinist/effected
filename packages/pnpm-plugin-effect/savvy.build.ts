@@ -181,7 +181,7 @@ await build({
 							source: "workspace",
 						},
 						"@effected/cli": {
-							range: "^0.16.0",
+							range: "^0.16.1",
 							peer: "^0.16.0",
 							strategy: "lock-minor",
 							source: "workspace",
@@ -205,7 +205,7 @@ await build({
 							source: "workspace",
 						},
 						"@effected/env": {
-							range: "^0.1.0",
+							range: "^0.1.1",
 							peer: "^0.1.0",
 							strategy: "lock-minor",
 							source: "workspace",
@@ -217,19 +217,19 @@ await build({
 							source: "workspace",
 						},
 						"@effected/github": {
-							range: "^0.16.0",
-							peer: "^0.16.0",
+							range: "^0.17.0",
+							peer: "^0.17.0",
 							strategy: "lock-minor",
 							source: "workspace",
 						},
 						"@effected/github-actions": {
-							range: "^0.20.2",
+							range: "^0.20.3",
 							peer: "^0.20.0",
 							strategy: "lock-minor",
 							source: "workspace",
 						},
 						"@effected/github-commands": {
-							range: "^0.2.0",
+							range: "^0.2.1",
 							peer: "^0.2.0",
 							strategy: "lock-minor",
 							source: "workspace",
@@ -253,7 +253,7 @@ await build({
 							source: "workspace",
 						},
 						"@effected/images": {
-							range: "^0.1.0",
+							range: "^0.1.1",
 							peer: "^0.1.0",
 							strategy: "lock-minor",
 							source: "workspace",
@@ -277,7 +277,7 @@ await build({
 							source: "workspace",
 						},
 						"@effected/lsp": {
-							range: "^0.1.0",
+							range: "^0.1.1",
 							peer: "^0.1.0",
 							strategy: "lock-minor",
 							source: "workspace",
