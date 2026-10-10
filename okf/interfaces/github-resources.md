@@ -8,8 +8,8 @@ resource: ../../packages/github/src
 tags: [bundle]
 generated:
   by: "okfit/claude-code"
-  at: 2026-09-13T05:33:04Z
-  body_sha256: e72ce1e0638fe863ba7d5cbd7fc4666935e9a3629dcf0c9f56817d7b42c7223a
+  at: 2026-10-10T01:56:46Z
+  body_sha256: d9cf42a873837a69ef7465fe8346128fb81ba780b0c8698438ae290d2735e5d9
 ---
 
 # @effected/github resource services
@@ -184,6 +184,11 @@ a fleet — a different kind of surface from the read-and-report services.
   rule this package cannot test — and a repository with no workflows
   answers with an empty array, so absence stays distinguishable from being
   unable to ask.
+- **Cancelling a finished run is not a failure.** `WorkflowDispatch.cancelRun`
+  answers `"cancelled"` on GitHub's 202 (the run stops shortly after, not
+  necessarily before the call returns) and `"alreadyCompleted"` on the 409
+  GitHub sends for a run that already finished, mapped by status alone;
+  every other failure stays a `GitHubError`.
 
 ## The check-run bracket concludes on every exit
 
@@ -210,6 +215,35 @@ that have no return value at all. The handle stores the verdict in a ref and
 the finalizer writes it exactly once, on whichever path the callback leaves
 by — the last verdict wins, and the handle's error channel is `never`.
 
+Outside the bracket, the run's surface is additive over the original
+`create(name, headSha)`, which still starts an in-progress run:
+
+- `create`'s options queue a run instead (a queued run carries no
+  `started_at`) and set `external_id` and `details_url`; an empty external id
+  is not sent, because no lookup can match it.
+- `update(id, output?, options?)` takes the output as optional: omitted, no
+  `output` key is sent and the run keeps the output it has, so a queued run
+  moves to in progress with only `status` and `details_url`. Its options move
+  the status between queued and in progress and set `details_url`;
+  completing stays on `complete`, which records the conclusion. `update(id)`
+  with neither still sends one PATCH carrying only the coordinates: every
+  call is exactly one request, never a silent skip.
+- `complete(id, conclusion, output?, options?)` takes a `detailsUrl` option,
+  sent as `details_url` only when given, so a finished run can link to the
+  workflow run behind it without losing the `completed_at` stamp or the
+  output byte cap.
+- Every member that answers a run (`create`, `get`, `findByExternalId`)
+  **decodes** the response into `CheckRunRef` rather than constructing it, so
+  a response missing a field fails with a typed `decode` error naming the
+  operation instead of dying.
+- `findByExternalId(headSha, name, externalId)` lists every run of the
+  commit filtered by name — `filter: "all"`, since GitHub's default returns
+  only the newest run per name and would hide an older match — paginates,
+  matches `external_id` locally and answers the newest by id. An empty
+  external id is none without a request.
+- Times (`started_at`, `completed_at`) come from `Clock`, so `TestClock`
+  drives them.
+
 ## Byte budgeting is a pure method
 
 GitHub caps a check-run summary at a byte count, not a character count, and
@@ -220,7 +254,10 @@ testable with no client at all. Stripping one trailing replacement
 character after slicing the byte buffer is not enough — a split four-byte
 code point can produce more than one — so the trim runs until the tail is
 clean; a property test asserts the result is valid UTF-8 within budget for
-arbitrary input.
+arbitrary input. The arithmetic runs on `TextEncoder`/`TextDecoder`, never
+the Node `Buffer` global, so it runs on a Worker without `nodejs_compat`; a
+structural test fails on any `Buffer` named under `src/`, and file contents
+decode through core `Base64` for the same reason.
 
 ## The permission comparator is not a service
 

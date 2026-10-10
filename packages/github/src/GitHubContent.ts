@@ -1,7 +1,14 @@
-import { Context, Effect, Layer, Option } from "effect";
+import { Context, Effect, Layer, Option, Result } from "effect";
+import * as Base64 from "effect/encoding/Base64";
 import { GitHubClient } from "./GitHubClient.js";
 import { GitHubError } from "./GitHubError.js";
 import { Repo } from "./Repo.js";
+
+/**
+ * Non-fatal, matching `Buffer`'s lenient decode of a non-UTF-8 file; `ignoreBOM`
+ * keeps a leading BOM, since it is the file's content rather than framing.
+ */
+const utf8 = new TextDecoder("utf-8", { ignoreBOM: true });
 
 /**
  * Read a text file out of a repository at a ref.
@@ -17,6 +24,12 @@ export interface GitHubContentShape {
 	 * Fails `notFound` when the path does not exist, and `rejected` when it is a
 	 * directory, is not a regular file, or is too large for the contents API
 	 * (which answers an empty body above roughly a megabyte).
+	 *
+	 * Fails `decode` when the payload is not valid base64. Only **standard,
+	 * padded** base64 is accepted, which is what the contents API sends; the
+	 * line breaks it wraps the payload with are ignored. Unpadded or URL-safe
+	 * (`-`/`_`) input is rejected rather than guessed at. The bytes decode as
+	 * UTF-8, keeping a leading BOM as content.
 	 */
 	readonly getFile: (
 		path: string,
@@ -110,7 +123,15 @@ const make = (client: GitHubClient["Service"]): GitHubContentShape => {
 				),
 			);
 		}
-		return Buffer.from(content.content.replace(/\s/g, ""), "base64").toString("utf8");
+		// GitHub wraps the payload at 60 columns. Decoded through core Base64 and
+		// TextDecoder rather than Buffer, a Node global a Worker may not have.
+		const bytes = Base64.decode(content.content.replace(/\s/g, ""));
+		if (Result.isFailure(bytes)) {
+			return yield* Effect.fail(
+				GitHubError.decode("GitHubContent.getFile", `${path} did not come back as valid base64`, bytes.failure),
+			);
+		}
+		return utf8.decode(bytes.success);
 	});
 
 	return {

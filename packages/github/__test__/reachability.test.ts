@@ -1,5 +1,5 @@
 import { readFileSync, readdirSync } from "node:fs";
-import { dirname, resolve } from "node:path";
+import { dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import { assert, describe, it } from "@effect/vitest";
 
@@ -55,28 +55,33 @@ const runtimeSpecifiers = (source: string): ReadonlyArray<string> => {
 	return specifiers;
 };
 
-/** Every bare (non-relative) specifier reachable at runtime from `entry`. */
-const reachableBareImports = (entry: string): ReadonlySet<string> => {
+/** Every `src` file reachable at runtime from `entry`, `entry` included. */
+const walk = (entry: string): ReadonlySet<string> => {
 	const seen = new Set<string>();
-	const bare = new Set<string>();
 	const queue = [resolve(SRC, entry)];
 	while (queue.length > 0) {
 		const file = queue.pop();
 		if (file === undefined || seen.has(file)) continue;
 		seen.add(file);
-		const source = readFileSync(file, "utf8");
-		for (const specifier of runtimeSpecifiers(source)) {
-			if (specifier.startsWith(".")) {
-				queue.push(resolve(dirname(file), specifier.replace(/\.js$/, ".ts")));
-			} else {
-				bare.add(specifier);
-			}
+		for (const specifier of runtimeSpecifiers(readFileSync(file, "utf8"))) {
+			if (specifier.startsWith(".")) queue.push(resolve(dirname(file), specifier.replace(/\.js$/, ".ts")));
+		}
+	}
+	return seen;
+};
+
+/** Every bare (non-relative) specifier reachable at runtime from `entry`. */
+const reachableBareImports = (entry: string): ReadonlySet<string> => {
+	const bare = new Set<string>();
+	for (const file of walk(entry)) {
+		for (const specifier of runtimeSpecifiers(readFileSync(file, "utf8"))) {
+			if (!specifier.startsWith(".")) bare.add(specifier);
 		}
 	}
 	return bare;
 };
 
-const SIGNER = "universal-github-app-jwt";
+const SIGNER = "@effected/jwt";
 const SEALED_BOX = ["tweetnacl", "blakejs"] as const;
 
 describe("bundle reachability", () => {
@@ -148,6 +153,34 @@ describe("bundle reachability", () => {
 		assert.isTrue(reachable.has("@octokit/core"), "but it does reach the transport it needs");
 	});
 
+	it("the Actions OIDC verifier reaches @effected/jwt but not octokit", () => {
+		// A service that only verifies runner tokens must not link the REST
+		// client. The first assertion is the control: it proves the walker sees
+		// this module's edges, so the absence after it is not a broken walker.
+		const reachable = reachableBareImports("ActionsOidc.ts");
+		assert.isTrue(reachable.has(SIGNER), "ActionsOidc reaches @effected/jwt");
+		assert.isFalse(reachable.has("@octokit/core"), "ActionsOidc reaches @octokit/core");
+		assert.deepStrictEqual([...reachable].sort(), [SIGNER, "effect"]);
+	});
+
+	it("the installation token store reaches neither the JWT signer nor the App module", () => {
+		// A store implementation (KV, a Durable Object, D1) imports this module to
+		// implement the seam; it must not drag in the signer to do so. The App
+		// module reaching the store is the control: it proves the walker sees the
+		// edge between the two, so the absence below is not a broken walker.
+		assert.isTrue(
+			[...walk("GitHubApp.ts")].some((file) => file.endsWith("InstallationTokenStore.ts")),
+			"control: GitHubApp imports the store",
+		);
+		assert.isFalse(reachableBareImports("InstallationTokenStore.ts").has(SIGNER));
+		const reached = walk("InstallationTokenStore.ts");
+		assert.isFalse(
+			[...reached].some((file) => file.endsWith("GitHubApp.ts")),
+			"InstallationTokenStore reaches GitHubApp.ts",
+		);
+		assert.deepStrictEqual([...reachableBareImports("InstallationTokenStore.ts")].sort(), ["effect"]);
+	});
+
 	it("the octokit type packages are reachable only as types", () => {
 		// `@octokit/types` ships no JavaScript at all, and `plugin-paginate-rest`'s
 		// generated route map is likewise types. Leaning on them costs zero runtime
@@ -188,6 +221,26 @@ describe("bundle reachability", () => {
 			.filter((specifier) => specifier.startsWith("node:"))
 			.sort();
 		assert.deepStrictEqual(builtins, []);
+	});
+
+	it("names no Node Buffer anywhere in src, so it runs on a Worker without nodejs_compat", () => {
+		// `Buffer` is a Node global, not an import, so neither the bare-import
+		// walk nor the node: check above can see it. A Worker without the
+		// nodejs_compat flag throws a ReferenceError the first time such a line
+		// runs, which for CheckRun's byte cap was the first update or complete.
+		// The fixture is the positive control: it proves the pattern finds a real
+		// use and ignores one that only exists in a comment.
+		const usesBuffer = (source: string): boolean =>
+			/\bBuffer\b/.test(source.replace(/(^|\n)\s*\/\/.*/g, "$1").replace(/\/\*[\s\S]*?\*\//g, ""));
+		assert.isTrue(usesBuffer('const n = Buffer.byteLength(value, "utf8");'), "control: a real use is found");
+		assert.isFalse(usesBuffer("/** Unlike Buffer, this is portable. */\n// Buffer\nconst n = 1;"), "prose is not");
+		const files = readdirSync(SRC, { recursive: true, encoding: "utf8" })
+			.filter((name) => name.endsWith(".ts"))
+			.sort();
+		assert.isAbove(files.length, 20, "control: the walk sees the source tree, internal/ included");
+		assert.include(files, join("internal", "ids.ts"));
+		const offenders = files.filter((name) => usesBuffer(readFileSync(resolve(SRC, name), "utf8")));
+		assert.deepStrictEqual(offenders, [], "src module(s) that name the Node Buffer global");
 	});
 
 	it("every module in src/ is reachable from the entrypoint", () => {

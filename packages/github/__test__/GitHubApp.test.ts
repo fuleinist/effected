@@ -1,8 +1,9 @@
-import { generateKeyPairSync } from "node:crypto";
+import { generateKeyPairSync, verify } from "node:crypto";
 import { assert, describe, it } from "@effect/vitest";
+import { JwtError } from "@effected/jwt";
 import { DateTime, Duration, Effect, Option, Redacted, Schema } from "effect";
 import { TestClock } from "effect/testing";
-import { AppIdentity, BotIdentity, GitHubApp, InstallationToken } from "../src/GitHubApp.js";
+import { AppIdentity, BotIdentity, GitHubApp, Installation, InstallationToken } from "../src/GitHubApp.js";
 import { GitHubClient } from "../src/GitHubClient.js";
 import { RetryPolicy } from "../src/Resilience.js";
 import type { Reply } from "./fixtures.js";
@@ -165,6 +166,103 @@ describe("GitHubApp.token", () => {
 			}),
 		),
 	);
+
+	it.effect("signs with a PKCS#1 key, the format github.com hands out, and the JWT verifies", () =>
+		Effect.gen(function* () {
+			const pkcs1 = generateKeyPairSync("rsa", {
+				modulusLength: 2048,
+				privateKeyEncoding: { type: "pkcs1", format: "pem" },
+				publicKeyEncoding: { type: "spki", format: "pem" },
+			});
+			// The control: this really is the PKCS#1 armour, not PKCS#8 under another name.
+			assert.isTrue(pkcs1.privateKey.startsWith("-----BEGIN RSA PRIVATE KEY-----"));
+			const nowMillis = 1_800_000_000_000;
+			yield* TestClock.setTime(nowMillis);
+			yield* withApp([tokenReply()], (app, script) =>
+				Effect.gen(function* () {
+					yield* app.token({ appId: "Iv1.pkcs1", privateKey: Redacted.make(pkcs1.privateKey), installationId: 42 });
+					const authorization = script.calls[0]?.headers.authorization ?? "";
+					assert.isTrue(authorization.startsWith("bearer "), authorization);
+					const [header = "", payload = "", signature = ""] = authorization.slice("bearer ".length).split(".");
+					const signed = verify(
+						"RSA-SHA256",
+						Buffer.from(`${header}.${payload}`),
+						pkcs1.publicKey,
+						Buffer.from(signature, "base64url"),
+					);
+					assert.isTrue(signed, "the JWT signature verifies against the public key");
+					assert.strictEqual(JSON.parse(Buffer.from(header, "base64url").toString("utf8")).alg, "RS256");
+					const claims = JSON.parse(Buffer.from(payload, "base64url").toString("utf8")) as {
+						iss: string;
+						iat: number;
+						exp: number;
+					};
+					assert.strictEqual(claims.iss, "Iv1.pkcs1");
+					assert.strictEqual(claims.exp - claims.iat, 600);
+					// Time comes from Clock, so TestClock drives it: iat is backdated 60 s.
+					assert.strictEqual(claims.iat, nowMillis / 1000 - 60);
+				}),
+			);
+		}),
+	);
+
+	it.effect("signs with a key whose newlines arrive escaped, as from an environment variable", () =>
+		Effect.gen(function* () {
+			const pkcs1 = generateKeyPairSync("rsa", {
+				modulusLength: 2048,
+				privateKeyEncoding: { type: "pkcs1", format: "pem" },
+				publicKeyEncoding: { type: "spki", format: "pem" },
+			});
+			const escaped = pkcs1.privateKey.replace(/\n/g, "\\n");
+			// The control: one line, every newline spelled as backslash-n.
+			assert.notInclude(escaped, "\n");
+			yield* withApp([tokenReply()], (app, script) =>
+				Effect.gen(function* () {
+					yield* app.token({ appId: "Iv1.escaped", privateKey: Redacted.make(escaped), installationId: 42 });
+					const authorization = script.calls[0]?.headers.authorization ?? "";
+					const [header = "", payload = "", signature = ""] = authorization.slice("bearer ".length).split(".");
+					const signed = verify(
+						"RSA-SHA256",
+						Buffer.from(`${header}.${payload}`),
+						pkcs1.publicKey,
+						Buffer.from(signature, "base64url"),
+					);
+					assert.isTrue(signed, "the JWT signature verifies against the public key");
+				}),
+			);
+		}),
+	);
+
+	it.effect("refuses an RSA key under 2048 bits and a P-256 key as a jwt failure caused by a key error", () =>
+		Effect.gen(function* () {
+			const weak = generateKeyPairSync("rsa", {
+				modulusLength: 1024,
+				privateKeyEncoding: { type: "pkcs1", format: "pem" },
+				publicKeyEncoding: { type: "spki", format: "pem" },
+			}).privateKey;
+			const ec = generateKeyPairSync("ec", {
+				namedCurve: "P-256",
+				privateKeyEncoding: { type: "pkcs8", format: "pem" },
+				publicKeyEncoding: { type: "spki", format: "pem" },
+			}).privateKey;
+			for (const [name, pem] of [
+				["1024-bit PKCS#1", weak],
+				["P-256 PKCS#8", ec],
+			] as const) {
+				const error = yield* withApp([tokenReply()], (app) =>
+					Effect.flip(app.token({ appId: "x", privateKey: Redacted.make(pem), installationId: 1 })),
+				);
+				assert.strictEqual(error.kind, "jwt", name);
+				const cause = error.cause;
+				assert.instanceOf(cause, JwtError, name);
+				if (cause instanceof JwtError) {
+					assert.strictEqual(cause.reason, "key", name);
+					// The reason carries the detail alone, with no "JWT key:" prefix stuttered into it.
+					assert.strictEqual(error.reason, cause.detail, name);
+				}
+			}
+		}),
+	);
 });
 
 describe("GitHubApp.revoke and scopedToken", () => {
@@ -318,6 +416,50 @@ describe("GitHubApp.clientLayer", () => {
 		}),
 	);
 
+	it.effect("rotates once when concurrent requests find the token spent, revoking only the old one", () =>
+		Effect.gen(function* () {
+			const mints: Array<string> = [];
+			const revoked: Array<string> = [];
+			const used: Array<string> = [];
+			const json = (status: number, body: unknown) =>
+				new Response(JSON.stringify(body), { status, headers: { "content-type": "application/json" } });
+			const fetch: typeof globalThis.fetch = async (input, init) => {
+				const request = new Request(input as string, init);
+				const authorization = request.headers.get("authorization") ?? "";
+				if (request.url.includes("/access_tokens")) {
+					const token = `ghs_${mints.length + 1}`;
+					mints.push(token);
+					// A real delay, so every waiting fiber is parked while the mint is in flight.
+					await new Promise((resolve) => setTimeout(resolve, 5));
+					const expires_at = mints.length === 1 ? "1970-01-01T00:00:00Z" : "2099-01-01T00:00:00Z";
+					return json(201, { token, expires_at, permissions: {} });
+				}
+				if (request.method === "DELETE") {
+					revoked.push(authorization.replace(/^token /, ""));
+					return new Response(null, { status: 204 });
+				}
+				used.push(authorization.replace(/^token /, ""));
+				return json(200, { default_branch: "main" });
+			};
+			yield* Effect.provide(
+				Effect.gen(function* () {
+					const client = yield* GitHubClient;
+					// The eager token expired at the epoch, where the TestClock starts.
+					yield* TestClock.adjust(Duration.seconds(1));
+					yield* Effect.all(
+						Array.from({ length: 3 }, () => client.request("GET /repos/{owner}/{repo}", { owner: "o", repo: "r" })),
+						{ concurrency: "unbounded" },
+					);
+					assert.deepStrictEqual(mints, ["ghs_1", "ghs_2"], "the eager mint plus exactly one rotation");
+					assert.deepStrictEqual(revoked, ["ghs_1"], "only the spent token is revoked while the layer is open");
+					assert.deepStrictEqual(used, ["ghs_2", "ghs_2", "ghs_2"], "no request uses a revoked token");
+				}),
+				GitHubApp.clientLayer({ ...CREDENTIALS, installationId: 42 }, { fetch, retry: NO_RETRY }),
+			);
+			assert.deepStrictEqual(revoked, ["ghs_1", "ghs_2"], "release revokes the last token");
+		}),
+	);
+
 	it.effect("fails layer construction with a GitHubAppError when credentials are bad", () =>
 		Effect.gen(function* () {
 			const script = scriptedFetch([{ status: 401, body: { message: "Bad credentials" } }]);
@@ -467,5 +609,128 @@ describe("Option is not needed to read a missing installation account", () => {
 				assert.isTrue(Option.isNone(Option.fromUndefinedOr(all[0]?.account)));
 			}),
 		),
+	);
+});
+
+/** Two installations, the first with an unreadable date, timestamp and account id. */
+const LENIENT_PAGE = [
+	{
+		id: 4,
+		suspended_at: "garbage",
+		updated_at: 12,
+		account: { login: "acme", type: "Organization", id: "not-a-number" },
+	},
+	{ id: 5, suspended_at: null, account: { login: "other", type: "User", id: 7 } },
+];
+
+describe("Installation suspension, account type and id", () => {
+	it.effect("decodes suspended_at, updated_at and the account's type and id", () =>
+		withApp(
+			[
+				{
+					status: 200,
+					body: [
+						{
+							id: 1,
+							suspended_at: "2026-10-01T00:00:00Z",
+							updated_at: "2026-10-02T12:30:00Z",
+							account: { login: "acme", type: "Organization", id: 42 },
+						},
+						{ id: 2, suspended_at: null, updated_at: "2026-09-01T00:00:00Z", account: null },
+					],
+				},
+			],
+			(app) =>
+				Effect.gen(function* () {
+					const [suspended, active] = yield* app.installations(CREDENTIALS);
+					assert.isDefined(suspended);
+					assert.isDefined(active);
+					if (suspended === undefined || active === undefined) return;
+
+					assert.strictEqual(suspended.account, "acme", "account stays the login string");
+					assert.strictEqual(suspended.accountType, "Organization");
+					assert.strictEqual(suspended.accountId, 42);
+					assert.isTrue(suspended.suspendedAt !== undefined && Option.isSome(suspended.suspendedAt));
+					if (suspended.suspendedAt !== undefined && Option.isSome(suspended.suspendedAt)) {
+						assert.isTrue(DateTime.isDateTime(suspended.suspendedAt.value));
+						assert.strictEqual(DateTime.formatIso(suspended.suspendedAt.value), "2026-10-01T00:00:00.000Z");
+					}
+					assert.isDefined(suspended.updatedAt);
+					if (suspended.updatedAt !== undefined) {
+						assert.strictEqual(DateTime.formatIso(suspended.updatedAt), "2026-10-02T12:30:00.000Z");
+					}
+
+					// suspended_at: null is an active installation, not an absent field.
+					assert.isTrue(active.suspendedAt !== undefined && Option.isNone(active.suspendedAt));
+					assert.strictEqual(active.account, undefined);
+					assert.strictEqual(active.accountType, undefined);
+					assert.strictEqual(active.accountId, undefined);
+				}),
+		),
+	);
+
+	it.effect("leaves suspendedAt and updatedAt absent when the response carries neither key", () =>
+		withApp([{ status: 200, body: [{ id: 3, account: null }] }], (app) =>
+			Effect.gen(function* () {
+				const [only] = yield* app.installations(CREDENTIALS);
+				assert.isDefined(only);
+				assert.isFalse(only !== undefined && "suspendedAt" in only);
+				assert.isFalse(only !== undefined && "updatedAt" in only);
+			}),
+		),
+	);
+
+	it.effect("omits an unreadable field from its installation and still returns every installation", () =>
+		withApp([{ status: 200, body: LENIENT_PAGE }], (app) =>
+			Effect.gen(function* () {
+				const all = yield* app.installations(CREDENTIALS);
+				assert.deepStrictEqual(
+					all.map((entry) => entry.id),
+					[4, 5],
+				);
+				const [garbled, healthy] = all;
+				assert.isFalse(garbled !== undefined && "suspendedAt" in garbled, "the garbage date is omitted");
+				assert.isFalse(garbled !== undefined && "updatedAt" in garbled);
+				assert.isFalse(garbled !== undefined && "accountId" in garbled, "a non-integer account id is omitted");
+				// The fields that did read survive on the same entry.
+				assert.strictEqual(garbled?.account, "acme");
+				assert.strictEqual(garbled?.accountType, "Organization");
+				assert.isTrue(healthy?.suspendedAt !== undefined && Option.isNone(healthy.suspendedAt));
+			}),
+		),
+	);
+
+	it.effect("still mints for an owner when an installation carries an unreadable field", () =>
+		withApp([{ status: 200, body: LENIENT_PAGE }, tokenReply()], (app, script) =>
+			Effect.gen(function* () {
+				const token = yield* app.token({ ...CREDENTIALS, owner: "acme" });
+				assert.strictEqual(token.installationId, 4);
+				assert.include(script.calls[1]?.url ?? "", "/app/installations/4/access_tokens");
+			}),
+		),
+	);
+
+	it("still builds a test double from an id alone", () => {
+		const double = Installation.make({ id: 7 });
+		assert.strictEqual(double.id, 7);
+		assert.strictEqual(double.suspendedAt, undefined);
+	});
+
+	it.effect("round-trips through JSON with suspendedAt encoded as an ISO string or null", () =>
+		Effect.gen(function* () {
+			const decoded = yield* Schema.decodeUnknownEffect(Installation)({
+				id: 1,
+				suspendedAt: "2026-10-01T00:00:00.000Z",
+				updatedAt: "2026-10-02T00:00:00.000Z",
+			});
+			const encoded = yield* Schema.encodeUnknownEffect(Installation)(decoded);
+			assert.deepStrictEqual(encoded, {
+				id: 1,
+				suspendedAt: "2026-10-01T00:00:00.000Z",
+				updatedAt: "2026-10-02T00:00:00.000Z",
+			});
+			const active = yield* Schema.decodeUnknownEffect(Installation)({ id: 2, suspendedAt: null });
+			assert.deepStrictEqual(yield* Schema.encodeUnknownEffect(Installation)(active), { id: 2, suspendedAt: null });
+		}),
 	);
 });

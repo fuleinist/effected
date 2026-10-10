@@ -1,6 +1,6 @@
 ---
 name: github-app-tokens
-description: "Use when a GitHub credential needs to come into existence, live somewhere, and die — constructing a client from a plain token or a GitHub App, or wiring GitHubToken's provision/read/clientLayer/dispose lifecycle across an Action's pre/main/post phases. Also use when: GitHubApp, installation token, App JWT, token bridge, GitHubTokenError, botIdentity, TokenPermissionError, revoke on release, acquireUseRelease token, GITHUB_STATE persisted token, plain GITHUB_TOKEN input"
+description: "Use when a GitHub credential needs to come into existence, live somewhere, and die — constructing a client from a plain token or a GitHub App, or wiring GitHubToken's provision/read/clientLayer/dispose lifecycle across an Action's pre/main/post phases. Also use when: GitHubApp, installation token, App JWT, appClientLayer, cachedToken, cachedClientLayer, InstallationTokenStore, PKCS#1 private key, token bridge, GitHubTokenError, botIdentity, TokenPermissionError, revoke on release, acquireUseRelease token, GITHUB_STATE persisted token, plain GITHUB_TOKEN input"
 ---
 
 # GitHub App tokens: the credential lifecycle
@@ -19,7 +19,7 @@ guarantees it dies exactly once. For the request surface itself
 | --- | --- | --- |
 | `GitHubClient.layerFromToken` | `import { GitHubClient } from "@effected/github"` | You already hold a `Redacted<string>` token |
 | `GitHubClient.layerFromConfig` | `@effected/github` | The workflow's own runner-issued token is enough |
-| `GitHubApp` (`.token`, `.scopedToken`, `.revoke`, `.identity`, `.installations`, `.clientLayer`) | `@effected/github` | Minting/revoking an installation token directly, outside an Action's process boundary |
+| `GitHubApp` (`.token`, `.scopedToken`, `.revoke`, `.identity`, `.installations`, `.clientLayer`, `.appClientLayer`, `.cachedToken`, `.cachedClientLayer`) | `@effected/github` | Minting/revoking an installation token directly, outside an Action's process boundary; speaking as the app itself; reusing a token across request scopes through an `InstallationTokenStore` |
 | `TokenPermissions` | `@effected/github` | Comparing a token's granted scopes against what a program requires |
 | `BotIdentity` | `@effected/github` | Rendering a DCO trailer, or naming the bot identity behind a token |
 | `GitHubToken` (`.provision`, `.read`, `.botIdentity`, `.clientLayer`, `.dispose`) | `import { GitHubToken } from "@effected/github-actions"` | Bridging an App-minted token across an Action's `pre`/`main`/`post` process boundary |
@@ -88,7 +88,8 @@ guarantees it dies exactly once. For the request surface itself
   action. Load when: wiring App auth into an action's `pre`/`main`/`post`
   phases.
 - [references/client-construction.md](references/client-construction.md) —
-  the three `GitHubClient` constructors in detail, why the package skips
+  the five `GitHubClient` constructors (token, config, installation, app JWT,
+  cached token) in detail, why the package skips
   `@octokit/rest`/`@octokit/auth-app`, the `GitHubApp` service shape and its
   rotation/revocation mechanics, and the pure `TokenPermissions`/`BotIdentity`
   classes. Load when: constructing a client directly, or working with

@@ -39,6 +39,7 @@ export {
 	harvestIssueReferences,
 	parseBareLineReference,
 } from "@effected/github-references";
+export { ActionsOidc, ActionsOidcClaims, type ActionsOidcVerifyOptions } from "./ActionsOidc.js";
 export { ArtifactMetadata, type ArtifactMetadataShape, StorageRecordInput } from "./ArtifactMetadata.js";
 export { Attestation, AttestationListEntry, AttestationRecord, type AttestationShape } from "./Attestation.js";
 export {
@@ -49,7 +50,10 @@ export {
 	CheckRunOutput,
 	CheckRunRef,
 	type CheckRunShape,
+	type CompleteCheckRunOptions,
 	type ConcludeCheckRun,
+	type CreateCheckRunOptions,
+	type UpdateCheckRunOptions,
 } from "./CheckRun.js";
 export { CodeScanning, type CodeScanningSetup, type CodeScanningShape } from "./CodeScanning.js";
 export {
@@ -71,6 +75,8 @@ export {
 	type AppCredentials,
 	AppIdentity,
 	BotIdentity,
+	type CachedToken,
+	type CachedTokenRequest,
 	GitHubApp,
 	GitHubAppError,
 	type GitHubAppOptions,
@@ -83,7 +89,8 @@ export {
 	GitHubClient,
 	type GitHubClientOptions,
 	type GitHubClientShape,
-	type GitHubFixtures,
+	GitHubFixtures,
+	RawFailure,
 	type RecordedCall,
 } from "./GitHubClient.js";
 export {
@@ -121,6 +128,7 @@ export {
 	versionFromTag,
 } from "./GitTag.js";
 export { GitHubGraphQLError, GraphQLDocument, GraphQLErrorEntry } from "./GraphQL.js";
+export { InstallationTokenStore, type InstallationTokenStoreShape } from "./InstallationTokenStore.js";
 export {
 	MergeMethod,
 	PullRequest,

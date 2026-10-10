@@ -1,6 +1,6 @@
-import { Cause, Context, Effect, Exit, Layer, Ref, Schema } from "effect";
+import { Cause, Context, DateTime, Effect, Exit, Layer, Option, Ref, Schema } from "effect";
 import { GitHubClient } from "./GitHubClient.js";
-import type { GitHubError } from "./GitHubError.js";
+import { GitHubError } from "./GitHubError.js";
 import { numericId } from "./internal/ids.js";
 import { Repo } from "./Repo.js";
 
@@ -82,6 +82,16 @@ export class CheckRunOutput extends Schema.Class<CheckRunOutput>("CheckRunOutput
 	}
 }
 
+/** UTF-8 encoder for the byte arithmetic; portable, unlike Node's `Buffer`. */
+const utf8 = new TextEncoder();
+
+/**
+ * UTF-8 decoder for the cut. Non-fatal, so a code point split by the cut decodes
+ * to U+FFFD for the trim loop to drop rather than throwing; `ignoreBOM` keeps a
+ * leading BOM as content, as `Buffer` did.
+ */
+const utf8Lenient = new TextDecoder("utf-8", { fatal: false, ignoreBOM: true });
+
 /**
  * Cut `value` to GitHub's byte budget without leaving a broken code point.
  *
@@ -89,12 +99,16 @@ export class CheckRunOutput extends Schema.Class<CheckRunOutput>("CheckRunOutput
  * Slicing a UTF-8 buffer mid-character decodes to U+FFFD. Splitting a four-byte
  * code point can produce **more than one** replacement character, so the trim
  * loops rather than dropping a single one.
+ *
+ * `TextEncoder`/`TextDecoder` rather than `Buffer`, which is a Node global: a
+ * Worker without `nodejs_compat` would throw a `ReferenceError` here.
  */
 const capBytes = (value: string): string => {
-	if (Buffer.byteLength(value, "utf8") <= CheckRunOutput.LIMIT_BYTES) return value;
-	const budget = CheckRunOutput.LIMIT_BYTES - Buffer.byteLength(CheckRunOutput.NOTICE, "utf8");
-	let cut = Buffer.from(value, "utf8").subarray(0, budget).toString("utf8");
-	while (cut.endsWith("�")) cut = cut.slice(0, -1);
+	const bytes = utf8.encode(value);
+	if (bytes.length <= CheckRunOutput.LIMIT_BYTES) return value;
+	const budget = CheckRunOutput.LIMIT_BYTES - utf8.encode(CheckRunOutput.NOTICE).length;
+	let cut = utf8Lenient.decode(bytes.subarray(0, budget));
+	while (cut.endsWith("\uFFFD")) cut = cut.slice(0, -1);
 	return `${cut}${CheckRunOutput.NOTICE}`;
 };
 
@@ -109,7 +123,66 @@ export class CheckRunRef extends Schema.Class<CheckRunRef>("CheckRunRef")({
 	/** The web URL. */
 	url: Schema.String,
 	status: Schema.String,
+	/**
+	 * The integrator's own id for the run (wire `external_id`), when it has
+	 * one. GitHub reports a run created without one as `null` or `""`; both
+	 * leave this absent.
+	 */
+	externalId: Schema.optionalKey(Schema.String),
 }) {}
+
+/**
+ * Options for {@link CheckRunShape.create}.
+ *
+ * @public
+ */
+export interface CreateCheckRunOptions {
+	/**
+	 * The run's initial state. Defaults to `"in_progress"`, which also stamps
+	 * `started_at`; a `"queued"` run has not started, so it carries none.
+	 * Completing a run goes through {@link CheckRunShape.complete}.
+	 */
+	readonly status?: "queued" | "in_progress" | undefined;
+	/**
+	 * Your own id for the run (wire `external_id`), for
+	 * {@link CheckRunShape.findByExternalId}. An empty string is treated as no
+	 * id and not sent, since that lookup never matches `""`.
+	 */
+	readonly externalId?: string | undefined;
+	/** Where the integrator's full details live (wire `details_url`). */
+	readonly detailsUrl?: string | undefined;
+}
+
+/**
+ * Options for {@link CheckRunShape.update}.
+ *
+ * @public
+ */
+export interface UpdateCheckRunOptions {
+	/**
+	 * Move the run to `"queued"` or `"in_progress"`; `"in_progress"` also
+	 * stamps `started_at`, as {@link CheckRunShape.create} does. Completing it
+	 * goes through {@link CheckRunShape.complete}, which also records the
+	 * conclusion.
+	 */
+	readonly status?: "queued" | "in_progress" | undefined;
+	/** Where the integrator's full details live (wire `details_url`). */
+	readonly detailsUrl?: string | undefined;
+}
+
+/**
+ * Options for {@link CheckRunShape.complete}.
+ *
+ * @public
+ */
+export interface CompleteCheckRunOptions {
+	/**
+	 * Where the integrator's full details live (wire `details_url`) — for
+	 * instance the workflow run that produced the verdict. Omitted, the run
+	 * keeps whatever details URL it already had.
+	 */
+	readonly detailsUrl?: string | undefined;
+}
 
 /**
  * Conclude the surrounding {@link CheckRunShape.withCheckRun} explicitly.
@@ -145,16 +218,64 @@ export type ConcludeCheckRun = (
  * @public
  */
 export interface CheckRunShape {
-	/** Start an in-progress check run against a commit. */
-	readonly create: (name: string, headSha: string) => Effect.Effect<CheckRunRef, GitHubError, Repo>;
+	/** Start a check run against a commit: in progress, unless `options.status` queues it. */
+	readonly create: (
+		name: string,
+		headSha: string,
+		options?: CreateCheckRunOptions,
+	) => Effect.Effect<CheckRunRef, GitHubError, Repo>;
 	readonly get: (id: number) => Effect.Effect<CheckRunRef, GitHubError, Repo>;
-	/** Update an in-flight run's output. */
-	readonly update: (id: number, output: CheckRunOutput) => Effect.Effect<void, GitHubError, Repo>;
-	/** Finish a run. */
+	/**
+	 * Update an in-flight run: its output, its status, its details URL, or any
+	 * combination.
+	 *
+	 * @remarks
+	 * Omit `output` (pass `undefined`) to change only the status or details
+	 * URL: no `output` key is sent, so the run keeps the output it has. That is
+	 * how a queued run moves to `"in_progress"` without rewriting its output.
+	 *
+	 * `update(id)` with neither still sends **one** PATCH, carrying nothing but
+	 * the run's coordinates. GitHub accepts it and changes nothing; it is not
+	 * skipped, so every call is exactly one request and a caller's error
+	 * handling sees a missing run or a revoked token the same way either way.
+	 */
+	readonly update: (
+		id: number,
+		output?: CheckRunOutput,
+		options?: UpdateCheckRunOptions,
+	) => Effect.Effect<void, GitHubError, Repo>;
+	/**
+	 * The newest run on `headSha` named `name` whose external id is
+	 * `externalId`; none when there is no such run.
+	 *
+	 * @remarks
+	 * Lists every run of the commit filtered by name on GitHub's side
+	 * (`filter: "all"`, not GitHub's default of only the latest run per name),
+	 * paging through all of them, then matches `external_id` here; "newest" is
+	 * the highest id.
+	 * An empty `externalId` is none without a request: GitHub reports a run
+	 * created without an external id as `""`, so matching on it would find
+	 * every such run.
+	 */
+	readonly findByExternalId: (
+		headSha: string,
+		name: string,
+		externalId: string,
+	) => Effect.Effect<Option.Option<CheckRunRef>, GitHubError, Repo>;
+	/**
+	 * Finish a run, stamping `completed_at` from `Clock`.
+	 *
+	 * @remarks
+	 * Omit `output` (pass `undefined`) to conclude without touching the run's
+	 * rendered output; a given output is cut to GitHub's byte limits first.
+	 * `options.detailsUrl` points the finished run somewhere, such as the
+	 * workflow run that produced it.
+	 */
 	readonly complete: (
 		id: number,
 		conclusion: (typeof CheckConclusion.literals)[number],
 		output?: CheckRunOutput,
+		options?: CompleteCheckRunOptions,
 	) => Effect.Effect<void, GitHubError, Repo>;
 	/**
 	 * Run `use` inside a check run, concluding it however `use` exits.
@@ -232,6 +353,7 @@ export class CheckRun extends Context.Service<CheckRun, CheckRunShape>()("@effec
 		create: overrides.create ?? (() => unstubbed("create")),
 		get: overrides.get ?? (() => unstubbed("get")),
 		update: overrides.update ?? (() => unstubbed("update")),
+		findByExternalId: overrides.findByExternalId ?? (() => unstubbed("findByExternalId")),
 		complete: overrides.complete ?? (() => unstubbed("complete")),
 		withCheckRun: overrides.withCheckRun ?? (() => unstubbed("withCheckRun")),
 	});
@@ -330,28 +452,72 @@ const concludeFor = <A, E>(
 	return Exit.isSuccess(exit) ? write : Effect.ignore(write);
 };
 
-const refOf = (raw: { id: number | bigint; name: string; html_url?: string | null; status: string }): CheckRunRef =>
-	CheckRunRef.make({ id: numericId(raw.id), name: raw.name, url: raw.html_url ?? "", status: raw.status });
+const decodeRef = Schema.decodeUnknownEffect(CheckRunRef);
+
+/**
+ * Project a check-run response onto {@link CheckRunRef}, **decoding** it.
+ *
+ * @remarks
+ * Decoded rather than built with `make`, which throws: a response missing a
+ * field (a hand-written double, or GitHub changing shape) is input, and input
+ * failures are a typed `decode` `GitHubError` naming the operation rather than
+ * a defect.
+ */
+const refOf = (
+	operation: string,
+	raw: {
+		id: number | bigint;
+		name: string;
+		html_url?: string | null;
+		status: string;
+		external_id?: string | null;
+	},
+): Effect.Effect<CheckRunRef, GitHubError> =>
+	decodeRef({
+		id: numericId(raw.id),
+		name: raw.name,
+		url: raw.html_url ?? "",
+		status: raw.status,
+		// null, absent and "" all mean the run has no external id.
+		...(raw.external_id ? { externalId: raw.external_id } : {}),
+	}).pipe(
+		Effect.catchTag("SchemaError", (error) =>
+			Effect.fail(GitHubError.decode(operation, "GitHub returned an unexpected check run", error)),
+		),
+	);
+
+/** The current time as GitHub's ISO 8601 timestamp, from `Clock` so `TestClock` drives it. */
+const isoNow = Effect.map(DateTime.now, DateTime.formatIso);
 
 const make = (client: GitHubClient["Service"]): CheckRunShape => {
-	const create = Effect.fn("CheckRun.create")(function* (name: string, headSha: string) {
+	const create = Effect.fn("CheckRun.create")(function* (
+		name: string,
+		headSha: string,
+		options?: CreateCheckRunOptions,
+	) {
 		const { owner, repo } = yield* Repo;
-		yield* Effect.annotateCurrentSpan({ owner, repo, name, headSha });
+		const status = options?.status ?? "in_progress";
+		yield* Effect.annotateCurrentSpan({ owner, repo, name, headSha, status });
 		const created = yield* client.request("POST /repos/{owner}/{repo}/check-runs", {
 			owner,
 			repo,
 			name,
 			head_sha: headSha,
-			status: "in_progress",
-			started_at: new Date().toISOString(),
+			status,
+			...(status === "in_progress" ? { started_at: yield* isoNow } : {}),
+			// An empty id is no id: findByExternalId never matches "", so sending one
+			// would create a run that lookup can never find.
+			...(options?.externalId ? { external_id: options.externalId } : {}),
+			...(options?.detailsUrl !== undefined ? { details_url: options.detailsUrl } : {}),
 		});
-		return refOf(created);
+		return yield* refOf("CheckRun.create", created);
 	});
 
 	const complete = Effect.fn("CheckRun.complete")(function* (
 		id: number,
 		conclusion: (typeof CheckConclusion.literals)[number],
 		output?: CheckRunOutput,
+		options?: CompleteCheckRunOptions,
 	) {
 		const { owner, repo } = yield* Repo;
 		yield* Effect.annotateCurrentSpan({ owner, repo, id, conclusion });
@@ -361,8 +527,9 @@ const make = (client: GitHubClient["Service"]): CheckRunShape => {
 			check_run_id: id,
 			status: "completed",
 			conclusion,
-			completed_at: new Date().toISOString(),
+			completed_at: yield* isoNow,
 			...(output !== undefined ? { output: wireOutput(output) } : {}),
+			...(options?.detailsUrl !== undefined ? { details_url: options.detailsUrl } : {}),
 		});
 	});
 
@@ -378,18 +545,53 @@ const make = (client: GitHubClient["Service"]): CheckRunShape => {
 				repo,
 				check_run_id: id,
 			});
-			return refOf(raw);
+			return yield* refOf("CheckRun.get", raw);
 		}),
 
-		update: Effect.fn("CheckRun.update")(function* (id: number, output: CheckRunOutput) {
+		update: Effect.fn("CheckRun.update")(function* (
+			id: number,
+			output?: CheckRunOutput,
+			options?: UpdateCheckRunOptions,
+		) {
 			const { owner, repo } = yield* Repo;
 			yield* Effect.annotateCurrentSpan({ owner, repo, id });
 			yield* client.request("PATCH /repos/{owner}/{repo}/check-runs/{check_run_id}", {
 				owner,
 				repo,
 				check_run_id: id,
-				output: wireOutput(output),
+				// Omitted, not sent: the run keeps the output it already has.
+				...(output !== undefined ? { output: wireOutput(output) } : {}),
+				...(options?.status !== undefined ? { status: options.status } : {}),
+				...(options?.status === "in_progress" ? { started_at: yield* isoNow } : {}),
+				...(options?.detailsUrl !== undefined ? { details_url: options.detailsUrl } : {}),
 			});
+		}),
+
+		findByExternalId: Effect.fn("CheckRun.findByExternalId")(function* (
+			headSha: string,
+			name: string,
+			externalId: string,
+		) {
+			if (externalId === "") return Option.none<CheckRunRef>();
+			const { owner, repo } = yield* Repo;
+			yield* Effect.annotateCurrentSpan({ owner, repo, headSha, name, externalId });
+			const runs = yield* client.paginate("GET /repos/{owner}/{repo}/commits/{ref}/check-runs", {
+				owner,
+				repo,
+				ref: headSha,
+				check_name: name,
+				// The default, `latest`, returns only the newest run per name, which
+				// hides an older run that carries the wanted external id.
+				filter: "all",
+			});
+			let newest: (typeof runs)[number] | undefined;
+			for (const run of runs) {
+				if (run.external_id !== externalId) continue;
+				if (newest === undefined || numericId(run.id) > numericId(newest.id)) newest = run;
+			}
+			return newest === undefined
+				? Option.none<CheckRunRef>()
+				: Option.some(yield* refOf("CheckRun.findByExternalId", newest));
 		}),
 
 		withCheckRun: <A, E, R>(

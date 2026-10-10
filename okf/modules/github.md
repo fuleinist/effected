@@ -8,8 +8,8 @@ resource: ../../packages/github
 tags: [bundle, architecture]
 generated:
   by: "okfit/claude-code"
-  at: 2026-09-22T01:21:07Z
-  body_sha256: acf1afc161d550b734b64ea4682399759e0b4fb9282f314d05725a19294c03b6
+  at: 2026-10-10T00:53:24Z
+  body_sha256: d30fc9c6077fc670b4237a3b77ea22376d573ee173ea02696c459a9878e7668d
 ---
 
 # @effected/github
@@ -72,7 +72,7 @@ package named for it.
 | `@octokit/core` | the `Octokit` class: a route-keyed, fully typed `request`, plus `graphql` |
 | `@octokit/plugin-paginate-rest` | the composable paginator over a bare core instance, plus the type that statically rejects paginating a non-paginating route |
 | `@octokit/types` | the generated endpoint map; ships no JavaScript — types only |
-| `universal-github-app-jwt` | signs the App JWT; zero dependencies |
+| `@effected/jwt` (`workspace:^`) | signs the App JWT over WebCrypto; no runtime dependencies, and accepts PKCS#1 and PKCS#8 keys on every runtime — see [`jwt`](jwt.md) |
 | `tweetnacl` + `blakejs` | the libsodium sealed box GitHub's secrets API requires, reachable only from `RepositorySecret` |
 | `@effected/semver` (`workspace:^`) | semver-aware tag selection; pure tier, so the edge is free |
 | `@effected/github-references` (`workspace:^`) | the compat re-export of six issue-reference names — see [`github-references`](github-references.md) |
@@ -96,8 +96,8 @@ would immediately silence, plus megabytes of generated types duplicating
 making hundreds of kilobytes of OAuth app, user and device-flow machinery
 reachable from a package that only ever mints installation tokens; what is
 actually needed — an RS256-signed App JWT plus one typed token-endpoint
-route — comes from `universal-github-app-jwt` directly, the same
-zero-dependency leaf `@octokit/auth-app` itself depends on.
+route — comes from the kit's own [`@effected/jwt`](jwt.md), a WebCrypto
+signer with no runtime dependencies that runs on workerd as well as Node.
 
 ## Bundle reachability
 
@@ -106,7 +106,9 @@ The tree-shakability invariant is measured:
 | A consumer that imports… | links | does **not** link |
 | --- | --- | --- |
 | the client, the repo coordinate, the route vocabulary, any resource service but `RepositorySecret` | octokit core and the paginator | the JWT signer, the crypto pair |
-| the App service or its client layer | the above plus the JWT signer | the crypto pair |
+| the App service or any of its client layers | the above plus the JWT signer | the crypto pair |
+| the Actions OIDC verifier (`ActionsOidc`) | `@effected/jwt` and nothing else | all octokit, the crypto pair |
+| the installation token store seam (`InstallationTokenStore`) | nothing but `effect` | the JWT signer, all octokit |
 | `RepositorySecret` | the above plus `tweetnacl` and `blakejs` | the JWT signer |
 | the pure classes | nothing but `effect` | all octokit |
 
@@ -134,8 +136,11 @@ This invariant gets a test rather than a promise:
 `packages/github/__test__/reachability.test.ts` walks the runtime import
 graph of `src` statically (type-only imports skipped, since they are erased),
 asserting the token-only client does not reach the JWT signer and that the
-App module does, and that `RepositorySecret` reaches the crypto pair while no
-other resource service does. It constrains the import graph, not the
+App module does, that `ActionsOidc` reaches `@effected/jwt` but not
+octokit, that `InstallationTokenStore` reaches nothing but `effect` (neither
+the signer nor the App module), and that `RepositorySecret` reaches the
+crypto pair while no other resource service does. Each "does not reach"
+assertion has a positive control beside it. It constrains the import graph, not the
 resolver graph: the claim is "no edge exists, so a tree-shaking bundler can
 drop it," not "it is absent from any particular consumer's bundle."
 
