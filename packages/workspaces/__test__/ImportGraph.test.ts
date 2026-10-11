@@ -289,10 +289,13 @@ describe("ImportGraph.undeclared", () => {
 		// `await` both keep it runtime, so both specifiers are checked.
 		"/repo/packages/app/src/dynamic.ts":
 			'export const p = import("left-pad");\nexport const q = await import("undeclared-pkg/x");\n',
-		// Every type-position `import()` shape: an alias right-hand side,
-		// `typeof`, an annotation, an interface heritage, a union, a function
-		// type return, a tuple, a generic bound, a conditional type and a cast.
-		// The compiler erases all ten, so none may be flagged.
+		// Every type-position `import()` shape the scanner must erase, one
+		// statement per line so a regression names its line. Lines 1-10 are the
+		// one-token shapes; the rest need the enclosing construct resolved:
+		// interface, class and type-literal members, parameter and return
+		// annotations, nested type literals, a function-type return, a mapped
+		// type, a labeled tuple, a conditional false branch, a generic default, a
+		// decorated member, an optional method and a destructured parameter.
 		"/repo/packages/app/src/typepos.ts": `${[
 			'export type Config = import("types-only-pkg").UserConfig;',
 			'export type Lazy = typeof import("types-only-pkg");',
@@ -304,6 +307,49 @@ describe("ImportGraph.undeclared", () => {
 			'export type Bound<K extends import("types-only-pkg").K> = K;',
 			'export type Cond<T> = T extends import("types-only-pkg").S ? import("types-only-pkg").Y : never;',
 			'export const cast = (v: unknown) => v as import("types-only-pkg").Thing;',
+			'export interface Members { a: import("types-only-pkg").A; b?: import("types-only-pkg").B; readonly c: import("types-only-pkg").C; m(): import("types-only-pkg").D; n?(): import("types-only-pkg").E; [k: string]: unknown }',
+			'export class Holder { prop: import("types-only-pkg").P; opt?: import("types-only-pkg").O; private priv: import("types-only-pkg").Q; method(a: import("types-only-pkg").A): import("types-only-pkg").R { return a as never; } }',
+			'export function fn(a: import("types-only-pkg").A, b: import("types-only-pkg").B): import("types-only-pkg").R { return b as never; }',
+			'export const arrow = (v: import("types-only-pkg").V): import("types-only-pkg").R => v as never;',
+			'export const generic = <T>(v: T): Promise<import("types-only-pkg").R> => Promise.resolve(v as never);',
+			'export type Obj = { a: import("types-only-pkg").A; nested: { b: import("types-only-pkg").B } };',
+			'export type FnObj = (a: string) => { r: import("types-only-pkg").R };',
+			'export type Mapped = { [K in keyof import("types-only-pkg").M]: import("types-only-pkg").V };',
+			'export type Index = { [k: string]: import("types-only-pkg").V };',
+			'export let tuple: [a: import("types-only-pkg").A, b?: import("types-only-pkg").B];',
+			'export type CondFalse<T> = T extends string ? never : import("types-only-pkg").F;',
+			'export type Dflt<T = import("types-only-pkg").D> = T;',
+			'export type Deep = Promise<Array<import("types-only-pkg").A>>;',
+			'export const obj = { m(): import("types-only-pkg").R { return 1 as never; } };',
+			'export class Decorated { @Input() field: import("types-only-pkg").I; @Input() method(): import("types-only-pkg").R { return 1 as never; } }',
+			'export const destructured = ({ a }: import("types-only-pkg").D) => a;',
+			'export const typed: Promise<unknown> | null = null satisfies import("types-only-pkg").S;',
+			'export function guard(v: unknown): v is import("types-only-pkg").G { return v === v; }',
+			'declare module "ambient" { export function d(): import("types-only-pkg").D; }',
+		].join("\n")}\n`,
+		// Every runtime `import()` the scanner must keep, one per line with its
+		// own specifier so a miss names the line: a typed initializer, an arrow
+		// body inside a typed array, a ternary after a comparison, an object
+		// property value, a ternary else branch, a generic call argument, a class
+		// property initializer, a return ternary, a nested object literal, a call
+		// argument object, an array element, a union-typed initializer, a default
+		// parameter, a generic arrow body and an explicit-return-type arrow body.
+		"/repo/packages/app/src/runtimepos.ts": `${[
+			'export const loaders: Array<() => Promise<unknown>> = [() => import("rt-a")];',
+			'export const p: Promise<unknown> = import("rt-b");',
+			'export const f = (n: number) => n < 2 ? import("rt-c") : null;',
+			'export const m = { mod: import("rt-d") };',
+			'export const g = (ok: boolean) => ok ? null : import("rt-e");',
+			'export const load = Promise.all<unknown[]>([import("rt-f")]);',
+			'export class Box { static mod = import("rt-g"); }',
+			'export function h(flag: boolean) { return flag ? import("rt-h") : import("rt-i"); }',
+			'export const nested = { inner: { deep: import("rt-j") } };',
+			'export const call = Promise.resolve({ opt: import("rt-k") });',
+			'export const arr = [1, import("rt-l")];',
+			'export const o: Promise<unknown> | null = 3 > 2 ? import("rt-m") : null;',
+			'export const dflt = (x = import("rt-n")) => x;',
+			'export const generic = <T>(x: T): Promise<unknown> => import("rt-o");',
+			'export const chain = (a?: { b: number }) => a?.b ? import("rt-p") : null;',
 		].join("\n")}\n`,
 		// TypeScript reads `import type from "x"` as a runtime default import of
 		// a binding named `type`: flagged. Only the doubled `from` (or `=`) form
@@ -330,15 +376,19 @@ describe("ImportGraph.undeclared", () => {
 		it.effect("flags a runtime import no manifest field declares, naming package, file and specifier", () =>
 			Effect.gen(function* () {
 				const scan = yield* ImportGraph.undeclared({ builtins: builtinModules });
-				assert.deepStrictEqual(scan.violations, [
-					"@repo/app src/dynamic.ts:1:25 undeclared left-pad",
-					"@repo/app src/dynamic.ts:2:31 undeclared undeclared-pkg",
-					"@repo/app src/main.ts:7:21 undeclared left-pad",
-					"@repo/app src/main.ts:8:21 undeclared undeclared-pkg",
-					"@repo/app src/typefrom.ts:1:18 undeclared types-only-pkg",
-					"@repo/app src/value.ts:1:23 undeclared types-only-pkg",
-					"@repo/core src/index.ts:1:25 undeclared left-pad",
-				]);
+				// runtimepos.ts has its own line-by-line assertion below.
+				assert.deepStrictEqual(
+					scan.violations.filter((label) => !label.includes("src/runtimepos.ts")),
+					[
+						"@repo/app src/dynamic.ts:1:25 undeclared left-pad",
+						"@repo/app src/dynamic.ts:2:31 undeclared undeclared-pkg",
+						"@repo/app src/main.ts:7:21 undeclared left-pad",
+						"@repo/app src/main.ts:8:21 undeclared undeclared-pkg",
+						"@repo/app src/typefrom.ts:1:18 undeclared types-only-pkg",
+						"@repo/app src/value.ts:1:23 undeclared types-only-pkg",
+						"@repo/core src/index.ts:1:25 undeclared left-pad",
+					],
+				);
 			}).pipe(Effect.timeout("3 seconds")),
 		);
 
@@ -393,12 +443,41 @@ describe("ImportGraph.undeclared", () => {
 		it.effect("never flags an import() in a type position: the compiler erases it", () =>
 			Effect.gen(function* () {
 				const scan = yield* ImportGraph.undeclared({ builtins: builtinModules });
-				assert.notInclude(
-					scan.undeclared.map((entry) => entry.file),
-					"src/typepos.ts",
+				assert.deepStrictEqual(
+					scan.undeclared.filter((entry) => entry.file === "src/typepos.ts").map((entry) => entry.label),
+					[],
 				);
 				// The check did read the file: it is in scope, just clean.
 				assert.include(scan.files, "packages/app/src/typepos.ts");
+			}).pipe(Effect.timeout("3 seconds")),
+		);
+
+		it.effect("flags every runtime import() whose enclosing construct is a value, one per fixture line", () =>
+			Effect.gen(function* () {
+				const scan = yield* ImportGraph.undeclared({ builtins: builtinModules });
+				const found = scan.undeclared
+					.filter((entry) => entry.file === "src/runtimepos.ts")
+					.map((entry) => `${entry.line}:${entry.dependency}`);
+				// Line 8 holds two: the ternary's true and false branches.
+				const expected = [
+					"1:rt-a",
+					"2:rt-b",
+					"3:rt-c",
+					"4:rt-d",
+					"5:rt-e",
+					"6:rt-f",
+					"7:rt-g",
+					"8:rt-h",
+					"8:rt-i",
+					"9:rt-j",
+					"10:rt-k",
+					"11:rt-l",
+					"12:rt-m",
+					"13:rt-n",
+					"14:rt-o",
+					"15:rt-p",
+				];
+				assert.deepStrictEqual(found, expected);
 			}).pipe(Effect.timeout("3 seconds")),
 		);
 
@@ -438,6 +517,7 @@ describe("ImportGraph.undeclared", () => {
 					"packages/app/src/local.ts",
 					"packages/app/src/main.ts",
 					"packages/app/src/optional.ts",
+					"packages/app/src/runtimepos.ts",
 					"packages/app/src/typefrom.ts",
 					"packages/app/src/typefromfrom.ts",
 					"packages/app/src/typepos.ts",

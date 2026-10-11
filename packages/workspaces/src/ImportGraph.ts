@@ -1,5 +1,6 @@
 import { GlobSet } from "@effected/glob";
 import { Effect, FileSystem, Option, Path, Schema } from "effect";
+import { isTypePositionImport } from "./internal/importPosition.js";
 import type { SourceLiteral } from "./internal/sourceText.js";
 import { isIdentifierChar, lex, locate, specifierLiterals, wordEndingAt } from "./internal/sourceText.js";
 import { DEFAULT_EXTENSIONS, walkSources } from "./internal/sourceWalk.js";
@@ -250,44 +251,6 @@ const SCHEME = /^[a-zA-Z][a-zA-Z0-9+.-]*:/u;
 
 const SPACE = /\s/;
 
-/**
- * Value-position keywords: the first one a backward scan meets ends it, and
- * the position is not inside a type statement.
- */
-const VALUE_KEYWORDS = new Set([
-	"const",
-	"let",
-	"var",
-	"class",
-	"function",
-	"return",
-	"await",
-	"yield",
-	"new",
-	"delete",
-	"void",
-	"throw",
-	"case",
-	"default",
-	"if",
-	"while",
-	"for",
-	"switch",
-	"catch",
-	"do",
-	"else",
-	"try",
-	"finally",
-	"enum",
-	"namespace",
-	"module",
-	"of",
-	"in",
-	"instanceof",
-	"this",
-	"super",
-]);
-
 const byCodeUnit = (a: string, b: string): number => (a < b ? -1 : a > b ? 1 : 0);
 
 const byPosition = (
@@ -334,75 +297,6 @@ const statementStart = (code: string, from: number): number | undefined => {
 		j--;
 	}
 	return undefined;
-};
-
-/**
- * Whether the code at `at` sits inside a type statement, judged by the first
- * thing a backward scan meets: a `<` (a generic parameter list), or the word
- * `type` or `interface`, reads as type-only; a value keyword, a statement
- * boundary (`;`, `{`, `}`) or the file start reads as runtime.
- */
-const inTypeStatement = (code: string, at: number): boolean => {
-	let j = at;
-	while (j >= 0) {
-		const char = code[j] ?? "";
-		if (char === "<") return true;
-		if (char === ";" || char === "{" || char === "}") return false;
-		if (isIdentifierChar(char)) {
-			let start = j;
-			while (start >= 0 && isIdentifierChar(code[start])) start--;
-			const word = code.slice(start + 1, j + 1);
-			if (word === "type" || word === "interface") return true;
-			if (VALUE_KEYWORDS.has(word)) return false;
-			j = start;
-			continue;
-		}
-		j--;
-	}
-	return false;
-};
-
-/**
- * Whether the specifier inside the call whose `(` sits at `open` is the
- * argument of a type-position `import()`: `typeof import("x")`, a type
- * annotation (`v: import("x").T`), a union, intersection or generic argument,
- * an `interface ... extends` heritage, a generic bound, or a type alias
- * right-hand side (`type T = import("x").Y`). The compiler erases all of
- * them, so they never need a runtime dependency. A runtime dynamic import
- * (`await import("x")`, `const p = import("x")`) and every `require()` load
- * for real and are not type-position.
- *
- * @remarks
- * The judgment is lexical, like the rest of the scanner: the token before the
- * `import` keyword decides, and an ambiguous one (`=`, `?`, `,`, `[`, `=>`)
- * only reads as type-only inside a `type`/`interface` statement or a generic
- * parameter list. The rule errs the same way TypeScript's own grammar does —
- * an object property value or a ternary branch after `:` is skipped with a
- * type annotation — and `PackedInstall` remains the runtime proof.
- */
-const isTypePositionImport = (code: string, open: number): boolean => {
-	let j = open - 1;
-	while (j >= 0 && SPACE.test(code[j] ?? "")) j--;
-	// Only a direct `import(` call is a candidate; `require(` and anything else load at runtime.
-	let end = j;
-	while (end >= 0 && isIdentifierChar(code[end])) end--;
-	if (code.slice(end + 1, j + 1) !== "import") return false;
-	j = end;
-	while (j >= 0 && SPACE.test(code[j] ?? "")) j--;
-	const char = code[j] ?? "";
-	if (char === ":" || char === "<" || char === "|" || char === "&") return true;
-	if (isIdentifierChar(char)) {
-		const word = wordEndingAt(code, j);
-		if (word === "typeof" || word === "keyof" || word === "as" || word === "satisfies" || word === "is") return true;
-		if (word === "extends") return inTypeStatement(code, j - word.length);
-		return false;
-	}
-	if (char === ">" && code[j - 1] === "=") return inTypeStatement(code, j - 2);
-	if (char === "?" || char === "," || char === "[") return inTypeStatement(code, j - 1);
-	// A plain `=` reads as a type alias; `==`, `!=` and the compound assignments stay runtime.
-	if (char === "=" && !(code[j - 1] === "=") && !"=!<>+-*/%&|^~?".includes(code[j - 1] ?? ""))
-		return inTypeStatement(code, j - 1);
-	return false;
 };
 
 /**
@@ -659,11 +553,13 @@ export class ImportGraph {
 	 * `include` never double-reports it. Type-only imports are erased by the
 	 * compiler and never flagged: `import type { X } from`, `export type`
 	 * re-exports, and an `import()` in a type position (`typeof import("x")`,
-	 * an annotation, a type alias right-hand side). One `import type from "x"`
-	 * is not among them — TypeScript reads it as a runtime default import of a
-	 * binding named `type` — and a runtime `import("x")` in a value position
-	 * counts like any static import. What the static pass cannot see — a
-	 * computed specifier — only `PackedInstall` proves.
+	 * an annotation, a type alias right-hand side, a generic argument). The
+	 * position is judged by the construct enclosing the call, not by the one
+	 * token before it, so a runtime `import("x")` in a typed initializer, an
+	 * object literal, a ternary branch or a call argument counts like any
+	 * static import. One `import type from "x"` is runtime too — TypeScript
+	 * reads it as a default import of a binding named `type`. What the static
+	 * pass cannot see — a computed specifier — only `PackedInstall` proves.
 	 */
 	static readonly undeclared = Effect.fn("ImportGraph.undeclared")(function* (options: UndeclaredOptions = {}) {
 		const discovery = yield* WorkspaceDiscovery;

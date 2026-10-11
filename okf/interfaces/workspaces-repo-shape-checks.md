@@ -326,12 +326,23 @@ What is never flagged:
   compiler erases it. An `import { type X } from` is NOT type-only — the
   statement still loads at runtime;
 - an `import()` in a type position (`typeof import("x")`, an annotation
-  `v: import("x").T`, a type alias right-hand side, a generic bound): the
-  compiler erases that too. The judgment is lexical, so the odd runtime
-  expression after one of those tokens is skipped with it — `PackedInstall`
-  remains the runtime proof. One `import type from "x"` is NOT type-only:
-  TypeScript reads it as a runtime default import of a binding named `type`,
-  and only `import type from from "x"` makes `type` the keyword.
+  `v: import("x").T`, a type alias right-hand side, a generic argument or
+  bound, an interface heritage, a type-literal or class member annotation, a
+  parameter or return annotation): the compiler erases that too. The
+  judgment is lexical but resolves the construct enclosing the call, not the
+  one token before it — a `:` is read as an annotation or as an
+  object-literal or ternary separator, an `=` as an alias or an initializer,
+  an `=>` as a function type's return or an arrow body — so a runtime
+  `import("x")` in a typed initializer, an object literal, a ternary branch
+  or a call argument is still reported. The scan errs toward runtime: a shape
+  it cannot place is reported, never skipped. Two documented misreads skip
+  instead, both vanishingly rare: a semicolon-free expression statement
+  directly after a type alias that does not begin with an identifier, and a
+  parenthesized true branch after a bare identifier at statement start
+  (`a ? (b) : import("x")`), which reads as an optional method signature.
+  `PackedInstall` remains the runtime proof. One `import type from "x"` is
+  NOT type-only: TypeScript reads it as a runtime default import of a binding
+  named `type`, and only `import type from from "x"` makes `type` the keyword.
 
 `include` globs (default `src/**`, matched against the package-relative
 path) name the runtime sources. Each package is walked from each glob's
