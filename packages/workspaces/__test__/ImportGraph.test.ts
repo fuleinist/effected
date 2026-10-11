@@ -333,7 +333,10 @@ describe("ImportGraph.undeclared", () => {
 		// property value, a ternary else branch, a generic call argument, a class
 		// property initializer, a return ternary, a nested object literal, a call
 		// argument object, an array element, a union-typed initializer, a default
-		// parameter, a generic arrow body and an explicit-return-type arrow body.
+		// parameter, a generic arrow body, an explicit-return-type arrow body,
+		// and then call arguments and ternaries inside the body of a function,
+		// method or class whose signature carries a return type, an implements
+		// clause or a generic bound the walk must not reach.
 		"/repo/packages/app/src/runtimepos.ts": `${[
 			'export const loaders: Array<() => Promise<unknown>> = [() => import("rt-a")];',
 			'export const p: Promise<unknown> = import("rt-b");',
@@ -350,6 +353,13 @@ describe("ImportGraph.undeclared", () => {
 			'export const dflt = (x = import("rt-n")) => x;',
 			'export const generic = <T>(x: T): Promise<unknown> => import("rt-o");',
 			'export const chain = (a?: { b: number }) => a?.b ? import("rt-p") : null;',
+			'export function register(registry: Map<string, unknown>): Map<string, unknown> { registry.set("a", import("rt-q")); return registry; }',
+			'export class Loader { init(): Promise<unknown> { loaders.push(1, import("rt-r")); return Promise.resolve(); } }',
+			'export function go(flag: boolean): object { flag ? import("rt-s") : null; return {}; }',
+			'export const api = { load(): object { registry.set("k", import("rt-t")); return {}; } };',
+			'export class Svc implements Api { start() { run(1, import("rt-u")); } }',
+			'export function bound<T extends object>(v: T) { use(v, import("rt-v")); }',
+			'export default function (): object { return cond ? import("rt-w") : {}; }',
 		].join("\n")}\n`,
 		// TypeScript reads `import type from "x"` as a runtime default import of
 		// a binding named `type`: flagged. Only the doubled `from` (or `=`) form
@@ -476,6 +486,13 @@ describe("ImportGraph.undeclared", () => {
 					"13:rt-n",
 					"14:rt-o",
 					"15:rt-p",
+					"16:rt-q",
+					"17:rt-r",
+					"18:rt-s",
+					"19:rt-t",
+					"20:rt-u",
+					"21:rt-v",
+					"22:rt-w",
 				];
 				assert.deepStrictEqual(found, expected);
 			}).pipe(Effect.timeout("3 seconds")),

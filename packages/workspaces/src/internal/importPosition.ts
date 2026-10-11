@@ -608,7 +608,10 @@ const isAnnotationColon = (code: string, c: number): boolean => {
 
 /**
  * Whether the position after the token at `from` is inside a type: a
- * backward walk, skipping balanced groups, to the first decisive token.
+ * backward walk, skipping balanced groups, to the first decisive token — a
+ * `:`, `=`, `=>`, `|`, `&`, a keyword, a `;`, or the opener of the group the
+ * position sits in, which is decided as a group so a walk inside a function
+ * body never reaches the signature in front of it.
  */
 const isTypeContext = (code: string, from: number): boolean => {
 	let j = from;
@@ -617,6 +620,9 @@ const isTypeContext = (code: string, from: number): boolean => {
 		if (j < 0) return false;
 		const char = code[j] ?? "";
 		if (char === ";") return false;
+		// An unmatched opener is the group this position sits in: a call, an
+		// array, a block or a type group decides, never the signature in front.
+		if (char === "(" || char === "[" || char === "{") return isTypeGroup(code, j);
 		if (char === ")" || char === "]" || char === "}") {
 			const open = matching(code, j);
 			if (open < 0) return false;
