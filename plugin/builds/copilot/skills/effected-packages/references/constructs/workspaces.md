@@ -30,6 +30,7 @@
 | `DuplicateInstance` | Class | One resolved instance of a duplicated version, with everything that pulls it. | one resolved instance of a duplicated package with everything that pulls it |
 | `DuplicatedPackage` | Class | One package name reached at two or more distinct versions. | one package name resolved at two or more distinct versions |
 | `DuplicatedVersion` | Class | One version a duplicated package resolved at. | one version of a duplicated package with its resolved instances |
+| `EntryNotFoundError` | Class | An entry named a file no resolution candidate could find. The walk fails rather than starting from nothing: a typo'd entry must never read as clean. | from `@effected/workspaces/testing` — reachability entry that resolves to no file |
 | `FindWorkspaceRootOptions` | Interface | Options for `WorkspaceRoot`'s `find`. | |
 | `FindWorkspaceRootSyncOptions` | Interface | Options for `findWorkspaceRootSync`: the consumer-supplied operations plus the ascent's ceiling. | |
 | `GetWorkspacePackagesSyncOptions` | Interface | Options for `getWorkspacePackagesSync`: the required consumer-supplied operations plus the traversal bound. | |
@@ -37,6 +38,7 @@
 | `HookReplay` | Interface | Which version of a config dependency a replay actually loaded, and where that version came from. | |
 | `HookReplayContext` | Interface | What the side whose `configDependencies` are being replayed recorded beyond that map — the input the fetch rung needs to verify what it fetches. | |
 | `HookReplaySource` | TypeAlias | Where a replayed config dependency's declared version was found: the `node_modules/.pnpm-config` copy, the pnpm store's `links/` tree, the store after `ConfigDependencyHooks.layerSubprocess` fetched it, or a `ConfigDependencyHooks.layerFrom` entry. | |
+| `ImportGraph` | Class | Import-graph checks: properties of what the imports of a set of files reach, which no one-file rule can express. | from `@effected/workspaces/testing` — walk relative imports from entry files, report forbidden import reached with its chain, flag runtime import no manifest field declares |
 | `ImporterVersions` | TypeAlias | Each importer's dependency-name → resolved-version map, keyed by importer path (`"."` for the root package — the same keys `WorkspaceDiscovery.importerMap()` uses, and the same value `PackageStateSnapshot.relativePath` carries). | |
 | `InstalledConsumer` | Class | One scratch project, outside the workspace, with the carrier installed. | from `@effected/workspaces/testing` — scratch consumer project, installed bin path, bin command for a probe, run the carrier's own bin under shared bins |
 | `InvalidConfigDependencySpecError` | Class | Indicates that a string could not be parsed as a pnpm `configDependencies` spec (`<version>[+<integrity>]`). | handle a configDependencies spec whose version is not exact or integrity is not sri |
@@ -50,6 +52,7 @@
 | `LockfileReader` | Class | Reads and parses the workspace's lockfile. | read and parse the workspace lockfile, look up a resolved package version |
 | `LockfileReaderOptions` | Interface | Options for the `LockfileReader` layer. | |
 | `LockfileReaderShape` | Interface | The `LockfileReader` service shape. | |
+| `NoEntriesError` | Class | The entries list named no file to start from, so a walk would prove nothing. | from `@effected/workspaces/testing` — reachability called with an empty entry list |
 | `NoPeerDependencyRules` | Variable | The empty `PeerDependencyRules`: every axis present and empty. | empty peer-dependency suppression rules, assert a workspace declares no peerDependencyRules |
 | `Offence` | Class | One place a source file breaks a `BoundaryRule`. | from `@effected/workspaces/testing` — one boundary violation with file line column and rule |
 | `OffenceRule` | TypeAlias | The rule an `Offence` names: every string `BoundaryRule`, plus `"forbidImports"` for any `{ forbidImports }` rule and `"forbidTokens"` for any `{ forbidTokens }` rule. These are the keys of `ScanOptions.allowRules`. | from `@effected/workspaces/testing` |
@@ -80,6 +83,9 @@
 | `PublishTarget` | Class | A resolved publish destination for a workspace package. | a resolved publish destination for a package, registry access directory and provenance |
 | `PublishabilityDetector` | Class | Decides whether a workspace package publishes, and to where. | decide whether a workspace package publishes and to where, npm publish semantics |
 | `PublishabilityDetectorShape` | Interface | The `PublishabilityDetector` service shape. | |
+| `ReachOffence` | Class | One forbidden import a walk from the entries reached. | from `@effected/workspaces/testing` — forbidden specifier reached from an entry, chain of files that reaches it |
+| `ReachabilityOptions` | Interface | Options for `ImportGraph.reachability`. | from `@effected/workspaces/testing` |
+| `ReachabilityScan` | Class | What a reachability walk read and found. | from `@effected/workspaces/testing` — reachability walk result, violation labels, files reached, unresolved links |
 | `ReferenceOptions` | Interface | Options for the `process` rule. | from `@effected/workspaces/testing` |
 | `ReleaseTag` | Class | A git tag naming a release, and the parts it was built from. | format a git release tag, single shared tag or per-package scoped tag naming |
 | `RunBinOptions` | Interface | Options for `InstalledConsumer.runBin`. | from `@effected/workspaces/testing` |
@@ -94,6 +100,10 @@
 | `TagStyle` | Variable + TypeAlias | The decoded type of `(TagStyle:variable)`: `"single" \| "scoped"`. | whether a release uses one shared tag or one tag per package |
 | `TrackingTag` | Class | A floating alias tag — `v1`, `v1.2` — that a repo re-points at its newest matching release. | floating major/minor alias tag like v1 or v1.2, re-point at a release |
 | `TrackingTagOptions` | Interface | Options for `TrackingTag.forVersion`. | |
+| `UndeclaredImport` | Class | One runtime import the owning package's manifest does not declare. | from `@effected/workspaces/testing` — runtime import of a package absent from dependencies, peer or optional |
+| `UndeclaredOptions` | Interface | Options for `ImportGraph.undeclared`. | from `@effected/workspaces/testing` |
+| `UndeclaredScan` | Class | What an undeclared-import check read and found. | from `@effected/workspaces/testing` — undeclared import check result, violation labels, packages and files checked |
+| `UnresolvedImport` | Class | One relative import no file candidate resolved: a link of the graph the walk could not follow, so whatever it would have reached is unproven. | from `@effected/workspaces/testing` — relative or followed import no candidate file resolves |
 | `UnsatisfiedPeer` | Class | One peer dependency that is declared but not satisfied. | one declared but unmet peer dependency row, missing or wrong version resolved |
 | `UnverifiedReason` | TypeAlias | Why a report is not a complete answer. | |
 | `VersioningDetectOptions` | Interface | Arguments to `VersioningStrategy.detect`. | |
