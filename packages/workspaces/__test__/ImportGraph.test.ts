@@ -263,6 +263,7 @@ describe("ImportGraph.undeclared", () => {
 			dependencies: { "@repo/core": "workspace:^", effect: "catalog:effect" },
 			peerDependencies: { "@effect/vitest": "^1" },
 			devDependencies: { vitest: "^3" },
+			optionalDependencies: { fsevents: "^2" },
 		}),
 		pkg("@repo/core", "packages/core", { dependencies: { effect: "^4" } }),
 	];
@@ -284,6 +285,33 @@ describe("ImportGraph.undeclared", () => {
 		"/repo/packages/app/src/types.ts": 'import type { Thing } from "types-only-pkg";\nexport type { Thing };\n',
 		"/repo/packages/app/src/value.ts": 'import { Thing } from "types-only-pkg";\nexport const t = Thing;\n',
 		"/repo/packages/app/src/computed.ts": 'const name = "left-pad";\nexport const c = await import(name);\n',
+		// A runtime dynamic import in a value position: `=` after `const` and
+		// `await` both keep it runtime, so both specifiers are checked.
+		"/repo/packages/app/src/dynamic.ts":
+			'export const p = import("left-pad");\nexport const q = await import("undeclared-pkg/x");\n',
+		// Every type-position `import()` shape: an alias right-hand side,
+		// `typeof`, an annotation, an interface heritage, a union, a function
+		// type return, a tuple, a generic bound, a conditional type and a cast.
+		// The compiler erases all ten, so none may be flagged.
+		"/repo/packages/app/src/typepos.ts": `${[
+			'export type Config = import("types-only-pkg").UserConfig;',
+			'export type Lazy = typeof import("types-only-pkg");',
+			'export declare let annotated: import("types-only-pkg").Thing;',
+			'export interface Heritage extends import("types-only-pkg").Base {}',
+			'export type Union = import("types-only-pkg").A | import("types-only-pkg").B;',
+			'export type Fn = () => import("types-only-pkg").R;',
+			'export type Tup = [import("types-only-pkg").A, import("types-only-pkg").B];',
+			'export type Bound<K extends import("types-only-pkg").K> = K;',
+			'export type Cond<T> = T extends import("types-only-pkg").S ? import("types-only-pkg").Y : never;',
+			'export const cast = (v: unknown) => v as import("types-only-pkg").Thing;',
+		].join("\n")}\n`,
+		// TypeScript reads `import type from "x"` as a runtime default import of
+		// a binding named `type`: flagged. Only the doubled `from` (or `=`) form
+		// makes `type` the keyword: not flagged.
+		"/repo/packages/app/src/typefrom.ts": 'import type from "types-only-pkg";\nexport const binding = type;\n',
+		"/repo/packages/app/src/typefromfrom.ts": 'import type from from "types-only-pkg";\nexport type T = from;\n',
+		// An optionalDependency IS declared: npm and pnpm install it by default.
+		"/repo/packages/app/src/optional.ts": 'try { await import("fsevents"); } catch {}\nexport const o = 1;\n',
 		"/repo/packages/app/__test__/main.test.ts": 'import { describe } from "vitest";\ndescribe("x", () => {});\n',
 		"/repo/packages/app/dist/dev/pkg/bundle.js": 'import { z } from "zod";\nexport const b = z;\n',
 		"/repo/packages/core/src/index.ts": 'import { leftPad } from "left-pad";\nexport const core = leftPad;\n',
@@ -303,8 +331,11 @@ describe("ImportGraph.undeclared", () => {
 			Effect.gen(function* () {
 				const scan = yield* ImportGraph.undeclared({ builtins: builtinModules });
 				assert.deepStrictEqual(scan.violations, [
+					"@repo/app src/dynamic.ts:1:25 undeclared left-pad",
+					"@repo/app src/dynamic.ts:2:31 undeclared undeclared-pkg",
 					"@repo/app src/main.ts:7:21 undeclared left-pad",
 					"@repo/app src/main.ts:8:21 undeclared undeclared-pkg",
+					"@repo/app src/typefrom.ts:1:18 undeclared types-only-pkg",
 					"@repo/app src/value.ts:1:23 undeclared types-only-pkg",
 					"@repo/core src/index.ts:1:25 undeclared left-pad",
 				]);
@@ -354,6 +385,46 @@ describe("ImportGraph.undeclared", () => {
 				// A computed specifier is invisible to static analysis: computed.ts
 				// reads no literal and is never flagged. That is the documented limit.
 				assert.notInclude(files, "src/computed.ts");
+				// A runtime dynamic import in a value position IS checked.
+				assert.include(files, "src/dynamic.ts");
+			}).pipe(Effect.timeout("3 seconds")),
+		);
+
+		it.effect("never flags an import() in a type position: the compiler erases it", () =>
+			Effect.gen(function* () {
+				const scan = yield* ImportGraph.undeclared({ builtins: builtinModules });
+				assert.notInclude(
+					scan.undeclared.map((entry) => entry.file),
+					"src/typepos.ts",
+				);
+				// The check did read the file: it is in scope, just clean.
+				assert.include(scan.files, "packages/app/src/typepos.ts");
+			}).pipe(Effect.timeout("3 seconds")),
+		);
+
+		it.effect('flags `import type from "x"`: TypeScript reads it as a runtime default import named type', () =>
+			Effect.gen(function* () {
+				const scan = yield* ImportGraph.undeclared({ builtins: builtinModules });
+				assert.include(
+					scan.undeclared.map((entry) => entry.label),
+					"@repo/app src/typefrom.ts:1:18 undeclared types-only-pkg",
+				);
+				// The doubled-from form IS type-only: the first `from` is the binding.
+				assert.notInclude(
+					scan.undeclared.map((entry) => entry.file),
+					"src/typefromfrom.ts",
+				);
+			}).pipe(Effect.timeout("3 seconds")),
+		);
+
+		it.effect("counts optionalDependencies as declared: a packed install resolves it", () =>
+			Effect.gen(function* () {
+				const scan = yield* ImportGraph.undeclared({ builtins: builtinModules });
+				assert.notInclude(
+					scan.undeclared.map((entry) => entry.dependency),
+					"fsevents",
+				);
+				assert.include(scan.files, "packages/app/src/optional.ts");
 			}).pipe(Effect.timeout("3 seconds")),
 		);
 
@@ -363,12 +434,46 @@ describe("ImportGraph.undeclared", () => {
 				assert.deepStrictEqual(scan.packages, ["@repo/app", "@repo/core", "repo"]);
 				assert.deepStrictEqual(scan.files, [
 					"packages/app/src/computed.ts",
+					"packages/app/src/dynamic.ts",
 					"packages/app/src/local.ts",
 					"packages/app/src/main.ts",
+					"packages/app/src/optional.ts",
+					"packages/app/src/typefrom.ts",
+					"packages/app/src/typefromfrom.ts",
+					"packages/app/src/typepos.ts",
 					"packages/app/src/types.ts",
 					"packages/app/src/value.ts",
 					"packages/core/src/index.ts",
 				]);
+			}).pipe(Effect.timeout("3 seconds")),
+		);
+
+		it.effect("a root-wide glob checks each nested file once, against its innermost package only", () =>
+			Effect.gen(function* () {
+				const scan = yield* ImportGraph.undeclared({ builtins: builtinModules, include: ["**/*.ts"] });
+				// The root package walks the whole repository, but every file it
+				// meets belongs to a nested package: none is attributed to `repo`.
+				assert.deepStrictEqual(
+					scan.undeclared.filter((entry) => entry.package === "repo"),
+					[],
+				);
+				assert.deepStrictEqual(
+					scan.files.filter((file) => file.includes("packages/app/src/main.ts")),
+					["packages/app/src/main.ts"],
+				);
+				// No file is listed twice: once under its own package, never
+				// again under the root walk.
+				assert.strictEqual(new Set(scan.files).size, scan.files.length);
+				// The nested packages' own violations are still reported, under
+				// their own names.
+				assert.include(
+					scan.undeclared.map((entry) => entry.label),
+					"@repo/app src/main.ts:7:21 undeclared left-pad",
+				);
+				assert.include(
+					scan.undeclared.map((entry) => entry.label),
+					"@repo/core src/index.ts:1:25 undeclared left-pad",
+				);
 			}).pipe(Effect.timeout("3 seconds")),
 		);
 

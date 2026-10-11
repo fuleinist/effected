@@ -200,7 +200,8 @@ constructor:[^testing-ts]
   `reachability` walks from entries through relative imports and reports a
   forbidden specifier with the chain that reaches it (`followPackage` is the
   workspace-package extension point), and `undeclared` reports every runtime
-  import its package's `dependencies`/`peerDependencies` do not declare.
+  import its package's `dependencies`/`peerDependencies`/`optionalDependencies`
+  do not declare.
 - `WorkspaceLayering` (with `LayerPolicy`, `LayerPolicyError`, `LayerEdge`,
   `LayeringGraph` and `LayeringReport`): a pure check of a per-field edge
   graph against a committed layer policy, plus `checkWorkspace` over

@@ -305,10 +305,11 @@ inside the workspace — hoisting provides it — and only a packed install
 catches that today, far too slow for the edit loop. `ImportGraph.undeclared`
 is the cheap static form: for each discovered package, every literal
 specifier in its runtime sources is checked against the package's own
-`dependencies` and `peerDependencies`. A `devDependency` or an
-`optionalDependency` never declares: an import of one from a runtime source
-is exactly the bug. Each report names the package, the file and the
-specifier.
+`dependencies`, `peerDependencies` and `optionalDependencies`. A
+`devDependency` never declares: an import of one from a runtime source is
+exactly the bug. An `optionalDependency` does declare: npm and pnpm install
+one by default, so a packed install resolves the import. Each report names
+the package, the file and the specifier.
 
 What is never flagged:
 
@@ -323,13 +324,23 @@ What is never flagged:
   definition;
 - a type-only import (`import type { X } from`, `export type * from`): the
   compiler erases it. An `import { type X } from` is NOT type-only — the
-  statement still loads at runtime.
+  statement still loads at runtime;
+- an `import()` in a type position (`typeof import("x")`, an annotation
+  `v: import("x").T`, a type alias right-hand side, a generic bound): the
+  compiler erases that too. The judgment is lexical, so the odd runtime
+  expression after one of those tokens is skipped with it — `PackedInstall`
+  remains the runtime proof. One `import type from "x"` is NOT type-only:
+  TypeScript reads it as a runtime default import of a binding named `type`,
+  and only `import type from from "x"` makes `type` the keyword.
 
 `include` globs (default `src/**`, matched against the package-relative
 path) name the runtime sources. Each package is walked from each glob's
 static prefix, so the default never walks a build output or a test directory
 at all, and test files importing devDependencies are out of scope by design:
-the check compares against the runtime fields.
+the check compares against the runtime fields. A file under two discovered
+packages belongs to its innermost one: a root-wide glob like `["**/*.ts"]`
+walks the whole repository, but a nested package's files are checked only
+against that package's manifest, and each file is listed once.
 
 ### Static-only
 

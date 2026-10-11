@@ -5,6 +5,7 @@ import { isIdentifierChar, lex, locate, specifierLiterals, wordEndingAt } from "
 import { DEFAULT_EXTENSIONS, walkSources } from "./internal/sourceWalk.js";
 import { SourceBoundary } from "./SourceBoundary.js";
 import { WorkspaceDiscovery } from "./WorkspaceDiscovery.js";
+import type { WorkspacePackage } from "./WorkspacePackage.js";
 
 /**
  * The entries list named no file to start from, so a walk would prove nothing.
@@ -188,8 +189,10 @@ export class UndeclaredScan extends Schema.Class<UndeclaredScan>("UndeclaredScan
 	packages: Schema.Array(Schema.String),
 	/**
 	 * Every file the check read, relative to the workspace root with `/`
-	 * separators, sorted. Assert it is non-empty: a check that read no file
-	 * proves nothing, and a mistyped `include` shows up here.
+	 * separators, sorted. Each file appears once, listed under its innermost
+	 * package even when a wider package's glob also walked it. Assert it is
+	 * non-empty: a check that read no file proves nothing, and a mistyped
+	 * `include` shows up here.
 	 */
 	files: Schema.Array(Schema.String),
 	/** Every undeclared runtime import, sorted by package, then file, then line, then column. */
@@ -218,12 +221,15 @@ export interface UndeclaredOptions {
 	/**
 	 * Globs, matched against each package-relative path with `/` separators,
 	 * naming the runtime source files to read. Defaults to `["src/**"]`: the
-	 * check compares against `dependencies` and `peerDependencies`, so test
-	 * files importing devDependencies are out of scope by design. Each glob
-	 * is walked from its static prefix (the text before its first pattern
-	 * character), so the default walks `src/` and never `dist/` or
-	 * `node_modules`; a glob with no static prefix walks the package
-	 * directory.
+	 * check compares against `dependencies`, `peerDependencies` and
+	 * `optionalDependencies`, so test files importing devDependencies are out
+	 * of scope by design. Each glob is walked from its static prefix (the text
+	 * before its first pattern character), so the default walks `src/` and
+	 * never `dist/` or `node_modules`; a glob with no static prefix walks the
+	 * package directory. A file under a nested workspace package belongs to
+	 * that innermost package alone: a root glob starting with `**` walks the
+	 * whole repository but checks each nested file only against its own
+	 * package's manifest.
 	 */
 	readonly include?: ReadonlyArray<string> | undefined;
 	/**
@@ -243,6 +249,44 @@ const COMPILED_EXTENSION = /\.(?:[cm]?js|[cm]?ts|jsx|tsx)$/u;
 const SCHEME = /^[a-zA-Z][a-zA-Z0-9+.-]*:/u;
 
 const SPACE = /\s/;
+
+/**
+ * Value-position keywords: the first one a backward scan meets ends it, and
+ * the position is not inside a type statement.
+ */
+const VALUE_KEYWORDS = new Set([
+	"const",
+	"let",
+	"var",
+	"class",
+	"function",
+	"return",
+	"await",
+	"yield",
+	"new",
+	"delete",
+	"void",
+	"throw",
+	"case",
+	"default",
+	"if",
+	"while",
+	"for",
+	"switch",
+	"catch",
+	"do",
+	"else",
+	"try",
+	"finally",
+	"enum",
+	"namespace",
+	"module",
+	"of",
+	"in",
+	"instanceof",
+	"this",
+	"super",
+]);
 
 const byCodeUnit = (a: string, b: string): number => (a < b ? -1 : a > b ? 1 : 0);
 
@@ -293,16 +337,86 @@ const statementStart = (code: string, from: number): number | undefined => {
 };
 
 /**
+ * Whether the code at `at` sits inside a type statement, judged by the first
+ * thing a backward scan meets: a `<` (a generic parameter list), or the word
+ * `type` or `interface`, reads as type-only; a value keyword, a statement
+ * boundary (`;`, `{`, `}`) or the file start reads as runtime.
+ */
+const inTypeStatement = (code: string, at: number): boolean => {
+	let j = at;
+	while (j >= 0) {
+		const char = code[j] ?? "";
+		if (char === "<") return true;
+		if (char === ";" || char === "{" || char === "}") return false;
+		if (isIdentifierChar(char)) {
+			let start = j;
+			while (start >= 0 && isIdentifierChar(code[start])) start--;
+			const word = code.slice(start + 1, j + 1);
+			if (word === "type" || word === "interface") return true;
+			if (VALUE_KEYWORDS.has(word)) return false;
+			j = start;
+			continue;
+		}
+		j--;
+	}
+	return false;
+};
+
+/**
+ * Whether the specifier inside the call whose `(` sits at `open` is the
+ * argument of a type-position `import()`: `typeof import("x")`, a type
+ * annotation (`v: import("x").T`), a union, intersection or generic argument,
+ * an `interface ... extends` heritage, a generic bound, or a type alias
+ * right-hand side (`type T = import("x").Y`). The compiler erases all of
+ * them, so they never need a runtime dependency. A runtime dynamic import
+ * (`await import("x")`, `const p = import("x")`) and every `require()` load
+ * for real and are not type-position.
+ *
+ * @remarks
+ * The judgment is lexical, like the rest of the scanner: the token before the
+ * `import` keyword decides, and an ambiguous one (`=`, `?`, `,`, `[`, `=>`)
+ * only reads as type-only inside a `type`/`interface` statement or a generic
+ * parameter list. The rule errs the same way TypeScript's own grammar does —
+ * an object property value or a ternary branch after `:` is skipped with a
+ * type annotation — and `PackedInstall` remains the runtime proof.
+ */
+const isTypePositionImport = (code: string, open: number): boolean => {
+	let j = open - 1;
+	while (j >= 0 && SPACE.test(code[j] ?? "")) j--;
+	// Only a direct `import(` call is a candidate; `require(` and anything else load at runtime.
+	let end = j;
+	while (end >= 0 && isIdentifierChar(code[end])) end--;
+	if (code.slice(end + 1, j + 1) !== "import") return false;
+	j = end;
+	while (j >= 0 && SPACE.test(code[j] ?? "")) j--;
+	const char = code[j] ?? "";
+	if (char === ":" || char === "<" || char === "|" || char === "&") return true;
+	if (isIdentifierChar(char)) {
+		const word = wordEndingAt(code, j);
+		if (word === "typeof" || word === "keyof" || word === "as" || word === "satisfies" || word === "is") return true;
+		if (word === "extends") return inTypeStatement(code, j - word.length);
+		return false;
+	}
+	if (char === ">" && code[j - 1] === "=") return inTypeStatement(code, j - 2);
+	if (char === "?" || char === "," || char === "[") return inTypeStatement(code, j - 1);
+	// A plain `=` reads as a type alias; `==`, `!=` and the compound assignments stay runtime.
+	if (char === "=" && !(code[j - 1] === "=") && !"=!<>+-*/%&|^~?".includes(code[j - 1] ?? ""))
+		return inTypeStatement(code, j - 1);
+	return false;
+};
+
+/**
  * Whether the specifier at `literal` sits in a type-only import or re-export
- * (`import type { X } from`, `export type * from`), which the compiler erases
- * and so never needs a runtime dependency. A side-effect import, a dynamic
- * `import()`, a `require()` and an `import { type X }` binding list all load
- * at runtime and are not type-only.
+ * (`import type { X } from`, `export type * from`) or in a type-position
+ * `import()`, which the compiler erases and so never needs a runtime
+ * dependency. A side-effect import, a runtime dynamic `import()`, a
+ * `require()` and an `import { type X }` binding list all load at runtime and
+ * are not type-only.
  */
 const isTypeOnly = (code: string, literal: SourceLiteral): boolean => {
 	let j = literal.start - 1;
 	while (j >= 0 && SPACE.test(code[j] ?? "")) j--;
-	if (code[j] === "(") return false;
+	if (code[j] === "(") return isTypePositionImport(code, j);
 	if (wordEndingAt(code, j) !== "from") return false;
 	let k = j;
 	while (k >= 0 && isIdentifierChar(code[k])) k--;
@@ -314,12 +428,26 @@ const isTypeOnly = (code: string, literal: SourceLiteral): boolean => {
 	while (e < code.length && isIdentifierChar(code[e])) e++;
 	if (code.slice(m, e) !== "type") return false;
 	// The `type` keyword, not a default binding named `type`: an identifier,
-	// `{` or `*` must follow. (`import type from "x"` is type-only: TypeScript
-	// reads `type` there as the keyword.)
+	// `{` or `*` must follow. `import type from "x"` is NOT type-only —
+	// TypeScript reads `type` there as a default binding named `type`, and
+	// only `import type from from "x"` (or `import type from = require("x")`)
+	// makes `type` the keyword: the word after the binding decides.
 	let n = e;
 	while (n < code.length && SPACE.test(code[n] ?? "")) n++;
 	const next = code[n] ?? "";
-	return next === "{" || next === "*" || isIdentifierChar(next);
+	if (next === "{" || next === "*") return true;
+	if (!isIdentifierChar(next)) return false;
+	let w = n;
+	while (w < code.length && isIdentifierChar(code[w])) w++;
+	if (code.slice(n, w) !== "from") return true;
+	// The word after a `from` binding: a second `from` (or `=`) keeps the
+	// statement type-only; a string literal makes it a runtime import.
+	let p = w;
+	while (p < code.length && SPACE.test(code[p] ?? "")) p++;
+	if (code[p] === "=") return true;
+	let q = p;
+	while (q < code.length && isIdentifierChar(code[q])) q++;
+	return code.slice(p, q) === "from";
 };
 
 /**
@@ -360,8 +488,8 @@ const includePrefixes = (patterns: ReadonlyArray<string>): ReadonlyArray<string>
  *   declared". Workspace hoisting resolves an import of a package the
  *   manifest never declared, and only a packed install catches that today —
  *   far too slow for the edit loop. This check is static and fast: each
- *   package's literal specifiers against its own `dependencies` and
- *   `peerDependencies`.
+ *   package's literal specifiers against its own `dependencies`,
+ *   `peerDependencies` and `optionalDependencies`.
  *
  * Both are static analysis of literal specifiers: static imports,
  * re-exports, and `import()`/`require()` calls whose argument is one string
@@ -517,17 +645,25 @@ export class ImportGraph {
 	 * @remarks
 	 * For each discovered package, reads the files its `include` globs name
 	 * (`src/**` by default) and compares every runtime specifier against the
-	 * package's `dependencies` and `peerDependencies`. `devDependencies` and
-	 * `optionalDependencies` never declare: an import of one from a runtime
-	 * source is exactly the hoisting bug this check exists for. A relative,
+	 * package's `dependencies`, `peerDependencies` and `optionalDependencies`.
+	 * `devDependencies` never declares: an import of one from a runtime source
+	 * is exactly the hoisting bug this check exists for. `optionalDependencies`
+	 * does declare: npm and pnpm install one by default, so a packed install
+	 * resolves the import. A relative,
 	 * absolute, `#`-subpath or URL-scheme specifier is never a package import;
 	 * a `node:` specifier is always a built-in, and a bare built-in is one only
 	 * when `builtins` lists it. A package importing its own name (a
-	 * self-reference through `exports`) is declared by definition. Type-only
-	 * imports are erased by the compiler and never flagged; every other
-	 * literal specifier counts, dynamic `import()` included. What the static
-	 * pass cannot see — a computed specifier — only `PackedInstall`
-	 * proves.
+	 * self-reference through `exports`) is declared by definition. A file
+	 * under two discovered packages (a nested package under the root) is
+	 * checked against its innermost package's manifest only, so a root-wide
+	 * `include` never double-reports it. Type-only imports are erased by the
+	 * compiler and never flagged: `import type { X } from`, `export type`
+	 * re-exports, and an `import()` in a type position (`typeof import("x")`,
+	 * an annotation, a type alias right-hand side). One `import type from "x"`
+	 * is not among them — TypeScript reads it as a runtime default import of a
+	 * binding named `type` — and a runtime `import("x")` in a value position
+	 * counts like any static import. What the static pass cannot see — a
+	 * computed specifier — only `PackedInstall` proves.
 	 */
 	static readonly undeclared = Effect.fn("ImportGraph.undeclared")(function* (options: UndeclaredOptions = {}) {
 		const discovery = yield* WorkspaceDiscovery;
@@ -539,17 +675,45 @@ export class ImportGraph {
 		const extensions = options.extensions ?? DEFAULT_EXTENSIONS;
 		const builtins = new Set(options.builtins ?? []);
 		const packages = yield* discovery.listPackages();
+		/**
+		 * Whether `file` sits under the directory `dir`: the relative path from
+		 * `dir` to `file` stays inside it. A drive or root mismatch surfaces as
+		 * an absolute relative path and reads as not under.
+		 */
+		const under = (file: string, dir: string): boolean => {
+			const rel = path.relative(dir, file);
+			return rel !== "" && rel !== "." && !path.isAbsolute(rel) && !rel.startsWith(`..${path.sep}`);
+		};
+		/**
+		 * The innermost package owning `file`, or `undefined` when no package
+		 * contains it. Every file belongs to one package — the deepest one — so
+		 * a glob that walks a nested package never checks that package's files
+		 * against the outer manifest.
+		 */
+		const ownerOf = (file: string): WorkspacePackage | undefined => {
+			let owner: WorkspacePackage | undefined;
+			for (const candidate of packages) {
+				if (!under(file, candidate.path)) continue;
+				if (owner === undefined || under(candidate.path, owner.path)) owner = candidate;
+			}
+			return owner;
+		};
 		const names: Array<string> = [];
 		const files: Array<string> = [];
 		const undeclared: Array<UndeclaredImport> = [];
 		for (const pkg of packages) {
 			names.push(pkg.name);
-			const declared = new Set([...Object.keys(pkg.dependencies), ...Object.keys(pkg.peerDependencies)]);
+			const declared = new Set([
+				...Object.keys(pkg.dependencies),
+				...Object.keys(pkg.peerDependencies),
+				...Object.keys(pkg.optionalDependencies),
+			]);
 			const seen = new Set<string>();
 			for (const prefix of prefixes) {
 				const walkRoot = prefix === "" ? pkg.path : path.join(pkg.path, ...prefix.split("/"));
 				if (!(yield* fs.exists(walkRoot))) continue;
 				for (const source of yield* walkSources({ root: walkRoot, extensions })) {
+					if (ownerOf(source.path) !== pkg) continue;
 					const file = prefix === "" ? source.file : `${prefix}/${source.file}`;
 					if (seen.has(file) || !globs.matches(file)) continue;
 					seen.add(file);
