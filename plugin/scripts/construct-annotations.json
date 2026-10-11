@@ -1034,7 +1034,15 @@
 		"InstalledConsumer": "scratch consumer project, installed bin path, bin command for a probe, run the carrier's own bin under shared bins",
 		"PackedInstallResult": "installed consumers, unavailable managers, packed tarball paths",
 		"ConfigDependencySpec": "parse a pnpm-workspace.yaml configDependencies version, split inline sri integrity, render bare form",
-		"InvalidConfigDependencySpecError": "handle a configDependencies spec whose version is not exact or integrity is not sri"
+		"InvalidConfigDependencySpecError": "handle a configDependencies spec whose version is not exact or integrity is not sri",
+		"ImportGraph": "walk relative imports from entry files, report forbidden import reached with its chain, flag runtime import no manifest field declares",
+		"ReachabilityScan": "reachability walk result, violation labels, files reached, unresolved links",
+		"ReachOffence": "forbidden specifier reached from an entry, chain of files that reaches it",
+		"UnresolvedImport": "relative or followed import no candidate file resolves",
+		"UndeclaredScan": "undeclared import check result, violation labels, packages and files checked",
+		"UndeclaredImport": "runtime import of a package absent from dependencies, peer or optional",
+		"NoEntriesError": "reachability called with an empty entry list",
+		"EntryNotFoundError": "reachability entry that resolves to no file"
 	},
 	"xdg": {
 		"AppDirKind": "the config, data, cache, state or runtime directory kind",
