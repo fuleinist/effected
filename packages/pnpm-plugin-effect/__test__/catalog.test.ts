@@ -144,37 +144,70 @@ describe("effect catalog", () => {
 		assert.isTrue(entries().has("@effect/platform-node"));
 	});
 
-	// A caret on any entry lets a fresh resolve pair a 4.0.3 satellite with core
-	// 4.0.2, which dies at import, and `lock` keeps whatever operator the range has.
-	it("locks every entry to an exact version with an identical peer", () => {
+	// The catalog rides the stable line with carets under lock-minor; the override
+	// layer below, not the catalog range, is what keeps a satellite from pairing with
+	// an older core. What the catalog must still promise is that the whole family
+	// names one version, so the derived pins all agree.
+	it("keeps every entry on a caret under lock-minor with a floored peer", () => {
 		for (const [name, spec] of entries()) {
-			const range = /\brange:\s*"([^"]+)"/.exec(spec)?.[1];
-			const peer = /\bpeer:\s*"([^"]+)"/.exec(spec)?.[1];
-			assert.match(range ?? "", /^\d+\.\d+\.\d+$/, `${name} range is not exact`);
-			assert.strictEqual(peer, range, `${name} peer differs from its range`);
-			assert.match(spec, /strategy:\s*"lock"/, `${name} is not on strategy lock`);
+			const range = /\brange:\s*"([^"]+)"/.exec(spec)?.[1] ?? "";
+			const peer = /\bpeer:\s*"([^"]+)"/.exec(spec)?.[1] ?? "";
+			if (name === "@effect/tsgo") {
+				// tsgo is a tool on its own 0.x line, kept exact so the peer-rules
+				// derivation (which only reads exact entries) still names it.
+				assert.match(range, /^\d+\.\d+\.\d+$/, `${name} range is not exact`);
+				continue;
+			}
+			assert.match(range, /^\^\d+\.\d+\.\d+$/, `${name} range is not a caret on a plain version`);
+			assert.match(peer, /^\^\d+\.\d+\.0$/, `${name} peer is not floored to its minor`);
+			assert.match(spec, /strategy:\s*"lock-minor"/, `${name} is not on strategy lock-minor`);
 		}
 	});
 
 	it("holds every 4.x entry at the same version as effect itself", () => {
-		const effect = /\brange:\s*"([^"]+)"/.exec(effectEntry())?.[1];
+		const effect = bare(effectEntry());
+		assert.match(effect, /^4\.\d+\.\d+$/);
 		for (const [name, spec] of entries()) {
 			if (name === "@effect/tsgo") continue;
-			assert.strictEqual(/\brange:\s*"([^"]+)"/.exec(spec)?.[1], effect, name);
+			assert.strictEqual(bare(spec), effect, name);
 		}
 	});
 });
 
-describe("platform-node-shared overrides", () => {
+/** The plain version a catalog entry's range names, operator stripped. */
+function bare(spec: string): string {
+	return (/\brange:\s*"\^?([^"]+)"/.exec(spec)?.[1] ?? "").trim();
+}
+
+describe("overrides", () => {
 	const RC117 = "@effect/platform-node@4.0.0-rc.117>@effect/platform-node-shared";
 	const RC118 = "@effect/platform-node@4.0.0-rc.118>@effect/platform-node-shared";
-	/** The effect 4.0.2 hold (Effect-TS/effect#8994): `effect` and every satellite on the 4.x line. */
-	const HOLD = Object.fromEntries(
-		[...readCatalogEntries("effect").keys(), "effect"]
-			.filter((name) => name !== "@effect/tsgo")
-			.map((name) => [`${name}@^4.0.0`, "4.0.2"]),
-	);
-	const PINS = { ...HOLD, [RC117]: "4.0.0-rc.117", [RC118]: "4.0.0-rc.118" };
+	/**
+	 * The pins `overridesFromCatalogs` derives: `effect` and every satellite on
+	 * the 4.x line at the catalog's own version, plus `@effect/tsgo` on its own
+	 * 0.x line. Derived here from the catalog literal the same way, so the test
+	 * moves with the catalog and only a disagreement between the literal and the
+	 * built hook can fail it.
+	 */
+	function familyPins(): Record<string, string> {
+		const source = readFileSync(join(PACKAGE_ROOT, "savvy.build.ts"), "utf8");
+		const effect = /\n\t+effect: \{[^}]*range:\s*"\^?([^"]+)"/.exec(
+			source.slice(source.indexOf("effect: {\n\t\t\t\t\tpackages: {")),
+		)?.[1];
+		assert.isString(effect);
+		assert.match(effect ?? "", /^4\.\d+\.\d+$/, "the effect catalog's own entry is not a plain 4.x version");
+		const entries = readCatalogEntries("effect");
+		const tsgo = /\brange:\s*"(\d+)\.(\d+)\.(\d+)"/.exec(entries.get("@effect/tsgo") ?? "");
+		assert.isNotNull(tsgo, "the effect catalog's tsgo entry is not a plain version");
+		const pins = Object.fromEntries(
+			[...entries.keys(), "effect"]
+				.filter((name) => name !== "@effect/tsgo")
+				.map((name) => [`${name}@^4.0.0`, effect as string]),
+		);
+		pins[`@effect/tsgo@^0.${tsgo?.[2]}.0`] = `${tsgo?.[1]}.${tsgo?.[2]}.${tsgo?.[3]}`;
+		return pins;
+	}
+	const PINS = { ...familyPins(), [RC117]: "4.0.0-rc.117", [RC118]: "4.0.0-rc.118" };
 	const PNPMFILE = join(PACKAGE_ROOT, "dist/dev/pkg/pnpmfile.mjs");
 
 	/**
@@ -192,9 +225,13 @@ describe("platform-node-shared overrides", () => {
 		return hooks.updateConfig(config);
 	}
 
-	it("pins each prerelease parent's shared package to its own version", async () => {
+	it("pins the effect family to the catalog version and each prerelease parent's shared package to its own", async () => {
 		const { overrides } = await updateConfig({});
 		assert.deepStrictEqual(overrides, PINS);
+		// Positive control on the derivation: the family is more than the two rc entries,
+		// and tsgo is pinned on its own 0.x line rather than the 4.x one.
+		assert.isAtLeast(Object.keys(PINS).length, 23);
+		assert.notProperty(overrides, "@effect/tsgo@^4.0.0");
 	});
 
 	it("keeps a consumer's own overrides", async () => {
