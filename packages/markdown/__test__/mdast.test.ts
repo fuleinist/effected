@@ -246,4 +246,70 @@ describe("Mdast.fromMdast", () => {
 		const effectFailure = Effect.runSync(Effect.result(Effect.flip(Mdast.fromMdast(bad))));
 		assert.isTrue(Result.isSuccess(effectFailure));
 	});
+
+	it("returns Failure (not throw) on deeply nested foreign mdast past MAX_NESTING_DEPTH", () => {
+		let node: unknown = { type: "text", value: "x" };
+		for (let i = 0; i < 1000; i++) node = { type: "emphasis", children: [node] };
+		const input = { type: "root", children: [{ type: "paragraph", children: [node] }] };
+		const result = Mdast.fromMdastResult(input);
+		assert.isTrue(Result.isFailure(result));
+		if (Result.isFailure(result)) {
+			assert.instanceOf(result.failure, MdastDecodeError);
+		}
+	});
+
+
+it("succeeds on shallow input, fails typed once nesting exceeds safe depth", () => {
+		// normalizeNode counts depth from 0 at the root. A tree of
+		// root(0) > paragraph(1) > emphasis(N) > text reaches depth N+2.
+		const buildTree = (emphasisLevels: number): unknown => {
+			let node: unknown = { type: "text", value: "leaf" };
+			for (let i = 0; i < emphasisLevels; i++) node = { type: "emphasis", children: [node] };
+			return { type: "root", children: [{ type: "paragraph", children: [node] }] };
+		};
+		// 100 emphasis levels: max depth = 0+1+100 = 101, well under limit
+		const shallow = Mdast.fromMdastResult(buildTree(100));
+		assert.isTrue(Result.isSuccess(shallow), "100 levels should decode successfully");
+		// 253 emphasis levels: max depth = 0+1+253 = 254, still under limit
+		const nearLimit = Mdast.fromMdastResult(buildTree(253));
+		assert.isTrue(Result.isSuccess(nearLimit), "253 levels should decode successfully");
+	});
+
+	it("fails typed one level past MAX_NESTING_DEPTH", () => {
+		const buildTree = (emphasisLevels: number): unknown => {
+			let node: unknown = { type: "text", value: "leaf" };
+			for (let i = 0; i < emphasisLevels; i++) node = { type: "emphasis", children: [node] };
+			return { type: "root", children: [{ type: "paragraph", children: [node] }] };
+		};
+		// 256 emphasis levels: max depth = 0+1+256 = 257, over limit (257 > 256 = true)
+		const pastLimit = Mdast.fromMdastResult(buildTree(256));
+		assert.isTrue(Result.isFailure(pastLimit), "256 levels (depth=257) should fail typed");
+		if (Result.isFailure(pastLimit)) {
+			assert.instanceOf(pastLimit.failure, MdastDecodeError);
+		}
+	});
+
+	it("carries the depth in the Failure diagnostic", () => {
+		let node: unknown = { type: "text", value: "x" };
+		for (let i = 0; i < 1000; i++) node = { type: "emphasis", children: [node] };
+		const input = { type: "root", children: [{ type: "paragraph", children: [node] }] };
+		const result = Mdast.fromMdastResult(input);
+		assert.isTrue(Result.isFailure(result));
+		if (Result.isFailure(result)) {
+			const issue = result.failure.issue;
+			assert.isDefined(issue);
+		}
+	});
+
+	it("shallow valid input is unchanged by the depth guard", () => {
+		const input = {
+			type: "root",
+			children: [
+				{ type: "heading", depth: 1, children: [{ type: "text", value: "hi" }] },
+				{ type: "paragraph", children: [{ type: "text", value: "world" }] },
+			],
+		};
+		const result = Mdast.fromMdastResult(input);
+		assert.isTrue(Result.isSuccess(result));
+	});
 });

@@ -26,6 +26,7 @@
  */
 
 import { Effect, Result, Schema } from "effect";
+import { MAX_NESTING_DEPTH } from "./internal/limits.js";
 import { unescapeString } from "./internal/unescape.js";
 import type {
 	FlowContent,
@@ -73,6 +74,16 @@ export class MdastDecodeError extends Schema.TaggedError<MdastDecodeError>()("Md
 }) {
 	override get message(): string {
 		return "mdast input failed to decode into markdown nodes";
+	}
+}
+
+/** Thrown internally when foreign mdast exceeds the nesting depth limit. */
+class NestingDepthExceededError extends Error {
+	readonly depth: number;
+	constructor(depth: number) {
+		super(`NestingDepthExceeded: limit ${MAX_NESTING_DEPTH}, actual ${depth}`);
+		this.name = "NestingDepthExceeded";
+		this.depth = depth;
 	}
 }
 
@@ -346,9 +357,12 @@ const normalizePosition = (value: unknown): Record<string, unknown> => {
 // types onto the Frontmatter capture shape, and recurse into children.
 // Unrecognized types pass through shallowly so schema decoding reports them
 // as typed failures rather than this walk throwing.
-const normalizeNode = (value: unknown): unknown => {
+const normalizeNode = (value: unknown, depth: number = 0): unknown => {
 	if (!isRecord(value) || typeof value.type !== "string") {
 		return value;
+	}
+	if (depth > MAX_NESTING_DEPTH) {
+		throw new NestingDepthExceededError(depth);
 	}
 	const type = value.type;
 	const format = frontmatterTypes.get(type);
@@ -375,7 +389,7 @@ const normalizeNode = (value: unknown): unknown => {
 			type,
 			name: value.name,
 			attributes: Array.isArray(value.attributes) ? value.attributes.map(normalizeMdxAttribute) : value.attributes,
-			children: Array.isArray(value.children) ? value.children.map(normalizeNode) : value.children,
+			children: Array.isArray(value.children) ? value.children.map((child) => normalizeNode(child, depth + 1)) : value.children,
 			position: normalizePosition(value.position),
 		};
 	}
@@ -397,7 +411,7 @@ const normalizeNode = (value: unknown): unknown => {
 		normalized.value = code.endsWith("\n") ? code : `${code}\n`;
 	}
 	if (Array.isArray(value.children)) {
-		normalized.children = value.children.map(normalizeNode);
+		normalized.children = value.children.map((child) => normalizeNode(child, depth + 1));
 	}
 	normalized.position = normalizePosition(value.position);
 	return normalized;
@@ -496,7 +510,11 @@ export class Mdast {
 	 *   failing with {@link MdastDecodeError} carrying the structured issue.
 	 */
 	static fromMdastResult(input: unknown): Result.Result<Root, MdastDecodeError> {
-		return Result.mapError(decodeRoot(normalizeNode(input)), (error) => new MdastDecodeError({ issue: error.issue }));
+		try {
+			return Result.mapError(decodeRoot(normalizeNode(input)), (error) => new MdastDecodeError({ issue: error.issue }));
+		} catch (error) {
+			return Result.fail(new MdastDecodeError({ issue: error }));
+		}
 	}
 
 	/**
