@@ -3,6 +3,7 @@
 // the exported `Mdast` class.
 
 import { Effect, Result, Schema, SchemaIssue } from "effect";
+import { GuardExceeded, isGuardExceeded } from "./internal/carriers.js";
 import { MAX_NESTING_DEPTH } from "./internal/limits.js";
 import { unescapeString } from "./internal/unescape.js";
 import type {
@@ -62,16 +63,6 @@ export class MdastDecodeError extends Schema.TaggedError<MdastDecodeError>()("Md
 }) {
 	override get message(): string {
 		return "mdast input failed to decode into markdown nodes";
-	}
-}
-
-/** Thrown internally when foreign mdast exceeds the nesting depth limit. */
-class NestingDepthExceededError extends Error {
-	readonly depth: number;
-	constructor(depth: number) {
-		super(`NestingDepthExceeded: limit ${MAX_NESTING_DEPTH}, actual ${depth}`);
-		this.name = "NestingDepthExceeded";
-		this.depth = depth;
 	}
 }
 
@@ -354,13 +345,16 @@ const normalizePosition = (value: unknown): Record<string, unknown> => {
 // optional ones), synthesize sentinel positions, map frontmatter literal
 // types onto the Frontmatter capture shape, and recurse into children.
 // Unrecognized types pass through shallowly so schema decoding reports them
-// as typed failures rather than this walk throwing.
+// as typed failures rather than this walk throwing. The one throw is the
+// depth guard: it trips before the recursive schema decode can exhaust the
+// stack, and `fromMdastResult` materializes it as a typed failure. Foreign
+// input carries no trustworthy source offset, so the carrier records 0.
 const normalizeNode = (value: unknown, depth: number = 0): unknown => {
 	if (!isRecord(value) || typeof value.type !== "string") {
 		return value;
 	}
 	if (depth > MAX_NESTING_DEPTH) {
-		throw new NestingDepthExceededError(depth);
+		throw new GuardExceeded("NestingDepthExceeded", MAX_NESTING_DEPTH, depth, 0);
 	}
 	const type = value.type;
 	const format = frontmatterTypes.get(type);
@@ -545,27 +539,27 @@ export class Mdast {
 	 * plain tree built for `Markdown.stringify` can carry it straight in. A
 	 * value outside `"canonical" | "literal"` fails the decode typed.
 	 *
+	 * **Nesting is capped at 256 levels below the root**, the same cap the
+	 * parser and `Markdown.stringify` enforce. A tree with any node deeper
+	 * than that, leaves included, fails typed with a `SchemaIssue.InvalidValue`
+	 * issue before the schema decode runs, so hostile depth is never a defect.
+	 * Because leaves count, a document the parser accepts can still be
+	 * refused here: `"> ".repeat(255) + "x"` parses, but its `text` leaf sits
+	 * at depth 257, and `Markdown.stringify` refuses that tree too.
+	 *
 	 * @param input - A plain mdast tree, typically a `root`.
 	 * @returns A `Result` succeeding with the decoded {@link Root}, or
 	 *   failing with {@link MdastDecodeError} carrying the structured issue.
-	 * @remarks Depth counting differs across the package: the block parser
-	 * caps paragraph depth at `MAX_NESTING_DEPTH`, so a `text` child may land
-	 * at `MAX_NESTING_DEPTH + 1`. `Markdown.stringifyResult` already rejects
-	 * such trees; `fromMdastResult` now does the same. This is a known
-	 * inconsistency in depth bookkeeping, not a regression introduced by the
-	 * depth guard.
 	 */
 	static fromMdastResult(input: unknown): Result.Result<Root, MdastDecodeError> {
+		let normalized: unknown;
 		try {
-			return Result.mapError(decodeRoot(normalizeNode(input)), (error) => new MdastDecodeError({ issue: error.issue }));
+			normalized = normalizeNode(input);
 		} catch (error) {
-			if (!(error instanceof NestingDepthExceededError)) throw error;
-			return Result.fail(
-				new MdastDecodeError({
-					issue: new SchemaIssue.InvalidValue({ message: error.message }),
-				}),
-			);
+			if (!isGuardExceeded(error)) throw error;
+			return Result.fail(new MdastDecodeError({ issue: new SchemaIssue.InvalidValue({ message: error.message }) }));
 		}
+		return Result.mapError(decodeRoot(normalized), (error) => new MdastDecodeError({ issue: error.issue }));
 	}
 
 	/**

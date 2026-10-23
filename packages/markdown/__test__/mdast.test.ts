@@ -247,70 +247,49 @@ describe("Mdast.fromMdast", () => {
 		assert.isTrue(Result.isSuccess(effectFailure));
 	});
 
-	it("returns Failure (not throw) on deeply nested foreign mdast past MAX_NESTING_DEPTH", () => {
-		let node: unknown = { type: "text", value: "x" };
-		for (let i = 0; i < 1000; i++) node = { type: "emphasis", children: [node] };
-		const input = { type: "root", children: [{ type: "paragraph", children: [node] }] };
-		const result = Mdast.fromMdastResult(input);
-		assert.isTrue(Result.isFailure(result));
-		if (Result.isFailure(result)) {
-			assert.instanceOf(result.failure, MdastDecodeError);
-		}
-	});
-
-	it("succeeds on shallow input, fails typed once nesting exceeds safe depth", () => {
-		// normalizeNode counts depth from 0 at the root. A tree of
-		// root(0) > paragraph(1) > emphasis(N) > text reaches depth N+2.
-		const buildTree = (emphasisLevels: number): unknown => {
+	describe("nesting depth guard", () => {
+		// Depth counts from the root at 0: root(0) > paragraph(1) >
+		// emphasis(2..N+1) > text(N+2). The cap admits depth 256, so 254
+		// emphasis levels is the deepest tree that decodes.
+		const emphasisChain = (levels: number): unknown => {
 			let node: unknown = { type: "text", value: "leaf" };
-			for (let i = 0; i < emphasisLevels; i++) node = { type: "emphasis", children: [node] };
+			for (let i = 0; i < levels; i++) node = { type: "emphasis", children: [node] };
 			return { type: "root", children: [{ type: "paragraph", children: [node] }] };
 		};
-		// 100 emphasis levels: max depth = 0+1+100 = 101, well under limit
-		const shallow = Mdast.fromMdastResult(buildTree(100));
-		assert.isTrue(Result.isSuccess(shallow), "100 levels should decode successfully");
-		// 253 emphasis levels: max depth = 0+1+253 = 254, still under limit
-		const nearLimit = Mdast.fromMdastResult(buildTree(253));
-		assert.isTrue(Result.isSuccess(nearLimit), "253 levels should decode successfully");
-	});
 
-	it("fails typed one level past MAX_NESTING_DEPTH", () => {
-		const buildTree = (emphasisLevels: number): unknown => {
-			let node: unknown = { type: "text", value: "leaf" };
-			for (let i = 0; i < emphasisLevels; i++) node = { type: "emphasis", children: [node] };
-			return { type: "root", children: [{ type: "paragraph", children: [node] }] };
-		};
-		// 256 emphasis levels: max depth = 0+1+256 = 257, over limit (257 > 256 = true)
-		const pastLimit = Mdast.fromMdastResult(buildTree(256));
-		assert.isTrue(Result.isFailure(pastLimit), "256 levels (depth=257) should fail typed");
-		if (Result.isFailure(pastLimit)) {
-			assert.instanceOf(pastLimit.failure, MdastDecodeError);
-		}
-	});
+		it("decodes a tree whose deepest node sits exactly at the cap", () => {
+			assert.isTrue(Result.isSuccess(Mdast.fromMdastResult(emphasisChain(254))));
+		});
 
-	it("carries the depth in the Failure diagnostic", () => {
-		let node: unknown = { type: "text", value: "x" };
-		for (let i = 0; i < 1000; i++) node = { type: "emphasis", children: [node] };
-		const input = { type: "root", children: [{ type: "paragraph", children: [node] }] };
-		const result = Mdast.fromMdastResult(input);
-		assert.isTrue(Result.isFailure(result));
-		if (Result.isFailure(result)) {
-			const issue = result.failure.issue;
-			assert.instanceOf(issue, SchemaIssue.InvalidValue);
-			assert.strictEqual(issue._tag, "InvalidValue");
-			assert.isTrue(SchemaIssue.isIssue(issue));
-		}
-	});
+		it("fails typed one level past the cap, naming the depth", () => {
+			const result = Mdast.fromMdastResult(emphasisChain(255));
+			assert.isTrue(Result.isFailure(result));
+			if (Result.isFailure(result)) {
+				assert.instanceOf(result.failure, MdastDecodeError);
+				const issue = result.failure.issue;
+				assert.instanceOf(issue, SchemaIssue.InvalidValue);
+				assert.isTrue(SchemaIssue.isIssue(issue));
+				assert.include(String((issue as SchemaIssue.InvalidValue).annotations?.message), "limit 256, actual 257");
+			}
+		});
 
-	it("shallow valid input is unchanged by the depth guard", () => {
-		const input = {
-			type: "root",
-			children: [
-				{ type: "heading", depth: 1, children: [{ type: "text", value: "hi" }] },
-				{ type: "paragraph", children: [{ type: "text", value: "world" }] },
-			],
-		};
-		const result = Mdast.fromMdastResult(input);
-		assert.isTrue(Result.isSuccess(result));
+		it("fails typed rather than throwing on input deep enough to exhaust the stack", () => {
+			// 1000 levels once threw from the schema decoder; 3000 overflowed the stack.
+			for (const levels of [1000, 3000]) {
+				const result = Mdast.fromMdastResult(emphasisChain(levels));
+				assert.isTrue(Result.isFailure(result), `${levels} levels`);
+				if (Result.isFailure(result)) assert.instanceOf(result.failure, MdastDecodeError);
+			}
+		});
+
+		it("refuses a parsed tree whose leaf sits past the cap, as stringify does", () => {
+			// The parser caps container depth, not leaf depth: 255 nested
+			// blockquotes parse, but the text leaf lands at depth 257.
+			const atCap = gfm(`${"> ".repeat(254)}x\n`);
+			assert.isTrue(Result.isSuccess(Mdast.fromMdastResult(Mdast.toMdast(atCap))));
+			const pastCap = gfm(`${"> ".repeat(255)}x\n`);
+			assert.isTrue(Result.isFailure(Mdast.fromMdastResult(Mdast.toMdast(pastCap))));
+			assert.isTrue(Result.isFailure(Markdown.stringifyResult(pastCap)));
+		});
 	});
 });
