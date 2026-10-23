@@ -25,7 +25,7 @@
  * convention (presets name the node type after the language).
  */
 
-import { Effect, Result, Schema } from "effect";
+import { Effect, Result, Schema, SchemaIssue } from "effect";
 import { MAX_NESTING_DEPTH } from "./internal/limits.js";
 import { unescapeString } from "./internal/unescape.js";
 import type {
@@ -510,12 +510,21 @@ export class Mdast {
 	 * @param input - A plain mdast tree, typically a `root`.
 	 * @returns A `Result` succeeding with the decoded {@link Root}, or
 	 *   failing with {@link MdastDecodeError} carrying the structured issue.
+	 * @remarks Depth counting differs across the package: the block parser
+	 * caps paragraph depth at `MAX_NESTING_DEPTH`, so a `text` child may land
+	 * at `MAX_NESTING_DEPTH + 1`. `Markdown.stringifyResult` already rejects
+	 * such trees; `fromMdastResult` now does the same. This is a known
+	 * inconsistency in depth bookkeeping, not a regression introduced by the
+	 * depth guard.
 	 */
 	static fromMdastResult(input: unknown): Result.Result<Root, MdastDecodeError> {
 		try {
 			return Result.mapError(decodeRoot(normalizeNode(input)), (error) => new MdastDecodeError({ issue: error.issue }));
 		} catch (error) {
-			return Result.fail(new MdastDecodeError({ issue: error }));
+			if (!(error instanceof NestingDepthExceededError)) throw error;
+			return Result.fail(new MdastDecodeError({
+				issue: new SchemaIssue.InvalidValue({ message: error.message }),
+			}));
 		}
 	}
 

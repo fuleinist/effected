@@ -4,7 +4,7 @@
 // sentinel positions, frontmatter literal mapping, and typed failure.
 
 import { assert, describe, it } from "@effect/vitest";
-import { Effect, Result } from "effect";
+import { Effect, Result, SchemaIssue } from "effect";
 import { Markdown, MarkdownParseOptions } from "../src/Markdown.js";
 import { Frontmatter, Root } from "../src/MarkdownNode.js";
 import { Mdast, MdastDecodeError } from "../src/Mdast.js";
@@ -296,7 +296,9 @@ describe("Mdast.fromMdast", () => {
 		assert.isTrue(Result.isFailure(result));
 		if (Result.isFailure(result)) {
 			const issue = result.failure.issue;
-			assert.isDefined(issue);
+			assert.instanceOf(issue, SchemaIssue.InvalidValue);
+			assert.strictEqual(issue._tag, "InvalidValue");
+			assert.isTrue(SchemaIssue.isIssue(issue));
 		}
 	});
 
