@@ -258,8 +258,7 @@ describe("Mdast.fromMdast", () => {
 		}
 	});
 
-
-it("succeeds on shallow input, fails typed once nesting exceeds safe depth", () => {
+	it("succeeds on shallow input, fails typed once nesting exceeds safe depth", () => {
 		// normalizeNode counts depth from 0 at the root. A tree of
 		// root(0) > paragraph(1) > emphasis(N) > text reaches depth N+2.
 		const buildTree = (emphasisLevels: number): unknown => {

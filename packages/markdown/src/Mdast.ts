@@ -389,7 +389,9 @@ const normalizeNode = (value: unknown, depth: number = 0): unknown => {
 			type,
 			name: value.name,
 			attributes: Array.isArray(value.attributes) ? value.attributes.map(normalizeMdxAttribute) : value.attributes,
-			children: Array.isArray(value.children) ? value.children.map((child) => normalizeNode(child, depth + 1)) : value.children,
+			children: Array.isArray(value.children)
+				? value.children.map((child) => normalizeNode(child, depth + 1))
+				: value.children,
 			position: normalizePosition(value.position),
 		};
 	}
