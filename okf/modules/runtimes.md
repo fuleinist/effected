@@ -10,10 +10,10 @@ tags:
   - bundle
 generated:
   by: "okfit/claude-code"
-  at: 2026-09-28T18:00:23Z
+  at: 2026-10-23T20:25:49Z
 integrity:
   generated:
-    body: a4e1d54883623705
+    body: 273b3b30dca3e2d0
 ---
 
 # runtimes
@@ -81,6 +81,12 @@ and [regenerating the bundled defaults](../runbooks/regenerate-runtimes-bundled-
 
 See [cache-strategy-as-layer](../decisions/cache-strategy-as-layer.md) —
 the package's signature DX and the shape most worth not breaking.
+
+Population is lazy and gated by `internal/once.ts`, which is core's
+`Effect.cachedWithTTL` with an exit-keyed time-to-live: a success is
+memoized for the layer's lifetime, a failure is retried by the next
+`resolve`. Concurrent resolves share one in-flight population and its
+outcome, so a failed `layerFresh` fetch fails every resolve waiting on it.
 
 ## Design decisions
 

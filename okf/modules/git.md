@@ -10,10 +10,10 @@ tags:
   - security
 generated:
   by: "okfit/claude-code"
-  at: 2026-09-29T07:46:37Z
+  at: 2026-10-23T20:29:06Z
 integrity:
   generated:
-    body: 9e31a15102a84036
+    body: 7267a9e29dee16e8
 ---
 
 # git
@@ -256,6 +256,18 @@ policy (`shortName`, `nearMatches`) on the entry value, not in the
 service. `ConfigListEntry` splits `--list -z` output on the first newline
 so multi-line values survive, and a valueless boolean-shorthand key
 surfaces as `""`.
+
+`Git.status` always passes an explicit `--untracked-files=<mode>`
+(`GitUntrackedFilesMode`), defaulting to `"all"`, so the listing names one
+`??` entry per untracked file and a caller's `status.showUntrackedFiles`
+config cannot hide or reshape the untracked axis. Other config, such as
+`status.renames`, still applies. A `??` path ending in `/` is a directory,
+never a file: under `"normal"` it is a collapsed directory of untracked
+files, and under `"all"` only an untracked nested repository still appears
+that way (`vendor/inner/`). The default is `"all"` rather than git's
+`"normal"` because every consumer that turns entries into file changes
+needs files, and silk-release-action's release commit failed reading a
+collapsed `.changeset/pre/` entry.
 
 ## Rendering status back to text
 

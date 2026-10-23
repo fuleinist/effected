@@ -39,8 +39,7 @@ Argument order is **type params first** via `Context.Service<Self, Shape>()`,
 
 **Tags are Effects.** A service key is a
 first-class Effect — `Context.Key<Identifier, Shape> extends
-Effect<Shape, never, Identifier>` (`Context.ts:68` — line 67 is the
-closing comment delimiter, not the declaration) — so
+Effect<Shape, never, Identifier>` (`Context.ts:68`) — so
 `yield* Database` works, and combinator-style consumer code like
 `Effect.flatMap(Database, (db) => …)` composes directly with no `.asEffect()`
 or unwrap step. Related gotcha when hunting the source: the module is
@@ -533,11 +532,11 @@ deeper.
 ### `Layer.mock`'s optionality is earned, not given — and one plain member revokes it
 
 `Layer.mock(Service, impl)` takes `PartialEffectful<S>`, not `Partial<S>`
-(`Layer.ts:2352`). That type is not "everything optional" — it splits the shape
+(`Layer.ts:2354`). That type is not "everything optional" — it splits the shape
 on one predicate:
 
 ```ts
-// Layer.ts:2277 — a member is OPTIONAL iff it matches AnyEffectOrStream; else REQUIRED
+// Layer.ts:2279 — a member is OPTIONAL iff it matches AnyEffectOrStream; else REQUIRED
 export type PartialEffectful<A extends object> = Types.Simplify<
   & { [K in keyof A as A[K] extends AnyEffectOrStream ? K : never]?: A[K] }
   & { [K in keyof A as A[K] extends AnyEffectOrStream ? never : K]: A[K] }

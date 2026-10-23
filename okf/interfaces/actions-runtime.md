@@ -10,7 +10,7 @@ tags:
   - security
 generated:
   by: "okfit/claude-code"
-  at: 2026-10-01T01:56:30Z
+  at: 2026-10-23T21:09:05Z
 verified:
   - by: human:spencer
     at: 2026-09-24T00:12:31.377Z
@@ -18,7 +18,7 @@ verified:
     at: 2026-10-13T21:42:59Z
 integrity:
   generated:
-    body: 6f14830f05c4f2fa
+    body: 541a63bc142e1775
   verified:
     by: human:spencer
     at: 2026-10-13T21:42:59Z
@@ -125,7 +125,10 @@ keep working; the grammar left so a package that is not an Actions runtime can
 use it without the integrated tier. `ActionLogger` owns groups, the buffered
 step renderer and annotations, and ships the `Logger` that maps every kit
 package's `Effect.log*` calls onto workflow commands — the mapping belongs to
-one `Logger` at the edge, not to each library.
+one `Logger` at the edge, not to each library. `group` is nesting-aware,
+because the runner cannot nest groups: a fiber-scoped depth lets only the
+outermost call write `::group::`/`::endgroup::`, and a nested call degrades
+to a neutralized `▸ <name>` header line inside the open group.
 
 The same logger neutralizes the plain text it writes (`CommandNeutralizer`):
 the runner reads every line of stdout, so an `Info` message carrying `::` at the

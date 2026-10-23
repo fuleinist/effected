@@ -8,10 +8,10 @@ resource: ../../packages/yaml
 tags: [architecture, bundle]
 generated:
   by: "okfit/claude-code"
-  at: 2026-09-13T05:33:04Z
+  at: 2026-10-23T20:36:18Z
 integrity:
   generated:
-    body: a4131429d3083c63
+    body: 5a757964ce250071
 ---
 
 # @effected/yaml
@@ -311,6 +311,16 @@ recursive composition path, where nodes are trusted (built from validated
 CST) and per-node `make` validation is exactly the hot-path cost the
 observability posture already refuses to pay. All public surface, tests and
 doc examples use `make`.
+
+The twins cover the document and format layers too: `YamlDocument.parseResult`,
+`parseAllResult` and the instance `stringifyResult`, and
+`YamlFormat.modifyResult` / `modifyToStringResult`. Every stringify path
+— value, document and `modify` — maps the stringifier's internal throws
+through one shared `stringifyDefectToError` triage. `modify` lowers the
+caller's value counting depth from the target's own path depth, because the
+stringifier counts from the document root; a value that fits at `[]` can
+fail `NestingDepthExceeded` a few keys down, and it fails typed, never as a
+defect.
 
 `new` on a v4 tagged class still validates structurally — explicit
 `undefined` for an `optionalKey` field throws even with

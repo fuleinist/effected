@@ -17,10 +17,10 @@ sources:
     title: "Core Crypto at 4.0.6: a one-shot digest and random primitives, no HMAC"
 generated:
   by: "claude-code/opus-5.5"
-  at: 2026-10-23T01:39:30Z
+  at: 2026-10-23T20:34:34Z
 integrity:
   generated:
-    body: 3e1bfd09f9be7055
+    body: ad6a1fe13a64908a
   verified:
     by: human:spencer
     at: 2026-10-23T04:05:21Z
@@ -52,6 +52,10 @@ Every keyed operation is computed through `globalThis.crypto.subtle`, read direc
 ## Consequences
 
 Signing is asynchronous, so `SigV4.sign`, `Hmac.sign` and `ConstantTime.secretsEqual` return an `Effect`, and it is truly asynchronous: the fiber waits on a WebCrypto promise, so a test that forks one and then adjusts `TestClock` needs a latch. Only SigV4 needs `Crypto` in `R`: [`github-actions`](../modules/github-actions.md)' `BlobStore.layerS3` gains `Crypto` in its requirements, a public type change that `NodeServices.layer` already satisfies. A streamed digest stays outside both backends, since neither hashes a stream.
+
+## Out of scope: nonce randomness
+
+This decision covers keyed operations and digests. It does not cover drawing random bytes, which core `Crypto` declares (`randomBytes`) and which [require core in R](../conventions/require-in-r-default.md) therefore sends to `R`. The one place the kit draws random bytes from WebCrypto instead, [`config-file`](../modules/config-file.md)'s AES-GCM IV, is a separately recorded, security-motivated exception for nonces (a swappable random source can repeat a GCM nonce), not an application of this decision.
 
 [^owner]: conversation with the repository owner
 [^core-crypto]: `../../.repos/effect/packages/effect/src/Crypto.ts`

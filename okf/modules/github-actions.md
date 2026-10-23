@@ -10,10 +10,10 @@ tags:
   - bundle
 generated:
   by: "claude-code/opus-5.5"
-  at: 2026-10-22T23:55:11Z
+  at: 2026-10-23T21:09:05Z
 integrity:
   generated:
-    body: 087997e089e1124f
+    body: 7fcb5ae9c4721ea6
 ---
 
 # github-actions
@@ -215,6 +215,10 @@ The doubles worth knowing before writing a test:
   re-seeding `layer*` form, per memfs's isolation contract) so the
   assertions read the volume the run wrote to, and seed the runner-file
   directory, since a write needs its parent.
+- `OidcTokenIssuer.recording(claims)` answers like `layerFor` and
+  journals every audience a call asked for — the double for asserting
+  that `ActionsRegistryCredential.workload` forwarded the registry's
+  audience verbatim.
 - `OidcTokenIssuer.layerFor(claims)` answers a **real, decodable**
   unsigned JWT built from the same claims `claims()` reports, which is
   what makes the provenance path reachable under test. The claims are

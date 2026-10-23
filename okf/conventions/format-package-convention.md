@@ -9,10 +9,10 @@ tags:
   - dx
 generated:
   by: "okfit/claude-code"
-  at: 2026-09-13T05:33:04Z
+  at: 2026-10-23T22:19:34Z
 integrity:
   generated:
-    body: 56015737879a155f
+    body: 598f62c62424f17e
 ---
 
 # Format-package convention
@@ -84,11 +84,11 @@ and a value path passing non-objects through are the same rule.
 
 | Package | Formatting surface | Shape | Fails on bad input? |
 | --- | --- | --- | --- |
-| `jsonc` | `JsoncFormatter.format` / `.formatToString` (`packages/jsonc/src/JsoncFormatter.ts:33,48`) | `string → ReadonlyArray<JsoncEdit>` / `string → string` | No — pure and total |
-| `yaml` | `YamlFormat.format` / `.formatToString` (`packages/yaml/src/YamlFormat.ts:799,826`) | same shape | No — malformed input yields no edits rather than corrupting the document |
-| `toml` | `TomlFormat.format` / `.formatToString` (`packages/toml/src/TomlFormat.ts:775,790`) | same shape | No — same construction |
-| `markdown` | `MarkdownFormat.format` / `.formatToString` (`packages/markdown/src/MarkdownFormat.ts:609,673`) | same shape | No — an unparseable document yields no edits |
-| `package-json` | `PackageJsonFormat.sortValue` / `.formatToString` (`packages/package-json/src/PackageJsonFormat.ts:159,196`) | `T → T` / `string → Result<string, …>` | Text path fails on non-JSON only |
+| `jsonc` | `JsoncFormatter.format` / `.formatToString` (`packages/jsonc/src/JsoncFormatter.ts:42,56`) | `string → ReadonlyArray<JsoncEdit>` / `string → string` | No — pure and total |
+| `yaml` | `YamlFormat.format` / `.formatToString` (`packages/yaml/src/YamlFormat.ts:832,865`) | same shape | No — malformed input yields no edits rather than corrupting the document |
+| `toml` | `TomlFormat.format` / `.formatToString` (`packages/toml/src/TomlFormat.ts:798,819`) | same shape | No — same construction |
+| `markdown` | `MarkdownFormat.format` / `.formatToString` (`packages/markdown/src/MarkdownFormat.ts:637,707`) | same shape | No — an unparseable document yields no edits |
+| `package-json` | `PackageJsonFormat.sortValue` / `.formatToString` (`packages/package-json/src/PackageJsonFormat.ts:272,309`) | `T → T` / `string → Result<string, …>` | Text path fails on non-JSON only |
 
 The four format packages converged independently on the same shape: a
 `*Format`/`*Formatter` concept class carrying total statics, edit-based

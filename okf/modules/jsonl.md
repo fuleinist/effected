@@ -10,10 +10,10 @@ tags:
   - architecture
 generated:
   by: "okfit/claude-code"
-  at: 2026-10-08T06:11:30Z
+  at: 2026-10-23T20:28:29Z
 integrity:
   generated:
-    body: 5a9646fb2bd50a93
+    body: bc78d301fefaa39c
 ---
 
 # `@effected/jsonl`
@@ -91,6 +91,21 @@ right goals for a distributed event log and the wrong goals for a file a
 human greps, a hook reads with `jq`, and git diffs in a pull request. What
 is borrowed from it is the shape of an event definition: a tag plus a
 payload schema, defined once and collected into a group.
+
+Core's `effect/encoding/Ndjson` was declined as the line codec, and is
+worth not re-litigating. It is an unstable, forward-only `Channel` codec,
+and it differs from what a journal needs in four ways. It fails the whole
+channel at the first bad line, where the journal classifies each line (a
+malformed line, a torn unterminated tail, a permanent hole) and keeps
+reading. It emits parsed values only, where the journal's line slices
+carry the UTF-8 byte offsets that are its resume cursors. It ends a line
+on a bare `\r`, where the journal treats a bare `\r` as content and only
+`\n` or `\r\n` as a terminator. And a forward `Channel` can serve
+neither of the journal's other two readers: the pure core is synchronous
+and `Result`-returning per the [sync-primitive
+policy](../conventions/sync-primitive-policy.md), so a hook reads one line
+with no runtime, and the engine walks the file backwards from its tail
+(`readTailUntil` over a `base`-shifted line split).
 
 ## The envelope contract
 

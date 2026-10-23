@@ -25,10 +25,10 @@ sources:
     resource: ../../packages/workspaces/src/internal/configDependencySpecGrammar.ts
 generated:
   by: "okfit/claude-code"
-  at: 2026-09-27T07:39:04Z
+  at: 2026-10-23T21:12:01Z
 integrity:
   generated:
-    body: 6448337dd46b05bf
+    body: f2533ac83aa9718f
 ---
 
 # @effected/workspaces catalogs and the config-dependency seam
@@ -161,7 +161,10 @@ copy when its manifest carries exactly the declared version; otherwise the
 store's `links/<name>/<version>/*/node_modules/<name>` with the inner
 manifest verified rather than the path trusted, the store located from
 `.modules.yaml`, then the realpath of any `.pnpm-config` entry, then the
-conventional environment and platform locations; otherwise, under the
+conventional environment and platform locations (`$PNPM_HOME`,
+`$XDG_DATA_HOME` and `%LOCALAPPDATA%` read through `Config`, so a test
+swaps the `ConfigProvider` rather than mutating `process.env`, and an empty
+value counts as unset); otherwise, under the
 subprocess layer alone, a verified fetch into the store (below); otherwise
 a typed, fail-closed `hooks` assembly error with `reason: "notInstalled"`,
 naming the package, the declared version and the ref that declared it,
