@@ -1,5 +1,6 @@
 import { LocalExec, Run } from "@effected/commands";
 import { Context, Crypto, Effect, FileSystem, Layer, Option, Redacted as Red, Schema } from "effect";
+import * as Hex from "effect/encoding/Hex";
 import { ChildProcess, ChildProcessSpawner } from "effect/process";
 import { IntegrityHash } from "./IntegrityHash.js";
 import { NpmExecutor } from "./NpmExecutor.js";
@@ -19,13 +20,47 @@ const PROVENANCE_URL = /https:\/\/search\.sigstore\.dev\/\?logIndex=\d+/;
  * never does, and the publish goes out unauthenticated with no diagnostic. A
  * registry path is preserved (`//host/artifactory/api/npm/repo/:_authToken`).
  */
-const authKey = (registry: string, credential: RegistryCredential): string => {
+const authKey = (registry: string, kind: RegistryCredential["kind"]): string => {
 	const withoutScheme = registry.replace(/^https?:/, "");
 	const withSlash = withoutScheme.endsWith("/") ? withoutScheme : `${withoutScheme}/`;
 	// npm reads BOTH keys per registry, checking `_authToken` first and then
 	// `_auth` (npm-registry-fetch's `hasAuth`), so the credential's own kind
 	// picks the key and neither shadows the other.
-	return `${withSlash}:${credential.kind === "token" ? "_authToken" : "_auth"}`;
+	return `${withSlash}:${kind === "token" ? "_authToken" : "_auth"}`;
+};
+
+/**
+ * Replaces the first line keyed `key` with `line`, and drops later duplicates
+ * and every line keyed `stale`.
+ *
+ * @remarks
+ * `stale` is the same registry's other-scheme key. npm checks `_authToken`
+ * before `_auth`, so a token line left behind would silently win over a basic
+ * credential just written, and a basic line left behind would outlive the
+ * credential that replaced it. `replaced` is false when no line is keyed
+ * `key`, so the caller appends to `text`, whose stale lines are already gone.
+ * Lines split on `\n` only, so every untouched line (including a
+ * trailing `\r`) survives byte for byte; a replaced line keeps its `\r`.
+ */
+const replaceKey = (
+	text: string,
+	key: string,
+	stale: string,
+	line: string,
+): { readonly text: string; readonly replaced: boolean } => {
+	const out: Array<string> = [];
+	let replaced = false;
+	for (const raw of text.split("\n")) {
+		const eq = raw.indexOf("=");
+		const name = eq === -1 ? undefined : raw.slice(0, eq).trim();
+		if (name === key) {
+			if (!replaced) out.push(raw.endsWith("\r") ? `${line}\r` : line);
+			replaced = true;
+		} else if (name !== stale) {
+			out.push(raw);
+		}
+	}
+	return { text: out.join("\n"), replaced };
 };
 
 /** What `npm pack --json` reports for one tarball. */
@@ -48,6 +83,8 @@ const PackJsonEntry = Schema.Struct({
  * single-package pack is one entry either way.
  */
 const PackJson = Schema.Union([Schema.Array(PackJsonEntry), Schema.Record(Schema.String, PackJsonEntry)]);
+
+const decodePackJson = Schema.decodeUnknownEffect(Schema.fromJsonString(PackJson));
 
 /**
  * A packed tarball and the two digests that describe it.
@@ -173,7 +210,20 @@ export interface PackagePublishShape {
 	 * the token in a CI log is the **caller's** job; this package takes a
 	 * `Redacted` and has no opinion about log output.
 	 *
-	 * An existing npmrc is appended to, never replaced. A missing file
+	 * Every call upserts, because npm reads the **first** line with a matching
+	 * key: a second line for the same registry, appended below the first, would
+	 * be silently shadowed, and a re-minted short-lived credential would never
+	 * take effect. So the first existing line whose key (the text before the
+	 * first `=`, trimmed) equals the key this call writes is replaced in place,
+	 * any later lines with that key are removed, and every other line is left
+	 * byte for byte in its original order. The same registry's other-scheme key
+	 * (`_auth` when writing a token, `_authToken` when writing a basic
+	 * credential) is removed too, because npm checks `_authToken` first and a
+	 * leftover would shadow or outlive the credential just written. With no
+	 * matching line, the new one is appended. The
+	 * registry path is part of the key, and a missing trailing slash on
+	 * `registry` is added, so `https://host/npm` and `https://host/npm/` write
+	 * the same key. A missing file
 	 * (`NotFound`) starts empty; any other read failure — an unreadable file, a
 	 * directory at the path — fails `PublishError` with kind `"auth"` and leaves
 	 * the file untouched, rather than overwriting config it could not read.
@@ -218,11 +268,6 @@ const make = Effect.fnUntraced(function* () {
 			Effect.provideService(LocalExec, local),
 		);
 
-	const hex = (bytes: Uint8Array): string =>
-		Array.from(bytes)
-			.map((byte) => byte.toString(16).padStart(2, "0"))
-			.join("");
-
 	/** Runs an npm invocation, mapping a command failure onto `kind`. */
 	const npm = (
 		args: ReadonlyArray<string>,
@@ -257,16 +302,11 @@ const make = Effect.fnUntraced(function* () {
 			),
 		);
 
+	// One decode, JSON text to entries: the union covers npm 11's array and
+	// npm 12's name-keyed object, and either failure is `output`.
 	const parsePackJson = (stdout: string, subject: string) =>
-		Effect.try({
-			try: () => JSON.parse(stdout) as unknown,
-			catch: (cause) => new PublishError({ kind: "output", subject, cause }),
-		}).pipe(
-			Effect.flatMap((parsed) =>
-				Schema.decodeUnknownEffect(PackJson)(parsed).pipe(
-					Effect.catch((cause) => Effect.fail(new PublishError({ kind: "output", subject, cause }))),
-				),
-			),
+		decodePackJson(stdout).pipe(
+			Effect.mapError((cause) => new PublishError({ kind: "output", subject, cause })),
 			Effect.flatMap((decoded) => {
 				// Annotated on purpose: `Array.isArray`'s `arg is any[]` cannot narrow
 				// the union's `ReadonlyArray` member, so the true branch degrades to
@@ -308,10 +348,18 @@ const make = Effect.fnUntraced(function* () {
 				),
 			);
 		const secret = options.credential.kind === "token" ? options.credential.token : options.credential.encoded;
-		const line = `${authKey(options.registry, options.credential)}=${Red.value(secret)}`;
-		const separator = existing === "" || existing.endsWith("\n") ? "" : "\n";
+		const key = authKey(options.registry, options.credential.kind);
+		const line = `${key}=${Red.value(secret)}`;
+		const upserted = replaceKey(
+			existing,
+			key,
+			authKey(options.registry, options.credential.kind === "token" ? "basic" : "token"),
+			line,
+		);
+		const base = upserted.text;
+		const separator = base === "" || base.endsWith("\n") ? "" : "\n";
 		yield* fs
-			.writeFileString(options.npmrcPath, `${existing}${separator}${line}\n`)
+			.writeFileString(options.npmrcPath, upserted.replaced ? base : `${base}${separator}${line}\n`)
 			.pipe(
 				Effect.catch((cause) => Effect.fail(new PublishError({ kind: "auth", registry: options.registry, cause }))),
 			);
@@ -351,7 +399,7 @@ const make = Effect.fnUntraced(function* () {
 			name: entry.name,
 			version: entry.version,
 			...integrityField(entry.integrity),
-			sha256Hex: hex(digest),
+			sha256Hex: Hex.encode(digest),
 			...(entry.size === undefined ? {} : { packedSize: entry.size }),
 			...(entry.unpackedSize === undefined ? {} : { unpackedSize: entry.unpackedSize }),
 			...(entry.entryCount === undefined ? {} : { fileCount: entry.entryCount }),
