@@ -1,5 +1,345 @@
 # @effected/git
 
+## 0.24.0
+
+### Maintenance
+
+- Upgrades core Effect library dependencies to v4.0.6 [#1039][#1039]
+
+### Thanks
+
+Thanks to [@spencerbeggs](https://github.com/spencerbeggs) for their contributions!
+
+[#1039]: https://github.com/spencerbeggs/effected/pull/1039
+
+## 0.23.0
+
+### Maintenance
+
+- Upgrades core Effect library dependencies to v4.0.5 [#1019][#1019]
+
+### Thanks
+
+Thanks to [@spencerbeggs](https://github.com/spencerbeggs) for their contributions!
+
+[#1019]: https://github.com/spencerbeggs/effected/pull/1019
+
+## 0.22.0
+
+### Maintenance
+
+- Upgrades core Effect library dependencies to v4.0.4 [#1008][#1008]
+
+### Thanks
+
+Thanks to [@spencerbeggs](https://github.com/spencerbeggs) for their contributions!
+
+[#1008]: https://github.com/spencerbeggs/effected/pull/1008
+
+## 0.21.0
+
+### Dependencies
+
+| Dependency | Type | Action | From | To |
+| --- | --- | --- | --- | --- |
+| effect | peerDependency | updated | 4.0.2 | ^4.0.3 |
+
+- Effect 4.0.3 advance: the `effect` peer and catalog move from the exact `4.0.2` hold back to `^4.0.3`. No API change. [#1000][#1000]
+
+### Thanks
+
+Thanks to [@spencerbeggs](https://github.com/spencerbeggs) for their contributions!
+
+[#1000]: https://github.com/spencerbeggs/effected/pull/1000
+
+## 0.20.1
+
+### Bug Fixes
+
+- Republished with every `effect` and `@effect/*` version pinned exactly to `4.0.2`, both peer and dependency ranges.
+
+- On 2026-10-10, every `@effect/*` package published at `4.0.3`, but `effect@4.0.3` itself never reached npm (Effect-TS/effect#8994). The 4.0.3 packages require `effect ^4.0.3`. A caret range on any of them therefore resolves a 4.0.3 package next to `effect@4.0.2`, and the program crashes when it imports them. Exact pins keep a fresh install of any kit package on a matched set until `effect@4.0.3` is available. [#997][#997]
+
+### Thanks
+
+Thanks to [@spencerbeggs](https://github.com/spencerbeggs) for their contributions!
+
+[#997]: https://github.com/spencerbeggs/effected/pull/997
+
+## 0.20.0
+
+### Breaking Changes
+
+- The kit now builds on and peers stable `effect` `^4.0.0`, in place of an exact release-candidate pin. Move `effect` and every `@effect/*` package to the same `4.x` version in one install: Effect releases them together at one version. A package from this release cannot share an install with an `effect` release candidate. The peer is a caret range, so later `4.x` releases of Effect satisfy the kit without a kit release.
+- Kit exports are unchanged. A consumer moving to stable `effect` meets these changes in its own code:
+  - `Array`, `Chunk`, `Effect` and `Record` `partition`, their `separate` helpers and `Option.partitionMap` return `[successes, failures]`. Where both sides share a type, the reversed destructuring still compiles, so search for every call.
+  - `Schema.brand` takes one identifier and is type-only: the identifier is not stored on the AST and does not survive `SchemaRepresentation`. Compose distinct brands by applying `brand` more than once.
+  - `TestSchema`'s round-trip assertion is `verifyRoundTrip`, with Effect forms `succeedEffect`, `failEffect` and `verifyRoundTripEffect`.
+  - Effect marks some APIs `@stability unstable`: those may change in a minor Effect release. Untagged APIs follow semver.
+
+### Documentation
+
+- Every exported construct's TSDoc was reviewed against the current API. Summaries open with what the construct does, error channels and requirements are stated, examples use real imports and compile, and links resolve. Comments that described options, errors or defaults the code does not have were corrected. [#910][#910]
+
+### Thanks
+
+Thanks to [@spencerbeggs](https://github.com/spencerbeggs) for their contributions!
+
+[#910]: https://github.com/spencerbeggs/effected/pull/910
+
+## 0.19.0
+
+### Features
+
+- `Git.commonDir(cwd)` and `GitCommand.commonDir()` return the absolute, symlink-resolved path of the git directory a repository shares with all of its linked worktrees, so two answers compare with `===`. It fails with `GitCommandError | NotARepositoryError` and needs git 2.31 or newer; an older git, which echoes the unknown flag and exits 0, fails as a `GitCommandError` instead of returning a wrong answer. Only git's trailing newline is removed, so a path ending in whitespace keeps it.
+
+### Documentation
+
+- `Git.repoRoot` now documents that its answer is physical: symlinks are resolved. [#882][#882]
+
+### Thanks
+
+Thanks to [@spencerbeggs](https://github.com/spencerbeggs) for their contributions!
+
+[#882]: https://github.com/spencerbeggs/effected/pull/882
+
+## 0.18.1
+
+### Bug Fixes
+
+- JSON Schemas derived from this package's schemas carry their string `pattern` again. Effect's JSON Schema export emits a `Schema.isPattern` check as `pattern` only when its regular expression has the `u` flag, and without it the pattern was dropped silently, leaving a bare `{ "type": "string" }`. Decoding was never affected. Every pattern in the package now has the `u` flag, which does not change what it accepts. [#866][#866]
+
+### Thanks
+
+Thanks to [@spencerbeggs](https://github.com/spencerbeggs) for their contributions!
+
+[#866]: https://github.com/spencerbeggs/effected/pull/866
+
+## 0.18.0
+
+### Breaking Changes
+
+- The kit now builds on and peers `effect` `4.0.0-rc.118`, pinned exactly. Consumers must move `effect` and every `@effect/*` package to `4.0.0-rc.118` in the same install. Effect removed the `effect/unstable/*` export paths in this release, so an `@effected` package built on rc.118 cannot share an install with `effect` rc.117.
+
+- Moving the pin also closes a fresh-install failure on rc.117. `@effect/platform-node@4.0.0-rc.117` depends on `@effect/platform-node-shared` with a caret, so an install without a lockfile paired the rc.118 shared package with `effect` rc.117 and failed at startup with `ERR_MODULE_NOT_FOUND`.
+
+- Consumers moving to this release: effect removed the `effect/unstable/*` export paths (imports become `effect/<module>`), moved `Arbitrary` to `effect`, split `effect/Encoding` into `effect/encoding/Base64`, `Base64Url` and `Hex`, and renamed the `Schema` range and string checks (`isLengthBetween` → `isBetweenLength`, `isStartsWith` → `isStartingWith`, and so on). Kit exports are otherwise unchanged; the kit's own imports moved onto the new paths. [#864][#864]
+
+### Thanks
+
+Thanks to [@spencerbeggs](https://github.com/spencerbeggs) for their contributions!
+
+[#864]: https://github.com/spencerbeggs/effected/pull/864
+
+## 0.17.0
+
+### Features
+
+- Upgrades core Effect to `rc-117` [#812][#812]
+
+### Thanks
+
+Thanks to [@spencerbeggs](https://github.com/spencerbeggs) for their contributions!
+
+[#812]: https://github.com/spencerbeggs/effected/pull/812
+
+## 0.16.0
+
+### Breaking Changes
+
+#### The whole kit tracks Effect `4.0.0-rc.116`
+
+- Every package's `effect` peer moves from `4.0.0-rc.115` to `4.0.0-rc.116`. The kit uses exact prerelease pins rather than a caret, so a consumer must move with it. No `@effected` API changes shape on this advance; the kit itself needed one edit (`Stream.scan` now takes a lazy initial state, met once in `@effected/jsonl`'s `Journal.projection`). A consumer that upgrades meets the rc.116 renames on its own code:
+
+- `SchemaTransformation.make` is `makeTransformation`, and `Transformation#compose` is the dual standalone `SchemaTransformation.composeTransformation`.
+
+- `SchemaGetter.Getter` is a tagged union exposing only `pipe`: `new SchemaGetter.Getter`, `onSome` and `onNone` are gone in favour of `SchemaGetter.map` / `compose` / `run` and `transformEffect` / `transformOptionalEffect`.
+
+- `Stream.scan` and `Stream.scanEffect` take `() => initial`; `Stream.partition` returns `[passes, fails]`; `Stream.mapBoth` takes `onElement` / `onError`.
+
+- `Effect.orElseSucceed` passes the error to its fallback and `Effect.isEffect` narrows to `Effect<unknown, unknown, unknown>`.
+
+- `ByteSize.Input` string literals are checked at compile time; parse external strings with `ByteSize.fromString`.
+
+- Arbitrary shrinking changed, so property-test replay tokens recorded at rc.115 no longer reproduce.
+
+### Documentation
+
+#### The Claude Code and Copilot plugins teach the rc.116 surface
+
+- The `effect-v4-schema` transformation reference composes transformations with `SchemaTransformation.composeTransformation` and describes the `Getter` surface rc.116 left behind; the source-lookup and testing skills report rc.116 as the kit's pin and the two-copy lockfile shape the bridge now produces (`rc.115` for the toolchain, `rc.116` for the kit); the session-start briefing reports rc.116.
+
+### Dependencies
+
+| Dependency | Type | Action | From | To |
+| --- | --- | --- | --- | --- |
+| @effect/platform-node | devDependency | updated | 4.0.0-rc.115 | 4.0.0-rc.116 |
+| @effect/vitest | devDependency | updated | 4.0.0-rc.115 | 4.0.0-rc.116 |
+| effect | devDependency | updated | 4.0.0-rc.115 | 4.0.0-rc.116 |
+| effect | peerDependency | updated | 4.0.0-rc.115 | 4.0.0-rc.116 |
+
+### Maintenance
+
+#### The rc.115 `packageExtensions` bridge is retired
+
+- The toolchain (`@savvy-web/tsdown-plugins`, `rolldown-pnpm-config`, `@vitest-agent/*`) has republished declaring `effect` and its `@effected/*` inputs as regular dependencies, so the workspace no longer needs the `packageExtensions` block that pinned them by hand. Its ten keys named versions no longer installed and the lockfile diff on removal was the checksum line alone. Nothing published changes; this is the workspace's own install shape. [#792][#792]
+
+### Thanks
+
+Thanks to [@spencerbeggs](https://github.com/spencerbeggs) for their contributions!
+
+[#792]: https://github.com/spencerbeggs/effected/pull/792
+
+## 0.15.2
+
+### Bug Fixes
+
+- Fixes closure issues in all packages.
+
+### Thanks
+
+Thanks to [@spencerbeggs](https://github.com/spencerbeggs) for their contributions!
+
+## 0.15.1
+
+### Documentation
+
+- `Git`'s class-level TSDoc now names the 30 s timeout ceiling (`GIT_TIMEOUT`) and the `GitCommandError` it surfaces as, and states that the ceiling is per run rather than per member call — so the seven network-touching members, which resolve their ssh command first, are bounded at 60 s and `fetchAny` at 120 s.
+- `GitCommandError`'s TSDoc now states the `message`/`detail` contract plainly: `message` is the rendering, `detail` is the datum, and a consumer routes on `detail !== undefined` rather than on whether git started. Forwarding `detail ?? message` nests one rendered message inside another. [#685][#685]
+
+### Thanks
+
+Thanks to [@fuleinist](https://github.com/fuleinist) for their contributions!
+
+[#685]: https://github.com/spencerbeggs/effected/pull/685
+
+## 0.15.0
+
+### Breaking Changes
+
+#### The whole kit tracks Effect `4.0.0-rc.115`
+
+- Every package's `effect` peer moves from `4.0.0-rc.112` to `4.0.0-rc.115`. The kit uses exact prerelease pins rather than a caret, so a consumer must move with it. This advance is the first whose Effect changes are not source-compatible with the previous pin, so a consumer that upgrades meets the same renames the kit did:
+
+- `SchemaTransformation.transformOrFail` and `SchemaGetter.transformOrFail` are `transformEffect`.
+
+- The `Config` constructors are PascalCase (`Config.String`, `Config.Redacted`, `Config.Int`, `Config.Boolean`, …) and `Config.mapOrFail` is `Config.mapEffect`.
+
+- `FileSystem.Size` and `FileSystem.SizeInput` are gone in favour of the `ByteSize` module: `File.Info.size` is a `ByteSize`, `File.seek` takes a `bigint`, `read`/`write` return a `number`.
+
+- The fast-check bridge (`effect/testing/FastCheck`, `Schema.toArbitrary`, the `fastCheck` property-test option) is removed in favour of `effect/unstable/arbitrary/Arbitrary`; `it.effect.prop` takes `arbitrary: { runs, size, seed, … }`.
+
+#### `@effected/schemastore` documents are open unless told otherwise
+
+- `Schema.ToJsonSchemaOptions.additionalProperties` became `onExcessProperty: "ignore" | "error"` upstream, and its default now mirrors the decoder's: generated object schemas carry `additionalProperties: true` unless `jsonSchema: { onExcessProperty: "error" }` is passed. `StoreDocument.fromSchema` passes the option through unchanged, so a document that was closed by default at rc.112 is open by default now. Pass `onExcessProperty: "error"` to keep a closed document; a generator that silently disagreed with the decoder it is paired with would be the worse default.
+
+#### `@effected/memfs` seeks before the start of a file fail
+
+- `File.seek` gained a `PlatformError` channel upstream, and memfs now matches Node: a seek whose resulting position would be negative fails with `BadArgument` ("Cannot seek before the start of the file") and leaves the cursor unchanged, where it previously stored the negative position and failed on the next read. No memfs-declared type changes; the `File`/`File.Info` shape changes are Effect's own, reaching consumers through the peer.
+
+### Documentation
+
+#### A `Schema.Class` root is annotated on the `Struct` it wraps
+
+- [Effect-TS/effect#8084](https://github.com/Effect-TS/effect/issues/8084), which the rc.112 notes carried as an open limitation, was closed upstream as by design: annotations passed as `Schema.Class`'s second argument sit on the class node, while the `$defs` entry is generated from the encoded fields `Struct`. Annotate that `Struct` — `Schema.Class<X>("X")(Schema.Struct({ … }).annotate({ title, description, "x-taplo": … }))` — and every key reaches the document. `@effected/schemastore`'s design doc and context files now state the rule instead of the limitation.
+
+#### The Claude Code and Copilot plugins teach the rc.115 surface
+
+- The `effect-v4-schema`, `effect-v4-testing` and `effect-v4-module-index` skills describe the native `Arbitrary` module in place of the fast-check bridge, including the migration traps met on this advance: the `size` clamp (default 10) that silently shrinks a property's string and array domains, the `-0` the generator's near-zero bias emits for an unbounded `Schema.Int` or any `Schema.Number`, which JSON and YAML cannot round-trip, and the absence of `oneof`/`constantFrom`/`array` combinators. `ByteSize` has a module-index row, the `Config` and CLI constructors are shown in their PascalCase spellings, and the session-start briefing reports rc.115 as the kit's pin. [#686][#686]
+
+### Dependencies
+
+| Dependency | Type | Action | From | To |
+| --- | --- | --- | --- | --- |
+| @effect/platform-node | devDependency | updated | 4.0.0-rc.112 | 4.0.0-rc.115 |
+| @effect/tsgo | devDependency | updated | 0.41.0 | 0.45.0 |
+| @effect/vitest | devDependency | updated | 4.0.0-rc.112 | 4.0.0-rc.115 |
+| effect | devDependency | updated | 4.0.0-rc.112 | 4.0.0-rc.115 |
+| effect | peerDependency | updated | 4.0.0-rc.112 | 4.0.0-rc.115 |
+
+### Thanks
+
+Thanks to [@spencerbeggs](https://github.com/spencerbeggs) for their contributions!
+
+[#686]: https://github.com/spencerbeggs/effected/pull/686
+
+## 0.14.0
+
+### Breaking Changes
+
+- A caller who takes a raw `GitCommand` value from `GitCommand.*` and runs it directly — the documented escape hatch from #655 — no longer inherits `LC_ALL=C` or the non-interactive prompt pins. Such a command now runs with a plain inherited environment; callers relying on the pins for classifiable stderr must apply their own.
+
+- There is still no way to opt out of the pins through the `Git` service itself — #655's decision stands. [#671][#671]
+
+### Bug Fixes
+
+- Closes #670 (completing the environment-pinning work started in #647/#655): `git` invocations that touch `ssh` remotes — over an unknown host or a passphrase-protected key — no longer hang indefinitely.
+
+- Appends `-o BatchMode=yes` to the ssh command git would otherwise have used, the only lever that stops `ssh` reading a passphrase prompt or a host-key confirmation from `/dev/tty` directly (neither `GIT_TERMINAL_PROMPT` nor any askpass pin reaches that path). Before a network-touching member spawns, the service resolves that command in git's own precedence order — `GIT_SSH_COMMAND` from the environment, else `core.sshCommand` at the call's `cwd`, else `GIT_SSH`, else plain `ssh` — and appends to it, so a custom identity file, jump host or port survives. The pin is skipped entirely, leaving the caller's ssh setup untouched, in four cases: when `GIT_SSH` is the deciding rung (it names a program and takes no arguments, so pinning anything would displace it); when the program is not OpenSSH (`plink` has no `-o KEY=VALUE` form); when `ssh.variant` or `GIT_SSH_VARIANT` tells git the command is not OpenSSH regardless of its name; and when the caller already sets `BatchMode` themselves (OpenSSH honors the first value given for a repeated option, so the caller's choice stands regardless). The other non-interactive pins still apply in all four.
+
+- Adds `GIT_ASKPASS=""`, which `GIT_TERMINAL_PROMPT=0` does not cover — an empty value is a hard stop that also suppresses a configured `core.askPass` and `SSH_ASKPASS`.
+
+- Adds `SSH_ASKPASS_REQUIRE="never"` as defense in depth on the ssh credential path.
+
+### Refactoring
+
+- Every environment pin (`LC_ALL`, `GIT_TERMINAL_PROMPT`, `GIT_ASKPASS`, `SSH_ASKPASS_REQUIRE`, `GIT_SSH_COMMAND`) moved off the pure `GitCommand` constructors and onto the `Git` service, applied once per call at its single spawn choke point the same way `cwd` already was. A `GitCommand` value now carries only argv and its redaction mask — no `cwd`, no `env`. `extendEnv: true` stays on the constructor; it is not one of the pins, it only declares that git inherits the parent environment at all.
+- `Git.layer` now reads the ambient `GIT_SSH_COMMAND`, `GIT_SSH` and `GIT_SSH_VARIANT` once each, concurrently, through `ConfigProvider` rather than `process.env` — so a test swaps a provider instead of mutating the environment and the package keeps its zero-`node:`-imports boundary. Their repository-local counterparts, `core.sshCommand` and `ssh.variant`, are resolved per call instead, since one `Git` instance serves every `cwd`: a network-touching member pays up to two extra local `git config` reads (run concurrently, and each skipped when its environment counterpart already decides), and no other member pays anything.
+
+### Thanks
+
+Thanks to [@spencerbeggs](https://github.com/spencerbeggs) for their contributions!
+
+[#671]: https://github.com/spencerbeggs/effected/pull/671
+
+## 0.13.0
+
+### Bug Fixes
+
+- Every `GitCommand` invocation now pins `GIT_TERMINAL_PROMPT=0` alongside the existing `LC_ALL=C`.
+
+- A network-touching member — `lsRemote`, `fetch`, `push`, `pull`, `submoduleAdd` — run against a remote that requires credentials could previously block on git's interactive terminal prompt until the 30s `GIT_TIMEOUT` ceiling fired, and on a runner with no tty the behaviour was backend-dependent rather than deterministic. Such a command now fails fast with git's own auth error, classified as `GitCommandError` with the exit code and stderr intact.
+
+- Two consequences worth knowing before upgrading:
+
+- The pin is **unconditional**. `extendEnv: true` merges the parent environment, but a pinned key wins over it, so `GIT_TERMINAL_PROMPT=1` in `process.env` no longer re-enables prompting, and there is no opt-out through the `Git` service. A caller that genuinely wants git to prompt must take the `GitCommand` value and override the key with `ChildProcess.setEnv` before running it.
+
+- The pure `GitCommand` values changed shape: `command.options.env` is now `{ LC_ALL: "C", GIT_TERMINAL_PROMPT: "0" }`. Code asserting on that object needs updating.
+
+- This gags git's own prompt only — `ssh`'s key-passphrase and host-key prompts read the terminal directly and are not covered.
+
+### Documentation
+
+- The pinned-env invariant is restated consistently across `README.md`, `CLAUDE.md` and `CLAUDE.surface.md`, including the `Run.collect` example that consumers copy. [#655][#655]
+
+### Thanks
+
+Thanks to [@fuleinist](https://github.com/fuleinist) for their contributions!
+
+[#655]: https://github.com/spencerbeggs/effected/pull/655
+
+## 0.12.0
+
+### Features
+
+#### `Git.log`
+
+- Adds `Git.log(cwd, { paths?, follow?, limit?, firstParentDiffMerges? })`, the commit walk as typed `CommitLogEntry` values — sha, both dates decoded to `DateTime.Utc`, the author identity, and the paths each commit touched. Scope it with a pathspec, walk a single path across renames with `follow: true` (git requires exactly one path for this, refused pre-spawn otherwise), and give merge commits a path listing with `firstParentDiffMerges`.
+
+```ts
+const entries = yield* git.log(cwd, { paths: ["src/"], limit: 20 });
+```
+
+- An unborn `HEAD` and a pathspec no commit ever touched both resolve to the empty listing rather than a failure. `Git.log` takes no ref, so `UnknownRefError` — which every other `Git` read carries — is absent from this method's error union by construction (#627).
+
+- `GitCommand.log` exposes the same call as a pure, inspectable `Command` value. [#654][#654]
+
+### Thanks
+
+Thanks to [@spencerbeggs](https://github.com/spencerbeggs) for their contributions!
+
+[#654]: https://github.com/spencerbeggs/effected/pull/654
+
 ## 0.11.0
 
 ### Breaking Changes
@@ -156,8 +496,11 @@ Thanks to [@spencerbeggs](https://github.com/spencerbeggs) for their contributio
 
 - Every `GitCommand` constructor now returns a `GitInvocation` — the spawnable
   command plus `redactedArgs`, the same argv with sensitive positionals
-  masked (a `configSet` value is masked wholesale; a URL's embedded&#10;`userinfo@` is stripped) — instead of a bare command value. `GitCommandError`&#10;now carries `redactedArgs` in `args`, and renders them in `message`, so raw
-  argv never reaches an error value. This only affects direct consumers of&#10;`GitCommand`'s constructors; the `Git` service surface is unaffected.
+  masked (a `configSet` value is masked wholesale; a URL's embedded
+  `userinfo@` is stripped) — instead of a bare command value. `GitCommandError`
+  now carries `redactedArgs` in `args`, and renders them in `message`, so raw
+  argv never reaches an error value. This only affects direct consumers of
+  `GitCommand`'s constructors; the `Git` service surface is unaffected.
   ````ts
   import { GitCommand } from "@effected/git";
 
@@ -182,20 +525,34 @@ Thanks to [@spencerbeggs](https://github.com/spencerbeggs) for their contributio
   });
   ```
   Added `Gitmodules`, a typed read view over `.gitmodules` (`GitmodulesEntry`,
-  a `FromString` codec), with mutation helpers (`setUrl`, `setPath`,&#10;`setBranch`, `setShallow`, `add`, `remove`, `rename`) that compile to
+  a `FromString` codec), with mutation helpers (`setUrl`, `setPath`,
+  `setBranch`, `setShallow`, `add`, `remove`, `rename`) that compile to
   surgical `GitConfig` edits rather than hand-rolled text editing.
 
-  Added a submodule tier to `Git`: `submoduleStatus`, `submoduleInit`,&#10;`submoduleDeinit`, `submoduleSync`, `submoduleSetUrl`, `submoduleSetBranch`,&#10;`submoduleAbsorbgitdirs`, `submoduleForeach`.
+  Added a submodule tier to `Git`: `submoduleStatus`, `submoduleInit`,
+  `submoduleDeinit`, `submoduleSync`, `submoduleSetUrl`, `submoduleSetBranch`,
+  `submoduleAbsorbgitdirs`, `submoduleForeach`.
 
-  Added worktree-state, branch and shallow-repo members: `reset`, `clean`,&#10;`restore` (a fail-loud posture — no silent partial application), `branchCreate`&#10;(now also drives `checkout -B` / `branch -f` via a `force` option),&#10;`branchDelete`, `isShallow`, `fetchUnshallow`. `StatusEntry` gained&#10;`toLine`/the static `format` helper for rendering porcelain-shaped status
+  Added worktree-state, branch and shallow-repo members: `reset`, `clean`,
+  `restore` (a fail-loud posture — no silent partial application), `branchCreate`
+  (now also drives `checkout -B` / `branch -f` via a `force` option),
+  `branchDelete`, `isShallow`, `fetchUnshallow`. `StatusEntry` gained
+  `toLine`/the static `format` helper for rendering porcelain-shaped status
   output back out, with a `StatusRenderOptions` controlling the new-path
   default.
 
-  Added a second tier of members: `lsRemote` with `LsRemoteEntry`&#10;(`shortName`/`nearMatches` for suggesting the closest ref on a typo), the
-  remote tier (`remoteAdd`, `remoteRemove`, `remoteSetUrl`), the stash tier,&#10;`branchList`, `tagCreate`, `tagDelete`, `tagList`, `forEachRef`, `revList`,&#10;`commit`, `push`, `pull`, `configList`, `configGetAll`, `configUnset`,&#10;`rm`, `mv`, `checkIgnore`, the worktree tier (`worktreeAdd`, `worktreeList`,&#10;`worktreeRemove`), and `lsFiles`. `Git` grew from 26 to 69 members.
+  Added a second tier of members: `lsRemote` with `LsRemoteEntry`
+  (`shortName`/`nearMatches` for suggesting the closest ref on a typo), the
+  remote tier (`remoteAdd`, `remoteRemove`, `remoteSetUrl`), the stash tier,
+  `branchList`, `tagCreate`, `tagDelete`, `tagList`, `forEachRef`, `revList`,
+  `commit`, `push`, `pull`, `configList`, `configGetAll`, `configUnset`,
+  `rm`, `mv`, `checkIgnore`, the worktree tier (`worktreeAdd`, `worktreeList`,
+  `worktreeRemove`), and `lsFiles`. `Git` grew from 26 to 69 members.
 
   Three new typed errors, added only alongside the new members that can raise
-  them — no existing member's error union changed: `NonFastForwardError` from&#10;`push`, and `MergeConflictError` / `DirtyWorktreeError` from `pull`,&#10;`stashPop` and `stashApply`.
+  them — no existing member's error union changed: `NonFastForwardError` from
+  `push`, and `MergeConflictError` / `DirtyWorktreeError` from `pull`,
+  `stashPop` and `stashApply`.
 
 ## 0.5.2
 
@@ -211,8 +568,10 @@ Thanks to [@spencerbeggs](https://github.com/spencerbeggs) for their contributio
 
 ### Refactoring
 
-- `GitCommand` is now a static class with a private constructor rather than an&#10;`as const` namespace object. Call syntax is unchanged (`GitCommand.show(...)`);
-  each member's TSDoc now ships in the built `.d.ts`, where an `as const`&#10;object's inferred member types previously dropped it. [#180][#180]
+- `GitCommand` is now a static class with a private constructor rather than an
+  `as const` namespace object. Call syntax is unchanged (`GitCommand.show(...)`);
+  each member's TSDoc now ships in the built `.d.ts`, where an `as const`
+  object's inferred member types previously dropped it. [#180][#180]
 
 ### Patch Changes
 

@@ -7,10 +7,10 @@
 
 The GitHub Actions runtime for [Effect](https://effect.website) v4: the services an action needs to talk to the runner it is executing inside. `Action.run` composes the runtime, runs your program, renders a failure as an `::error::` annotation and sets the exit code. `ActionInput` reads workflow inputs as typed `Config` values — string, boolean, integer, redacted secret, multiline list, `key=value` pairs, or a schema-decoded JSON blob — with one absence rule shared by every accessor: unset and `""` are both missing data. `ActionOutputs`, `ActionState`, `ActionLogger` and a fiber-local `ActionEnvironment` round out the runner surface, alongside `ActionCache`, `Artifact`, a metadata-carrying `BlobStore` (S3-compatible or the runner's own cache), `OidcTokenIssuer` and `ToolInstaller` for the heavier protocols. A reporting suite — `GitHubMarkdown`, `ManagedDocument`, `CheckState` and `CheckDocument` — covers the other direction: rendering what a run did onto a pull request comment, a check run or the job summary. No `@actions/*` dependency anywhere — the cache, artifact and tool-cache protocols are implemented directly against their HTTP APIs.
 
-> **Pre-release.** This package is part of the `@effected/*` kit, in pre-`1.0.0`
-> development against a single pinned Effect v4 prerelease. Packages graduate to
-> `1.0.0` once Effect `4.0.0` ships. To hold your own `effect` versions at
-> exactly the ones the kit is built and tested against, install
+> **Pre-`1.0.0`.** This package is part of the `@effected/*` kit, built on stable
+> Effect v4 (`effect` `^4.0.0`) and still in `0.x` development. Stable Effect
+> makes a kit `1.0.0` possible, not automatic. To keep your `effect` and
+> `@effect/*` versions on the line the kit is built and tested against, install
 > [`@effected/pnpm-plugin-effect`](https://www.npmjs.com/package/@effected/pnpm-plugin-effect).
 >
 > **Stability: unstable.** This package's API surface is not yet considered
@@ -58,6 +58,8 @@ await Action.run(program);
 ```
 
 `Action.run` provides `ActionServices` (environment, logger, outputs, state, the Node platform and an `HttpClient`) by default. A capability with a heavier dependency — the cache, artifacts, the blob store — is one extra line: `Action.run(program, { layer: ActionCache.layer })`.
+
+Step debugging works without wiring: when the runner sets `RUNNER_DEBUG=1`, `Action.run` lowers Effect's minimum log level to `Debug`, so `Effect.logDebug` calls show up as `::debug::` lines. It only ever lowers the level; pass `{ stepDebugLogLevel: false }` to keep it as it is.
 
 ## Reading inputs
 
@@ -153,7 +155,7 @@ Two decisions make that safe for any segment value, with no prefix reasoning at 
 
 `CacheKey.hashFiles` is byte-compatible with `@actions/glob`'s `hashFiles`, and `OidcTokenIssuer.claims` decodes the runner's OIDC token for a SLSA provenance predicate without verifying its signature — the token arrived over TLS from the runner's own token service, so the transport is the trust boundary and nothing here branches on the claims for authorization.
 
-`ActionsProvenance.capture` turns those claims into an `@effected/sbom` `SlsaProvenance` predicate, and `ActionsIdentityToken.layer` serves that package's narrow `IdentityToken` contract from the same issuer — the inversion that keeps the Actions runtime out of every consumer that only wants to emit an SBOM:
+`ActionsProvenance.capture` turns those claims into an `@effected/sbom` `SlsaProvenance` predicate, and `ActionsIdentityToken.layer` serves `@effected/oidc`'s narrow `IdentityToken` contract, which that package's signer consumes, from the same issuer — the inversion that keeps the Actions runtime out of every consumer that only wants to emit an SBOM:
 
 ```ts
 import { ActionsIdentityToken, ActionsProvenance, OidcTokenIssuer } from "@effected/github-actions";
@@ -301,13 +303,13 @@ const TestOutputs = ActionOutputs.layerTest({
 - `ActionCache` / `Artifact` — the runner's cache and artifact protocols over Twirp v2, excluded from the default runtime so a consumer that skips them never links Azure.
 - `CacheKey` — cache keys and their restore-key ladder, `withNamespace(segment)` for a bust token or a shared-runner prefix, plus `hashFiles`/`matchingFiles`/`hashMatching` byte-compatible with `@actions/glob`.
 - `OidcTokenIssuer` — the runner's OIDC token service, with unverified claim decoding for provenance predicates.
-- `ActionsIdentityToken` / `ActionsProvenance` — the `@effected/sbom` seam: `layer` serves that package's `IdentityToken` contract from the runner's issuer, and `capture` builds a `SlsaProvenance` predicate out of the runner's OIDC claims.
+- `ActionsIdentityToken` / `ActionsProvenance` — the `@effected/sbom` seam: `layer` serves `@effected/oidc`'s `IdentityToken` contract from the runner's issuer, and `capture` builds a `SlsaProvenance` predicate out of the runner's OIDC claims.
 - `GitHubMarkdown` — the escaping-safe writer for GitHub surfaces: `table`, `tableFor(schema)`, `heading`, `link`, `code`, `codeBlock`, `list`, `details` and `raw`, and the package's only importer of `@effected/markdown`.
 - `ManagedDocument` — marker-delimited named regions in text a human also edits, for a sticky comment or a managed pull request description; content outside the regions survives byte-for-byte, and each region can carry marker metadata that round-trips through `entry(key)` without ever addressing the region.
 - `CheckState` / `projectCheckState` — the kit's check vocabulary, wider than GitHub's conclusions, and its projection onto the check-run wire form.
 - `CheckDocument` — the debounced check-to-document reconciler: report states as they change, and one write lands carrying the final one. `stamp` plus a readable sink lets two runs share one document, dropping a strictly older run's pass instead of clobbering the newer one; `flush` reports `written`, `unchanged` or `stale`.
 - `ToolInstaller` — download, extract and cache a toolchain in the runner's tool cache, with no `@actions/tool-cache` dependency; `ToolInstallerError` always names its `subject`.
-- `BlobStore` — durable `get`/`put`/`has` over `StoredBlob<A>` values (bytes plus caller-schema metadata; the type was named `Blob<A>` before, which collided with the global), backed by `layerS3` (SigV4-signed, no `@aws-sdk/*` dependency) or `GitHubCacheBlobStore.layer` (the runner's own cache); `layerMemory` runs the real envelope framing for tests.
+- `BlobStore` — durable `get`/`put`/`has` over `StoredBlob<A>` values (bytes plus caller-schema metadata; the type was named `Blob<A>` before, which collided with the global), backed by `layerS3` (SigV4-signed through `@effected/crypto`, so it needs core `Crypto` in `R`; no `@aws-sdk/*` dependency) or `GitHubCacheBlobStore.layer` (the runner's own cache); `layerMemory` runs the real envelope framing for tests.
 
 ## License
 

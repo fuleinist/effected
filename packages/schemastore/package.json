@@ -1,6 +1,6 @@
 {
 	"name": "@effected/schemastore",
-	"version": "0.6.0",
+	"version": "0.25.0",
 	"private": true,
 	"description": "Build, validate, version and publish SchemaStore-shaped Draft-07 JSON Schema documents from Effect Schema sources: document assembly, ajv strict-mode validation, structural lints, catalog entries, canonical JSON and a content-comparing emit pipeline.",
 	"keywords": ["schemastore", "json-schema", "draft-07", "catalog", "effect", "schema", "effected"],
@@ -32,14 +32,13 @@
 		"types:check": "tsc --noEmit"
 	},
 	"dependencies": {
-		"@effected/semver": "workspace:^",
-		"ajv": "^8.20.0"
+		"@effected/semver": "workspace:^"
 	},
 	"devDependencies": {
 		"@effect/platform-node": "catalog:effect",
 		"@effect/vitest": "catalog:effect",
 		"@effected/memfs": "workspace:*",
-		"@savvy-web/bundler": "^2.3.1",
+		"@savvy-web/bundler": "^2.6.0",
 		"@types/node": "catalog:build",
 		"effect": "catalog:effect",
 		"typescript": "catalog:build"

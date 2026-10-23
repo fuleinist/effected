@@ -7,10 +7,10 @@
 
 Typed GitHub REST and GraphQL for [Effect](https://effect.website) v4. `client.request("GET /repos/{owner}/{repo}", { owner, repo })` types both the parameters and the returned `data` from the route literal alone — no `operation: string`, no callback, no cast. One `GitHubError` covers every REST failure with a `kind` you branch on instead of grepping a message, one pagination engine backs every paginating route and `client.request`'s `Stream` form, and a set of resource services (`GitBranch`, `GitTag`, `CheckRun`, `PullRequest`, `PullRequestComment`, `GitHubRelease`, `Attestation`) turn multi-call dances — "does this branch already exist?", "conclude this check run no matter how the program exits" — into one call. A second tier writes the configuration half: secrets, variables, rulesets, deployment environments, the security toggles and CodeQL default setup. `GitHubApp` mints and revokes installation tokens for App auth.
 
-> **Pre-release.** This package is part of the `@effected/*` kit, in pre-`1.0.0`
-> development against a single pinned Effect v4 prerelease. Packages graduate to
-> `1.0.0` once Effect `4.0.0` ships. To hold your own `effect` versions at
-> exactly the ones the kit is built and tested against, install
+> **Pre-`1.0.0`.** This package is part of the `@effected/*` kit, built on stable
+> Effect v4 (`effect` `^4.0.0`) and still in `0.x` development. Stable Effect
+> makes a kit `1.0.0` possible, not automatic. To keep your `effect` and
+> `@effect/*` versions on the line the kit is built and tested against, install
 > [`@effected/pnpm-plugin-effect`](https://www.npmjs.com/package/@effected/pnpm-plugin-effect).
 >
 > **Stability: unstable.** This package's API surface is not yet considered
@@ -25,7 +25,7 @@ Hand-rolled octokit wrappers tend to converge on the same shape: a `rest<T>(oper
 
 The error model gets the same treatment. `GitHubError.kind` is a literal union (`notFound`, `alreadyExists`, `rejected`, `unauthorized`, `rateLimited`, `transport`, `decode`) produced by one classification step, `GitHubError.fromOctokit`, instead of one hand-written mapper per resource. `kind: "alreadyExists"` is what makes `GitBranch.upsert` and `GitTag.upsert` a single round trip in the common case, rather than a create-then-catch-then-check-then-reset dance repeated at every call site that needs it.
 
-This package also owns the octokit runtime so nothing downstream has to. `@octokit/rest` and `@octokit/auth-app` are deliberately absent — the rest wrapper is a request-logging plugin plus 1.4 MB of duplicate endpoint types, and `auth-app` drags in `createOAuthUserAuth`, roughly 492 KB of OAuth machinery this package never calls. GitHub App JWTs are signed by `universal-github-app-jwt` instead, the same zero-dependency signer `@octokit/auth-app` itself uses. A consumer that only authenticates with a token it already holds never links the JWT signer at all: the App-authenticated layer lives in its own module (`GitHubApp`), and nothing here is gathered into a namespace object that would defeat that split.
+This package also owns the octokit runtime so nothing downstream has to. `@octokit/rest` and `@octokit/auth-app` are deliberately absent — the rest wrapper is a request-logging plugin plus 1.4 MB of duplicate endpoint types, and `auth-app` drags in `createOAuthUserAuth`, roughly 492 KB of OAuth machinery this package never calls. GitHub App JWTs are signed by the kit's own `@effected/jwt` instead: WebCrypto RS256 with no runtime dependencies, so App auth runs on Cloudflare Workers as well as Node. A consumer that only authenticates with a token it already holds never links the JWT signer at all: the App-authenticated layer lives in its own module (`GitHubApp`), and nothing here is gathered into a namespace object that would defeat that split.
 
 ## Install
 
@@ -238,6 +238,21 @@ const program = upsertBranch.pipe(
 );
 ```
 
+A 422 also carries GitHub's validation entries as `validation`, each a `GitHubValidationEntry` with the `resource`, `field`, `code` and `message` GitHub sent. Only `already_exists` gets a `kind` of its own; for the other documented codes (`GitHubValidationCode`), branch with `hasValidationCode` rather than reading `reason`:
+
+```ts
+import { GitHubError } from "@effected/github";
+import { Effect } from "effect";
+
+declare const createRelease: Effect.Effect<void, GitHubError>;
+
+const program = createRelease.pipe(
+  Effect.catchIf(GitHubError.hasValidationCode("missing_field", "invalid"), (error) =>
+    Effect.logError(`bad release parameters: ${error.validation?.map((entry) => entry.field).join(", ")}`),
+  ),
+);
+```
+
 Retrying is handled once, in the client: `RetryPolicy.default` retries a `transport` or `rateLimited` failure with full-jitter backoff, honoring GitHub's `retry-after` header up to a configurable ceiling. `RetryPolicy.none` disables it. A `notFound`, `rejected` or `unauthorized` failure never retries — it cannot change its mind between attempts.
 
 ## Testing
@@ -272,7 +287,7 @@ const TestClient = GitHubClient.layerFixture(fixtures);
 // A route with no entry above DIES naming itself, rather than failing typed.
 ```
 
-- **An unstubbed route dies by default.** A missing fixture is test wiring rather than a domain outcome, and a typed failure is only loud in code that does not catch — a program handling `GitHubError` per resource turns a missing stub into a different execution path, and the assertions then fail for reasons that name no fixture. `unstubbed: "fail"` restores the old typed not-found, and `"empty"` serves an empty value for a suite whose subject is decisions rather than endpoints.
+- **An unstubbed route dies by default.** A missing fixture is test wiring rather than a domain outcome, and a typed failure is only loud in code that does not catch — a program handling `GitHubError` per resource turns a missing stub into a different execution path, and the assertions then fail for reasons that name no fixture. `unstubbed: "fail"` fails the route with a typed not-found instead, and `"empty"` serves an empty value for a suite whose subject is decisions rather than endpoints.
 - **A recorded `GitHubError` value is the response.** That is how a suite stubs a 404, a 422 or a rate limit deliberately. Leaning on a route's absence says only "unwired"; a recorded error says which route fails and why.
 - **`fixtures.requested` records every call.** Each `RecordedCall` carries the `kind` of surface used, the `route` (the document name for `graphql`), the `params` the call was made with, and `perPage` for a paginated read. Params are what let a test assert what a method *sent*, which is the question any normalising write turns on.
 
@@ -282,7 +297,7 @@ const TestClient = GitHubClient.layerFixture(fixtures);
 - `Repo` / `RepoRef` — the `{ owner, repo }` coordinate, resolved per call through `R`, with `Repo.provide` for multi-repository programs.
 - `GitHubRepository` — the repository's settings as GitHub's own generated type, plus `defaultBranch`, `nodeId`, `ownerType` for gating organization-only fields, and `applySettings` reporting the keys it actually sent.
 - `repositoryPatch` / `RepositoryPatchDraft` — build an `updateSettings` patch from fields that may be `undefined`, under `exactOptionalPropertyTypes`, without a cast.
-- `GitHubError` / `GitHubGraphQLError` — one error per transport, `kind`-routed with `hasKind` for `Effect.catchIf`.
+- `GitHubError` / `GitHubGraphQLError` — one error per transport, `kind`-routed with `hasKind` for `Effect.catchIf`; a REST 422's validation entries ride on `validation`, matched with `hasValidationCode`.
 - `RetryPolicy` — the client's one retry policy: full-jitter backoff, server-advised delays honored up to a ceiling.
 - `GitHubApp` — App JWT signing, installation token minting/revocation, app and installation identity, and `clientLayer` for an App-authenticated `GitHubClient`.
 - `GitBranch` / `GitTag` — Git Database API refs, with `upsert` collapsing the create-or-reset dance to one call and `GitTag.latestSemver` picking the newest version-shaped tag in one pass.

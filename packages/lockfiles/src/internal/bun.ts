@@ -8,6 +8,7 @@ import {
 	extractWorkspaceDeps,
 	importerDependencies,
 	peerDeclarations,
+	splitNameVersion,
 	syntaxFailure,
 	toIntegrityHash,
 	validationFailure,
@@ -69,7 +70,7 @@ type BunLockfileRawType = typeof BunLockfileRaw.Type;
 /**
  * Parse bun `bun.lock` (JSONC) content into the unified field bundle.
  * Resolved packages are tuples whose first element is `"name@version"`;
- * the integrity hash is assumed at tuple index 3 (the permissive v3
+ * the integrity hash is assumed at tuple index 3 (a permissive
  * reading of an under-documented upstream shape).
  *
  * @internal
@@ -199,10 +200,11 @@ const toFields = (raw: BunLockfileRawType): Effect.Effect<LockfileFields, ParseF
 				if (tuple.length < 1) continue;
 				const first = tuple[0];
 				if (typeof first !== "string") continue; // malformed tuples are skipped, never thrown on
-				const atIdx = first.lastIndexOf("@");
-				if (atIdx <= 0) continue; // handles "@", "@scope/", bare names
-				const name = first.slice(0, atIdx);
-				const version = first.slice(atIdx + 1);
+				// The first "@" after a scoped name's own, never the last: a version
+				// part may hold one (`file:../@scope/lib`).
+				const split = splitNameVersion(first);
+				if (split === undefined) continue; // handles "@", "@scope/", bare names
+				const { name, version } = split;
 
 				// Workspace packages were already added from the workspaces map.
 				if (workspaceNames.has(name)) continue;

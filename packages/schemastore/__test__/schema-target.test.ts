@@ -43,6 +43,44 @@ describe("SchemaTarget", () => {
 		assert.strictEqual(target.path, "out/config.json");
 	});
 
+	// #688 — a target-level jsonSchema option threads Schema.ToJsonSchemaOptions
+	// through to StoreDocument.fromSchema so a document's generation contract
+	// is self-describing rather than relying on core's default.
+	it("carries a jsonSchema option when given", () => {
+		const target = SchemaTarget.make({
+			schema: Config,
+			$id: "https://example.com/config.schema.json",
+			name: "config-tool",
+			path: "schemas/config-tool.json",
+			jsonSchema: { onExcessProperty: "error" },
+		});
+		assert.deepStrictEqual(target.jsonSchema, { onExcessProperty: "error" });
+	});
+
+	it("omits the jsonSchema key entirely when not given", () => {
+		const target = SchemaTarget.make({
+			schema: Config,
+			$id: "https://example.com/config.schema.json",
+			name: "config-tool",
+			path: "schemas/config-tool.json",
+		});
+		assert.notProperty(target, "jsonSchema");
+	});
+
+	// #624 — rootAnnotations is a target-level field for the same
+	// self-describing reason as jsonSchema.
+	it("carries rootAnnotations when given and omits the key when not", () => {
+		const with_ = SchemaTarget.make({
+			schema: Schema.String,
+			$id: "https://e.com/a.json",
+			path: "a.json",
+			rootAnnotations: { title: "T" },
+		});
+		assert.deepStrictEqual(with_.rootAnnotations, { title: "T" });
+		const without = SchemaTarget.make({ schema: Schema.String, $id: "https://e.com/a.json", path: "a.json" });
+		assert.isFalse(Object.hasOwn(without, "rootAnnotations"));
+	});
+
 	// The overload pair makes version-without-name a COMPILE error; the
 	// runtime throw remains for untyped callers, which is what the cast
 	// simulates here.
@@ -57,6 +95,45 @@ describe("SchemaTarget", () => {
 					version: Result.getOrThrow(SchemaVersioning.parseResult("1.0.0")),
 				}),
 			/requires a "name"/,
+		);
+	});
+});
+
+describe("published", () => {
+	it("defaults to false", () => {
+		const target = SchemaTarget.make({ schema: Config, $id: "https://x/a.json", path: "a.json" });
+		assert.strictEqual(target.published, false);
+	});
+
+	it("carries an explicit true", () => {
+		const target = SchemaTarget.make({
+			schema: Config,
+			$id: "https://x/a-1.2.json",
+			name: "a",
+			version: "1.2",
+			path: "a-1.2.json",
+			published: true,
+		});
+		assert.strictEqual(target.published, true);
+	});
+});
+
+describe("version as a string label", () => {
+	it("parses a valid label into a SchemaVersion", () => {
+		const target = SchemaTarget.make({
+			schema: Config,
+			$id: "https://x/a-1.2.json",
+			name: "a",
+			version: "1.2",
+			path: "a-1.2.json",
+		});
+		assert.strictEqual(target.version, "1.2");
+	});
+
+	it("throws on an invalid label, naming it", () => {
+		assert.throws(
+			() => SchemaTarget.make({ schema: Config, $id: "https://x/a.json", name: "a", version: "v1.2", path: "a.json" }),
+			/SchemaTarget\.make received an invalid version label "v1\.2"/,
 		);
 	});
 });

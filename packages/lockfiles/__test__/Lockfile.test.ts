@@ -4,7 +4,7 @@
 // edges and extension payloads — plus the model's own instance surface
 // (packagesNamed, workspacePackages) and the withImporterNames seam repair.
 
-import { existsSync, readFileSync, readdirSync } from "node:fs";
+import { existsSync, readdirSync } from "node:fs";
 import { join } from "node:path";
 import { assert, describe, it } from "@effect/vitest";
 import { Effect, Option } from "effect";
@@ -13,8 +13,7 @@ import type { LockfileFormat } from "../src/LockfileFormat.js";
 import { filenameFor } from "../src/LockfileFormat.js";
 import { ResolvedPackage } from "../src/ResolvedPackage.js";
 import { isUnsupportedLockfileVersion } from "../src/UnsupportedLockfileVersion.js";
-
-const fixture = (relative: string): string => readFileSync(join(import.meta.dirname, "fixtures", relative), "utf8");
+import { FIXTURES_DIR, fixture, fixturePath } from "./helpers/fixtures.js";
 
 /**
  * Fixture directories under this prefix hold input the parser must *reject*,
@@ -23,7 +22,17 @@ const fixture = (relative: string): string => readFileSync(join(import.meta.dirn
  */
 const NEGATIVE_FIXTURE_PREFIX = "unsupported-";
 
-const parseFixture = (relative: string, format: LockfileFormat) => Lockfile.parse(fixture(relative), { format });
+/**
+ * pnpm fixture directories under this prefix were captured from a workspace
+ * with **no root `package.json`**, so the caller reading them would assert
+ * `configOnly`. The prefix is the marker the enumeration guard below reads to
+ * pass that flag: a new config-only capture opts in by its name, and no other
+ * fixture is ever parsed with the flag.
+ */
+const CONFIG_ONLY_FIXTURE_PREFIX = "env-configonly-";
+
+const parseFixture = (relative: string, format: LockfileFormat, configOnly = false) =>
+	Lockfile.parse(fixture(relative), { format, configOnly });
 
 describe("Lockfile.parse", () => {
 	describe("pnpm", () => {
@@ -1328,6 +1337,145 @@ describe("instance identity and resolved edges", () => {
 	});
 });
 
+describe("peer suffixes on protocol versions", () => {
+	// pnpm suffixes a `file:` resolution exactly as it suffixes a registry
+	// version whenever the package declares peers — directory and tarball
+	// alike, nested chains included — and never suffixes a `link:` one. Real
+	// pnpm 12.6.0 output (fixtures README, `pnpm/filepeer`). Before the split
+	// learned this, `lib@file:vendor/lib(react@18.3.1)` came out as name
+	// `lib@file:vendor/lib(react` at version `18.3.1)`, and one layer up a
+	// peer check read the garbled version as merely unparseable.
+	const load = () => parseFixture("pnpm/filepeer/pnpm-lock.yaml", "pnpm");
+
+	it.effect("splits a file: directory's suffix off its snapshot key, nested chain and all", () =>
+		Effect.gen(function* () {
+			const lockfile = yield* load();
+			const libs = lockfile.packagesNamed("lib");
+			// ONE instance: the `packages:` entry is covered by its snapshot rather
+			// than re-emitted as an orphan under a second identity.
+			assert.strictEqual(libs.length, 1);
+			const lib = libs[0] as ResolvedPackage;
+			assert.strictEqual(lib.instanceId, "lib@file:vendor/lib(react-dom@18.3.1(react@18.3.1))(react@18.3.1)");
+			assert.strictEqual(lib.version, "file:vendor/lib");
+			// Peer declarations join from the `packages:` entry keyed by the plain part.
+			assert.deepStrictEqual(lib.peerDependencies, { react: "^18.0.0", "react-dom": "^18.0.0" });
+		}),
+	);
+
+	it.effect("names no instance with a fragment of a peer suffix", () =>
+		Effect.gen(function* () {
+			for (const pkg of (yield* load()).packages) {
+				assert.notInclude(pkg.name, "(", pkg.instanceId);
+				assert.isFalse(pkg.version.endsWith(")"), pkg.instanceId);
+			}
+		}),
+	);
+
+	it.effect("splits a file: tarball's suffix the same way", () =>
+		Effect.gen(function* () {
+			const tarlibs = (yield* load()).packagesNamed("tarlib");
+			assert.strictEqual(tarlibs.length, 1);
+			assert.strictEqual(tarlibs[0]?.instanceId, "tarlib@file:vendor/tarlib-1.0.0.tgz(react@18.3.1)");
+			assert.strictEqual(tarlibs[0]?.version, "file:vendor/tarlib-1.0.0.tgz");
+			assert.deepStrictEqual(tarlibs[0]?.peerDependencies, { react: "^18.0.0" });
+		}),
+	);
+
+	it.effect("reads a parenthesised path the way pnpm's own packages: key does", () =>
+		Effect.gen(function* () {
+			// `file:../../vendor/paren(lib)` is snapshot-keyed
+			// `parenlib@file:vendor/paren(lib)(react@18.3.1)`, and pnpm itself writes
+			// the `packages:` key as `parenlib@file:vendor/paren`: its suffix rule
+			// takes the whole trailing run of balanced groups, path text included.
+			// Reading it any other way would orphan that entry and lose its peers.
+			const parens = (yield* load()).packagesNamed("parenlib");
+			assert.strictEqual(parens.length, 1);
+			assert.strictEqual(parens[0]?.instanceId, "parenlib@file:vendor/paren(lib)(react@18.3.1)");
+			assert.strictEqual(parens[0]?.version, "file:vendor/paren");
+			assert.deepStrictEqual(parens[0]?.peerDependencies, { react: "^18.0.0" });
+		}),
+	);
+
+	it.effect("splits the importer versions likewise, and leaves an unsuffixed link: whole", () =>
+		Effect.gen(function* () {
+			const host = Option.getOrThrow((yield* load()).importer("packages/host"));
+			const dep = (name: string) => host.dependencies.find((d) => d.name === name);
+			assert.strictEqual(dep("lib")?.version, "file:vendor/lib");
+			assert.strictEqual(dep("lib")?.peerSuffix, "(react-dom@18.3.1(react@18.3.1))(react@18.3.1)");
+			assert.strictEqual(dep("tarlib")?.version, "file:vendor/tarlib-1.0.0.tgz");
+			assert.strictEqual(dep("tarlib")?.peerSuffix, "(react@18.3.1)");
+			// pnpm does not suffix a `link:` even when its target declares peers.
+			assert.strictEqual(dep("linklib")?.version, "link:../../vendor/linklib");
+			assert.isFalse(Object.hasOwn(dep("linklib") ?? {}, "peerSuffix"));
+			// A registry version is unchanged.
+			assert.strictEqual(dep("react-dom")?.version, "18.3.1");
+			assert.strictEqual(dep("react-dom")?.peerSuffix, "(react@18.3.1)");
+		}),
+	);
+
+	it.effect("still resolves the host's edges to the suffixed instances", () =>
+		Effect.gen(function* () {
+			const host = (yield* load()).packagesNamed("packages/host")[0] as ResolvedPackage;
+			assert.strictEqual(host.resolved.lib, "lib@file:vendor/lib(react-dom@18.3.1(react@18.3.1))(react@18.3.1)");
+			assert.strictEqual(host.resolved.tarlib, "tarlib@file:vendor/tarlib-1.0.0.tgz(react@18.3.1)");
+		}),
+	);
+
+	/** Hand-authored edge shapes no workspace here needed to produce. */
+	const edges = () =>
+		Lockfile.parse(
+			[
+				"lockfileVersion: '9.0'",
+				"importers:",
+				"  .:",
+				"    dependencies:",
+				"      mid:",
+				"        specifier: file:vendor/a(b)/mid",
+				"        version: file:vendor/a(b)/mid(react@18.3.1)",
+				"      scoped:",
+				"        specifier: file:../@scope/lib",
+				"        version: file:../@scope/lib(react@18.3.1)",
+				"      stub:",
+				"        specifier: link:vendor/stub(x)",
+				"        version: link:vendor/stub(x)",
+				"snapshots:",
+				"  mid@file:vendor/a(b)/mid(react@18.3.1): {}",
+				"  scoped@file:../@scope/lib(react@18.3.1): {}",
+				"  '@scope/reg@1.0.0(react@18.3.1)': {}",
+			].join("\n"),
+			{ format: "pnpm" },
+		);
+
+	it.effect("never splits inside the path: only a TRAILING run of groups is a suffix", () =>
+		Effect.gen(function* () {
+			// A parenthesis INSIDE the path is followed by more path, so it is not
+			// part of the trailing run.
+			const lockfile = yield* edges();
+			assert.strictEqual(lockfile.packagesNamed("mid")[0]?.version, "file:vendor/a(b)/mid");
+			const root = Option.getOrThrow(lockfile.importer("."));
+			assert.strictEqual(root.dependencies.find((d) => d.name === "mid")?.version, "file:vendor/a(b)/mid");
+			assert.strictEqual(root.dependencies.find((d) => d.name === "mid")?.peerSuffix, "(react@18.3.1)");
+		}),
+	);
+
+	it.effect("splits name from version at the first @, so an @ in the spec stays in the version", () =>
+		Effect.gen(function* () {
+			const lockfile = yield* edges();
+			assert.strictEqual(lockfile.packagesNamed("scoped")[0]?.version, "file:../@scope/lib");
+			assert.strictEqual(lockfile.packagesNamed("@scope/reg")[0]?.version, "1.0.0");
+		}),
+	);
+
+	it.effect("leaves a link: whole, since pnpm never suffixes one", () =>
+		Effect.gen(function* () {
+			const root = Option.getOrThrow((yield* edges()).importer("."));
+			const stub = root.dependencies.find((d) => d.name === "stub");
+			assert.strictEqual(stub?.version, "link:vendor/stub(x)");
+			assert.isFalse(Object.hasOwn(stub ?? {}, "peerSuffix"));
+		}),
+	);
+});
+
 // The supported input domain. This is a deliberate narrowing: a lockfile older
 // than the gate fails typed rather than parsing into a model that cannot answer
 // resolution questions. The gate is on the lockfile FORMAT version, which is
@@ -1541,12 +1689,17 @@ describe("supported lockfile versions", () => {
 			// named `unsupported-*` asserts a typed failure, so it is expected to
 			// sit *below* the gate. The convention is the exclusion mechanism, so
 			// adding a negative fixture cannot silently opt a positive one out.
+			//
+			// Config-only pnpm captures are marked the same way, by name: they are
+			// the one fixture shape whose caller asserts `configOnly`, so the guard
+			// passes the flag for exactly those and for nothing else.
 			const gated = { pnpm: 9, npm: 3 } as const;
 			const checked: Array<string> = [];
+			const checkedConfigOnly: Array<string> = [];
 
 			for (const [format, minimum] of Object.entries(gated) as ReadonlyArray<[keyof typeof gated, number]>) {
 				const filename = filenameFor(format);
-				const formatDir = join(import.meta.dirname, "fixtures", format);
+				const formatDir = join(FIXTURES_DIR, format);
 				for (const entry of readdirSync(formatDir, { withFileTypes: true })) {
 					if (!entry.isDirectory() || entry.name.startsWith(NEGATIVE_FIXTURE_PREFIX)) continue;
 					const relative = `${format}/${entry.name}/${filename}`;
@@ -1555,24 +1708,29 @@ describe("supported lockfile versions", () => {
 					// would throw ENOENT OUTSIDE the Effect, where `Effect.result` cannot
 					// capture it and the path is lost from the message. Report it here.
 					assert.isTrue(
-						existsSync(join(formatDir, entry.name, filename)),
+						existsSync(fixturePath(relative)),
 						`${relative} is missing: this guard reads each format's primary filename`,
 					);
 					// Through `Effect.result` so a fixture that has aged below the gate
 					// reports *which* fixture, rather than surfacing as a bare parse
 					// error with no path in it — this guard is read by whoever added
 					// the fixture that broke it.
-					const parsed = yield* Effect.result(parseFixture(relative, format));
+					const configOnly = format === "pnpm" && entry.name.startsWith(CONFIG_ONLY_FIXTURE_PREFIX);
+					const parsed = yield* Effect.result(parseFixture(relative, format, configOnly));
 					assert.isTrue(parsed._tag === "Success", `${relative} no longer parses: it may have aged below the gate`);
 					if (parsed._tag !== "Success") continue;
 					assert.isAtLeast(Number.parseFloat(parsed.success.lockfileVersion), minimum, relative);
 					checked.push(relative);
+					if (configOnly) checkedConfigOnly.push(relative);
 				}
 			}
 
 			// The enumeration itself must not silently find nothing — a mistyped
 			// directory would turn this guard into a vacuous pass.
 			assert.isAtLeast(checked.length, 12, `enumerated too few fixtures: ${checked.join(", ")}`);
+			// Nor may the marker silently match nothing: a mistyped prefix would
+			// leave the flag path of this guard unexercised.
+			assert.isAtLeast(checkedConfigOnly.length, 2, `marked too few config-only fixtures: ${checked.join(", ")}`);
 		}),
 	);
 });

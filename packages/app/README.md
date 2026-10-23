@@ -7,10 +7,10 @@
 
 The application control plane for Effect. `App.layer` gives an application its XDG-namespaced directories, a migrated SQLite state database, a TTL cache and — through `AppConfig.layer` — a config file, all pointed at the same place, with the namespace typed exactly once. It is a composition over [`@effected/xdg`](../xdg), [`@effected/store`](../store) and [`@effected/config-file`](../config-file), and nothing else.
 
-> **Pre-release.** This package is part of the `@effected/*` kit, in pre-`1.0.0`
-> development against a single pinned Effect v4 prerelease. Packages graduate to
-> `1.0.0` once Effect `4.0.0` ships. To hold your own `effect` versions at
-> exactly the ones the kit is built and tested against, install
+> **Pre-`1.0.0`.** This package is part of the `@effected/*` kit, built on stable
+> Effect v4 (`effect` `^4.0.0`) and still in `0.x` development. Stable Effect
+> makes a kit `1.0.0` possible, not automatic. To keep your `effect` and
+> `@effect/*` versions on the line the kit is built and tested against, install
 > [`@effected/pnpm-plugin-effect`](https://www.npmjs.com/package/@effected/pnpm-plugin-effect).
 >
 > **Stability: unstable.** This package's API surface is not yet considered
@@ -21,7 +21,7 @@ The application control plane for Effect. `App.layer` gives an application its X
 
 ## Why @effected/app
 
-Every application built on this kit writes the same forty lines of wiring, and it is the kind of wiring that looks right and is wrong. `@effected/xdg` resolves where a namespace's directories are. `@effected/store` opens a database at a path. Between them sits an ordering nobody thinks about until it bites: `SqliteClient.layer` has no error channel and **defects** on a missing parent directory, so the directory must be ensured *before* the store layer is built, or the failure arrives as a defect that nothing downstream can catch typed.
+Every application built on this kit writes the same forty lines of wiring, and it is the kind of wiring that looks right and is wrong. `@effected/xdg` resolves where a namespace's directories are. `@effected/store` opens a database at a path. Between them sits an ordering nobody thinks about until it bites: the store layer cannot create a missing parent directory, so the directory must be ensured *before* the store layer is built, or every first run fails to open its database.
 
 The other half is the namespace itself. An application names it for its directories, then names it again for its config file, and the two strings drift — `"myapp"` here, `"my-app"` there — and now it reads config from a directory nothing else in the process ever writes to.
 
@@ -111,7 +111,15 @@ Four services, one platform import, one namespace typed once, and every failure 
 
 `AppOptions` is [`@effected/xdg`](../xdg)'s `AppDirsOptions` straight through — `namespace`, `native`, `fallbackDir` and `dirs` mean there exactly what they mean here, five-rung precedence ladder included, and this package re-documents none of it.
 
-Every `filename` takes a **single path component**. An empty name, one containing a separator, or `.` / `..` would escape the namespace directory, so it dies at layer construction: it can only come from code, never from user input.
+`AppStore` and `AppCache` take a `directory` (`"state"`, `"data"` or `"cache"`; defaults as above) and an optional relative `subdir` under it, created with `mkdir -p` before the database opens — so `{ directory: "data", subdir: "projects/abc123", filename: "data.db" }` lands at `~/.local/share/myapp/projects/abc123/data.db`. A `subdir` that cannot be created fails on the same typed `AppDirsError` as the directory itself; because of that `mkdir`, the database layers need `FileSystem` as well as `AppDirs` and `Path`.
+
+Every `filename` takes a **single path component**, and every `subdir` component obeys the same rule (no empty component, no `.` or `..`, no leading `/`, no `\`). Both are wiring, so a bad one **dies** rather than failing typed. A `subdir` derived from runtime data — a per-project key from a path — must therefore come from a derivation that can only produce valid components, such as a hash:
+
+```ts
+import { createHash } from "node:crypto";
+
+const subdir = createHash("sha256").update(projectRoot).digest("hex").slice(0, 16);
+``` An empty name, one containing a separator, or `.` / `..` would escape the namespace directory, so it dies at layer construction: it can only come from code, never from user input.
 
 ## The namespace is typed once
 
@@ -144,7 +152,7 @@ Two properties to be deliberate about. **A resolver that finds nothing falls thr
 
 ### Wiring the flag to the layer
 
-A layer is built before a CLI parses anything, so the parsed `--config` has to reach `AppConfig.layer` somehow. `effect/unstable/cli` has two ways, and neither needs an `Effect.provide` inside the handler.
+A layer is built before a CLI parses anything, so the parsed `--config` has to reach `AppConfig.layer` somehow. `effect/cli` has two ways, and neither needs an `Effect.provide` inside the handler.
 
 For a single command, `Command.provide` takes **a function of the parsed input**, not just a finished layer:
 
@@ -178,7 +186,7 @@ Its `native` option defaults to **`true`** — the opposite of `AppDirsOptions.n
 
 ## Ensure before open
 
-The one thing this package actually claims. `AppStore.layer` yields `AppDirs`, runs `ensureState`, joins the path, and only then hands it to `Store.layerSqlite`; `AppCache.layer` does the same over `ensureCache`. That ordering converts a defect surface into a typed one — `AppDirs.ensure*` is a `mkdir -p` on a **typed** `AppDirsError` channel, so "the state directory could not be created" arrives as a recoverable boundary failure rather than a die.
+The one thing this package actually claims. `AppStore.layer` yields `AppDirs`, runs `ensureState`, joins the path, and only then hands it to `Store.layerSqlite`; `AppCache.layer` does the same over `ensureCache`. That ordering makes the directory exist before the open — `AppDirs.ensure*` is a `mkdir -p` on a **typed** `AppDirsError` channel, so "the state directory could not be created" arrives as a recoverable boundary failure rather than a die.
 
 Nothing is `orDie`d to make a signature tidier. A regression test pins an unwritable ancestor to a typed failure and watches for a die.
 
@@ -193,6 +201,87 @@ const AppLive = App.layer({ namespace: "myapp", store: { migrations } }); // onc
 ```
 
 Call the factory inline at two provide sites and you open **two databases**: two connections onto one file, two migration ledgers, and two independent `CacheEvent` PubSubs whose subscribers each see half the events. This is the package where an application is most likely to compose the same layer twice, which is why the rule is here and not in a footnote.
+
+## Databases per command: directories everywhere
+
+Building `App.layer` **opens and migrates both databases**, eagerly — `store.db` and `cache.db` exist the moment the layer is built, whether or not the program touches them. For a long-running service that is what you want. For a CLI it is not: provide `App.layer` at the entry point and every command creates and migrates both files, `--help`-adjacent paths included, and a command that deletes the app's files ends up deleting a database its own process holds open.
+
+`App.layerDirs` is the directories half on its own — `Xdg` and `AppDirs` for one namespace, `XdgEnvError` on the error channel, `FileSystem` and `Path` in `R`, and no database opened. Provide it once at the edge, bind each database layer once at module scope, and attach it with `Command.provide` only on the commands that use it:
+
+```ts
+import { App, AppStore } from "@effected/app";
+import { CliRuntime } from "@effected/cli";
+import { Store } from "@effected/store";
+import { NodeRuntime, NodeServices } from "@effect/platform-node";
+import { Effect, Layer } from "effect";
+import { Command } from "effect/cli";
+
+// Module scope, bound once: built once per provided layer graph.
+const StoreLive = AppStore.layer({ migrations });
+
+// Opens store.db — only when `history` runs.
+const history = Command.make("history", {}, () =>
+  Effect.gen(function* () {
+    const store = yield* Store;
+    yield* store.client`SELECT id FROM runs`;
+  }),
+).pipe(Command.provide(StoreLive));
+
+// Opens no database at all.
+const where = Command.make("where", {}, () => Effect.void);
+
+const cli = Command.make("myapp").pipe(Command.withSubcommands([history, where]));
+
+// Directories at the edge, once; AppDirs satisfies StoreLive's requirement.
+const PlatformLive = App.layerDirs({ namespace: "myapp" }).pipe(Layer.provideMerge(NodeServices.layer));
+
+NodeRuntime.runMain(CliRuntime.main(Command.run(cli, { version: "1.0.0" }), { platform: PlatformLive }));
+```
+
+A module-scope binding such as `StoreLive` stays **one** connection however many composites reuse it inside one provided layer graph — `Layer.mergeAll(StoreLive, …)` beside `Repo.pipe(Layer.provide(StoreLive))` — because a layer graph memoises by reference, and an `Effect.provide` nested inside another reuses what the enclosing one already built. Provides that are not nested — one after another, or side by side under a common parent — each build it, and so open the database, again.
+
+`Command.provide` also accepts a function of the command's parsed input, `(input) => Layer`, for a database whose options depend on a flag. Bind anything that does not depend on the input outside that function — a layer built inside it is a new reference on every call.
+
+## More than one store
+
+`AppStore.layer` and `AppCache.layer` provide the kit's single `Store` and `Cache` services. An application that keeps a second database — a registry beside its run history, a separate cache for large objects — declares its own service key over the same shape and builds it with `layerAs`:
+
+```ts
+import { AppCache, AppStore } from "@effected/app";
+import type { CacheShape, StoreShape } from "@effected/store";
+import { Context, Layer } from "effect";
+
+class RegistryStore extends Context.Service<RegistryStore, StoreShape>()("myapp/RegistryStore") {}
+class TarballCache extends Context.Service<TarballCache, CacheShape>()("myapp/TarballCache") {}
+
+// Every one bound once, to a const.
+const StoreLive = AppStore.layer({ migrations });
+const RegistryStoreLive = AppStore.layerAs(RegistryStore, { filename: "registry.db", migrations: registryMigrations });
+const TarballCacheLive = AppCache.layerAs(TarballCache, { filename: "tarballs.db", maxEntries: 200 });
+
+const DatabasesLive = Layer.mergeAll(StoreLive, RegistryStoreLive, TarballCacheLive);
+```
+
+Each keyed layer runs the same ensure-before-open glue, in the same default directory as its primary — state for stores, cache for caches, unless `directory` / `subdir` say otherwise — and outputs **only its own key**: the `Store` or `Cache` it builds internally never leaks, so it composes beside the primary without shadowing it. Each file has its own migrations and its own ledger.
+
+- **`filename` is required.** A default of `store.db` or `cache.db` would land a keyed layer silently on the primary's file — two connections and two migration ledgers on one database.
+- **The key's service type must be `StoreShape` or `CacheShape`.** An incompatible shape is a compile error, and so is one that adds members (`StoreShape & { … }`), reported as an argument not assignable to `never` because this layer cannot supply them. The check cannot see through method-syntax parameter bivariance: a member redeclared as a method with a wider parameter still compiles.
+- **Bind every keyed layer to a `const`.** Each `layerAs(…)` call is a new layer, and the memoization trap above applies to each one separately: two inline calls with the same key open the file twice.
+
+The keyed layers need `AppDirs`, `Path` and `FileSystem`, which is exactly what `App.layerDirs` plus the platform provides — they slot into the per-command shape above unchanged.
+
+Every `AppStore` / `AppCache` option beyond the path is `@effected/store`'s, passed straight through: `client` (driver options such as `busyTimeout` and `disableWAL` — the place for per-connection settings, never a migration), `checkpointOnClose`, `onConnect` (a per-connection hook run before the ledger, outside any transaction), and on stores `adoptMigratorLedger` and `mirrorMigratorLedger`, which move a database previously migrated by effect/sql's `Migrator` onto `Store` without re-running its history and keep that ledger current for older versions (see `@effected/store`'s README for the rules). A database at an absolute or host-chosen path is not an app concern: use `Store.layerSqliteAs` / `Cache.layerSqliteAs` from `@effected/store` directly.
+
+### Where is the file?
+
+A program that reports or persists the database path — a `doctor` command, a "your data lives at" line — derives it with `AppStore.location(options)` / `AppCache.location(options)`, passing the same options it passes the layer. It resolves the absolute path from the ambient `AppDirs` without creating anything (`R` is `AppDirs | Path`), and it is the very derivation the layers use, so the reported path and the opened file cannot disagree:
+
+```ts
+const options = { filename: "registry.db", directory: "data", migrations } as const;
+
+const RegistryStoreLive = AppStore.layerAs(RegistryStore, options);
+const where = AppStore.location(options); // Effect<string, never, AppDirs | Path>
+```
 
 ## Testing: one line, no platform package
 
@@ -255,8 +344,10 @@ Provide it beneath the stack and every span the kit's packages already emit — 
 ## Features
 
 - `App.layer` — the control plane: `Xdg`, `AppDirs`, `Store` and `Cache` from one call, with only `FileSystem` and `Path` left for the platform layer to supply.
+- `App.layerDirs` — `Xdg` and `AppDirs` alone, opening no database: directories everywhere, databases attached only where they are used.
 - `App.layerTest` — the same four services, hermetic: synthetic XDG paths, `:memory:` databases, no platform package required.
 - `AppStore.layer` / `AppCache.layer` — the state-directory and cache-directory databases on their own, each ensuring its directory before it opens the file.
+- `AppStore.layerAs` / `AppCache.layerAs` — an additional database under a service key you define, with its own file, migrations and ledger.
 - `AppConfig.layer` — `@effected/config-file` wired to xdg's resolver chain and save path, with the namespace read from the ambient `AppDirs` and the codec named by you.
 - `AppError` — the type-only union of everything the control plane can fail with, for the `catchTags` block at the edge.
 

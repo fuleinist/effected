@@ -6,63 +6,60 @@ This is **effected**, a pnpm monorepo (npm org `@effected`) building an **Effect
 
 The monorepo holds libraries only — applications stay in external repos.
 
-**Releases are changeset-driven: CI builds the changesets and releases the packages they name.** A release may be the whole kit or a single package — both are ordinary. Everything published is `0.x` and unstable; `1.0.0` waits for Effect v4 GA.
+**Releases are changeset-driven: CI builds the changesets and releases the packages they name.** A release may be the whole kit or a single package — both are ordinary. Everything published is `0.x` and unstable. Effect v4 is now stable, which makes a kit `1.0.0` possible, not automatic: the kit takes it when it chooses to.
 
-## Design Documentation
+## Knowledge bundle
 
-The foundational design docs live in `.claude/design/effected/` (config: `.claude/design/design.config.json`). Load each one on demand:
+Durable project knowledge lives as OKF concepts under `okf/`, not in prose here. Start at `okf/index.md` — it lists every concept — then load the specific one a task needs:
 
-- Architecture → `@./.claude/design/effected/architecture.md` — Load when: changing repo structure, build pipeline, tooling, or workspace/catalog setup.
-- Effect standards → `@./.claude/design/effected/effect-standards.md` — Load when: designing or porting a library API, asking whether core already owns a primitive *and whether its shape fits the call site*, choosing a test double, or making dependency/peer-closure decisions.
-- Package inventory → `@./.claude/design/effected/package-inventory.md` — Load when: picking the next migration target or updating a package's migration status.
-- Releases → `@./.claude/design/effected/releases.md` — Load when: reasoning about how a release is cut or versioned, or scoping a package against its consumers.
-- Roadmap → `@./.claude/design/effected/roadmap.md` — Load when: planning post-migration work or picking the next workstream.
-- Migration playbook → `@./.claude/design/effected/migration-playbook.md` — Load when: starting or continuing a package migration.
-- Package setup → `@./.claude/design/effected/package-setup.md` — Load when: scaffolding or adding a new workspace package.
-- Catalog sync → `@./.claude/design/effected/catalog-sync.md` — Load when: touching the published `effected` catalog literal, the `catalog:sync` / `catalog:check` scripts, or `.github/workflows/catalog-sync.yml`.
-- Formatter convention → `@./.claude/design/effected/formatter-convention.md` — Load when: designing a formatting or parsing entry point, or reasoning about a formatter's fidelity guarantee.
-- Sync primitive policy → `@./.claude/design/effected/sync-primitive-policy.md` — Load when: designing a pure boundary's surface shape, or deciding whether to expose a sync `Result` primitive alongside an `Effect` form.
-- Plugin → `@./.claude/design/effected/plugin.md` — Load when: working in `plugins/` on the "effected" Claude Code plugin or its experimental Copilot port.
-- Plugin construct index → `@./.claude/design/effected/plugin-construct-index.md` — Load when: adding or annotating an exported construct, or touching `generate-constructs.mts` / `construct-annotations.json`.
-- GitHub Action canon → `@./.claude/design/effected/github-action-canon.md` — Load when: building or reviewing a GitHub Action repository on the kit, or editing the Actions skill suite that teaches it.
-- Scratchpad → `@./.claude/design/effected/scratchpad.md` — Load when: changing the scratchpad workspace's committed shell or its ghost-workspace exclusions.
+- Project purpose, scope, packages table, consumers → `okf/project.md`.
+- Workspace root (layout, build pipeline, dependency resolution, vendored source) → `okf/modules/workspace.md` — Load when: changing repo structure, build pipeline, tooling, or workspace/catalog setup.
+- Effect standards (schema, services/layers, error handling, observability, input hardening, testing, dependency policy, requiring core in `R`) → `okf/conventions/schema-standards.md`, `service-and-layer-standards.md`, `error-standards.md`, `observability-standards.md`, `input-hardening-standards.md`, `testing-standards.md`, `dependency-policy.md`, `require-in-r-default.md`, `peer-dependency-discipline.md` — Load when: designing or porting a library API, asking whether core already owns a primitive *and whether its shape fits the call site*, choosing a test double, or making dependency/peer-closure decisions.
+- Release model and catalog sync → `okf/decisions/release-model.md`, `okf/interfaces/catalog-sync-cli.md`, `okf/gotchas/catalog-sync-check-goes-red-when-it-repairs.md` — Load when: reasoning about how a release is cut or versioned, scoping a package against its consumers, or touching the published `effected` catalog literal, the `catalog:sync` / `catalog:check` scripts, or `.github/workflows/catalog-sync.yml`.
+- Package-manager support window → `okf/conventions/package-manager-support-policy.md`, `okf/gotchas/pnpm-12-placeholder-bin-runs-under-node.md` — Load when: touching package-manager provisioning in `github-actions`, the `package.json` model in `npm` / `package-json`, or deciding which manager majors to test.
+- Fork pull requests → `okf/runbooks/enable-fork-pull-request-review.md`, `okf/gotchas/unprotected-environment-runs-fork-code-with-secrets.md` — Load when: a PR from a fork shows a waiting or failed `Fork Approval` job, or enabling the gate on a repository.
+- Adding a package → `okf/runbooks/add-a-kit-package.md`, `okf/runbooks/add-a-workspace-package.md` — Load when: starting a new `@effected` library or scaffolding a new workspace package.
+- Format packages (parse/format/edit surface, fidelity guarantee, sync-vs-effectful primitives) → `okf/conventions/format-package-convention.md`, `okf/conventions/sync-primitive-policy.md` — Load when: designing a formatting or parsing entry point, or reasoning about a formatter's fidelity guarantee.
+- Plugin → `okf/modules/ai-plugin.md`, `okf/conventions/author-the-plugin-once.md` — Load when: working in `plugin/` on the "effected" agent plugin, the one pluginfinity source of its Claude Code and Copilot builds.
+- Consumer-facing text (plugin skills, agents, hooks, TSDoc) names no Effect prerelease version and tells no since-version history → `okf/conventions/consumer-text-states-current-effect-behaviour.md` — Load when: writing or reviewing a skill, agent, hook or TSDoc comment.
+- Construct index → `okf/models/construct-annotations.md`, `okf/conventions/construct-index-is-generated.md` — Load when: adding or annotating an exported construct, or touching `generate-constructs.mts` / `construct-annotations.json`.
+- GitHub Action canon → `okf/conventions/github-action-canon.md` — Load when: building or reviewing a GitHub Action repository on the kit, or editing the Actions skill suite that teaches it.
+- Scratchpad → `okf/modules/scratchpad.md` — Load when: changing the scratchpad workspace's committed shell or its ghost-workspace exclusions.
+- Consumers (the external applications that scope the kit) → `okf/consumers/` — Load when: reasoning about who a capability serves, or surveying what a consumer already exercises.
+- A specific package → `okf/modules/<pkg>.md` (one per `packages/*`) — Load when: working inside that package.
 
-Per-package design docs live in `.claude/design/effected/packages/`; consumer dogfood records in `.claude/design/effected/consumers/`. Two docs sit beside the roster and are **deliberately off it** — do not "repair" the list by adding them: `yaml-lint.md` is a topic doc for `@effected/yaml`, reached from that package's context files, and `benchmarking.md` designs a system nothing has built yet.
+### Detail folded into the bundle
 
-### Child context files
-
-Detail lifted out of this file. Load on demand:
-
-- Package roster → `@./CLAUDE.packages.md` — Load when: choosing which package owns a capability, or checking a package's tier or scope.
-- Build and test mechanics → `@./CLAUDE.build-and-test.md` — Load when: asking how the turbo/bundler pipeline, typechecking or the vitest setup actually works.
-- Dependency catalogs and peer closure → `@./CLAUDE.dependencies.md` — Load when: reading a `pnpm peers check` warning, or touching catalogs and peer declarations.
-- Vendored repos → `@./CLAUDE.vendored-effect.md` — Load when: consulting, syncing or re-pinning `.repos/effect` or a sibling vendored submodule.
+- Package roster with tiers and provenance → `okf/project.md` — Load when: choosing which package owns a capability, or checking a package's tier or scope.
+- Build and test mechanics (turbo/bundler pipeline, typechecking, vitest pre-build and gates) → `okf/modules/workspace.md`, `okf/conventions/build-through-turbo-only.md`, `okf/conventions/testing-standards.md`, `okf/conventions/evidence-ladder.md`, `okf/conventions/state-the-reason-when-a-gate-count-moves.md` — Load when: asking how the turbo/bundler pipeline, typechecking or the vitest setup actually works.
+- Dependency catalogs and peer closure → `okf/modules/workspace.md`, `okf/conventions/peer-dependency-discipline.md`, `okf/conventions/one-resolved-effect-copy.md`, `okf/gotchas/expected-peers-check-occupant.md` — Load when: reading a `pnpm peers check` warning, or touching catalogs and peer declarations.
+- Vendored repos → `okf/modules/workspace.md`, `okf/runbooks/sync-vendored-repos.md`, `okf/runbooks/advance-the-effect-pin.md` — Load when: consulting, syncing or re-pinning `.repos/effect` or a sibling vendored submodule.
 
 ### Kit composition
 
-The kit is **31 publishable packages**: 30 libraries plus the `pnpm-plugin-effect` companion, and all 31 have published (`schema-org`, the newest, on 2026-08-26). New packages follow the migration playbook: design doc first, then port.
+The kit is **42 publishable packages**: 40 libraries plus two companions (`pnpm-plugin-effect` and `schemastore-cli`); all but `@effected/crypto`, `@effected/oidc` and `@effected/webhooks`, the newest libraries, have published. New packages follow `okf/runbooks/add-a-kit-package.md`: an `okf/modules/<pkg>.md` Module concept first, then port.
 
-`@effected/config-file` holds every config **codec**; the `jsonc`, `yaml` and `toml` **format** packages stay independent. The four codecs are **free-standing named exports** — `JsonCodec`, `JsoncCodec`, `YamlCodec`, `TomlCodec`, one module each — with `ConfigCodec` the interface only. **Never collect them into a namespace object**: it would drag every parsing engine into a JSON-only consumer's bundle, killing tree-shaking silently. Read `@./.claude/design/effected/packages/config-file.md` before touching it.
+`@effected/config-file` holds every config **codec**; the `jsonc`, `yaml` and `toml` **format** packages stay independent. The four codecs are **free-standing named exports** — `JsonCodec`, `JsoncCodec`, `YamlCodec`, `TomlCodec`, one module each — with `ConfigCodec` the interface only. **Never collect them into a namespace object**: it would drag every parsing engine into a JSON-only consumer's bundle, killing tree-shaking silently. Read `okf/modules/config-file.md` and `okf/decisions/codecs-are-free-standing-named-exports.md` before touching it.
 
-`package-inventory.md` and `releases.md` are authoritative — read them before starting work.
+`okf/project.md` is authoritative on packages and consumers — read it before starting work.
 
 ## Repository Layout
 
 - `packages/` — the workspace packages.
-- `plugins/` — two agent plugins: `claude-code/` ("effected", skills and specialist agents) and the experimental `copilot/` port. Each has a private tracking package — `@effected/claude-code-plugin`, `@effected/copilot-plugin` — that versions and tags it but **never publishes to npm**; a plugin release is a git tag plus a GitHub release. Read `plugins/CLAUDE.md` before working there.
+- `plugin/` — the "effected" agent plugin (skills, specialist agents, a SessionStart briefing): one source that `pluginfinity` builds into committed Claude Code and Copilot plugins under `plugin/builds/`, which are **never hand-edited**. Its private tracking package `@effected/ai-plugin` versions and tags both builds but **never publishes to npm**; a plugin release is a git tag plus a GitHub release. Read `plugin/CLAUDE.md` before working there.
 - `website/` — RSPress docs site; per-package api-extractor models live in `website/lib/models/`.
 - `scratchpad/` — private agent-probe workspace: every kit package at `workspace:*`, three runners, never published, invisible to CI. Read `scratchpad/CLAUDE.md` before working there.
-- `.repos/effect` — read-only vendored Effect v4 source; the authority on what v4 exports. Sibling submodules vendor spec inputs for specific packages (the CommonMark/mdast set). **Never write to anything under `.repos/`** — silk's PreToolUse guards deny it. Detail → `@./CLAUDE.vendored-effect.md`.
+- `.repos/effect` — read-only vendored Effect v4 source; the authority on what v4 exports. Sibling submodules vendor spec inputs for specific packages (the CommonMark/mdast set). **Never write to anything under `.repos/`** — silk's PreToolUse guards deny it. Detail → `okf/modules/workspace.md`, `okf/conventions/no-writes-under-repos.md`.
 - **A generator's data input is a committed file, not a submodule.** `@effected/spdx` and `@effected/schema-org` each read one published document from their own `lib/data/`. Vendoring those as submodules cost every clone and every CI checkout the upstream repos' full history — 1.86 GB and 254 MB — to reach 332 KB and 1.5 MB of JSON, and roughly tripled CI checkout time. Submodule a source repo when the package needs to *read the repo*; commit the file when it needs one file.
-- `.claude/skills/improve` — project-level skill that maintains `plugins/claude-code/skills/`.
+- `.claude/skills/improve` — project-level skill that maintains `plugin/skills/`.
 
 ### Package context files
 
-Each package has its own `CLAUDE.md` and documents itself. Read it before working there; do not duplicate its content here. The roster of all 31 — what each one is, and the parenthetical tier tag every **library** carries (pure / boundary / integrated) per `effect-standards.md` — lives in `@./CLAUDE.packages.md`. Load it when: choosing which package owns a capability, or checking a package's tier or scope before working in it.
+Each package has its own `CLAUDE.md` and documents itself. Read it before working there; do not duplicate its content here. The roster of all 42 — what each one is, and the parenthetical tier tag every **library** carries (pure / boundary / integrated, per `okf/glossary/library-tier.md`) — lives in `okf/project.md`'s packages table. Load it when: choosing which package owns a capability, or checking a package's tier or scope before working in it.
 
 ## Build Pipeline
 
-Builds run through turbo and `@savvy-web/bundler`; mechanics → `@./CLAUDE.build-and-test.md`. The rules:
+Builds run through turbo and `@savvy-web/bundler`; mechanics → `okf/modules/workspace.md`, `okf/conventions/build-through-turbo-only.md`. The rules:
 
 **Never run `node savvy.build.ts --target prod` directly.** It skips `build:dev`, emits no `.d.ts`, and leaves a truncated `issues.json` shaped exactly like a clean gate. Build through `pnpm build --filter <pkg>`.
 
@@ -73,6 +70,8 @@ Builds run through turbo and `@savvy-web/bundler`; mechanics → `@./CLAUDE.buil
 **Source `package.json` files are `"private": true`** — intentional; never set `"private": false`, and never infer from it that a package will not publish. The bundler's `publishConfig` transform produces the publishable manifest at build time, and publishability is `publishConfig.access === "public"`.
 
 **Every package typechecks with `tsc --noEmit`** (`types:check`), on `typescript` from `catalog:build` — which a configDependency injects, so its absence from `pnpm-workspace.yaml` is expected and must never be "repaired".
+
+**The root `tsconfig.json` sets `skipLibCheck: true`, and that override is deliberate — do not remove it.** The silk preset sets no `skipLibCheck`, so it defaults false and the root program typechecks dependencies' shipped declarations. `vitest@5.0.0` ships a broken one — `dist/chunks/plugin.d.ts` imports `MarkOptions` from `vitest/browser`, which `dist/browser.d.ts` does not export — and it was the ONLY error in the whole root program, failing the pre-commit hook's `tsc --noEmit` on every commit in the repo. Drop the override once vitest ships a consistent `.d.ts`; per-package `types:check` is unaffected either way.
 
 ## Commands
 
@@ -104,9 +103,9 @@ Biome, commitlint, lint-staged and markdownlint take their presets from `@savvy-
 
 ### Dependencies
 
-Shared dependency versions come from pnpm catalogs in `pnpm-workspace.yaml`, managed via `packages/pnpm-plugin-effect`. Catalog detail and the expected peer-warning class → `@./CLAUDE.dependencies.md`.
+Shared dependency versions come from pnpm catalogs in `pnpm-workspace.yaml`, managed via `packages/pnpm-plugin-effect`. Catalog detail and the expected peer-warning class → `okf/modules/pnpm-plugin-effect.md`, `okf/conventions/peer-dependency-discipline.md`, `okf/gotchas/expected-peers-check-occupant.md`.
 
-**`catalog:effect` uses the `lock` strategy: exact prerelease pins (`4.0.0-rc.112`), never a caret.** A caret on a prerelease floats across the release line and silently desynchronizes the installed `effect` from the `.repos/effect` submodule, the authority on what v4 exports.
+**`catalog:effect` rides the stable line with carets under `lock-minor`, and the plugin's `overridesFromCatalogs` directive derives one line-scoped override per family member, pinning `effect` and every satellite to the catalog version across the whole consumer graph** — a caret alone once paired a 4.0.3 satellite with core 4.0.2, which dies at import, and a parent-scoped override does not reach the peer edge. Never hand-write the family pins; they move with the catalog. Why → `okf/decisions/effect-overrides-derived-from-catalog.md`. `.repos/effect`, the authority on what v4 exports, is pinned to the tag matching the lockfile's `effect`; re-pin it whenever that moves, or the vendored source and the installed package drift apart silently.
 
 **Always check the lockfile diff after an install** — a plain `pnpm install` can strip turbo/biome/tsgo platform binaries from it.
 
@@ -118,6 +117,6 @@ Commit bodies allow dash bullets (the preferred shape) but no markdown headers, 
 
 ## Testing
 
-Vitest with the `@vitest-agent/plugin` `AgentPlugin`; tests live in each package's `__test__/` directory, never co-located in `src/`. Test Effect code with `@effect/vitest` and assert with `assert.*` — **never `expect`**. Setup detail → `@./CLAUDE.build-and-test.md`.
+Vitest with the `@vitest-agent/plugin` `AgentPlugin`; tests live in each package's `__test__/` directory, never co-located in `src/`. Test Effect code with `@effect/vitest` and assert with `assert.*` — **never `expect`**. Setup detail → `okf/modules/workspace.md`, `okf/conventions/testing-standards.md`.
 
 **A test needing `FileSystem` provides `@effected/memfs`, never a hand-rolled `FileSystem.layerNoop` double** — `layerNoop` is deny-by-default, so a stub encodes only what its author remembered. Inject misbehaviour as a fault handler, not a stub body; riders in `effect-standards.md`.

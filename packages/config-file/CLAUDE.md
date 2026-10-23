@@ -14,7 +14,7 @@ for PBKDF2 derivation and AES-GCM, `globalThis.crypto.getRandomValues` for salts
 and nonces. **There is no `node:crypto` import, and adding one is a regression** —
 the platform global keeps the module runtime-agnostic as well as dependency-free.
 
-**Design doc:** `@../../.claude/design/effected/packages/config-file.md` — load
+**Design doc:** `@./okf/modules/config-file.md` — load
 when changing the pipeline seams, the error set, or the codec boundaries.
 
 ## Public surface
@@ -27,12 +27,14 @@ when changing the pipeline seams, the error set, or the codec boundaries.
   `src/TomlCodec.ts` — one free-standing codec each: `JsonCodec`, `JsoncCodec`,
   `YamlCodec`, `TomlCodec`
 - `src/ConfigResolver.ts` — `ConfigResolver` (+ `explicitPath`, `staticDir`,
-  `upwardWalk`, `workspaceRoot`, `gitRoot`, `systemEtc`)
+  `upwardWalk`, `workspaceRoot`, `gitRoot`, `systemEtc`), `ConfigMatch`,
+  `UpwardWalkOptions`
 - `src/MergeStrategy.ts` — `MergeStrategy` (`firstMatch`, `layeredMerge`),
   `ConfigSource`, `NonEmptySources`
 - `src/ConfigFile.ts` — `ConfigFile` (`Service`, `layer`, `testLayer`, `read`),
-  `ConfigFileShape`, `ConfigFileOptions`, `ConfigFileTestOptions`,
-  `ConfigReadOptions`, and five
+  `ConfigFileShape` (whose members include `encode` and `write`),
+  `ConfigFileOptions`, `ConfigFileTestOptions`, `ConfigReadOptions`,
+  `ConfigEncodeOptions`, the `ConfigEncodeError` union, and five
   errors: `ConfigFileNotFoundError`, `ConfigFileReadError`,
   `ConfigFileWriteError`, `ConfigDefaultPathMissingError`,
   `ConfigValidationError`
@@ -66,7 +68,24 @@ Three orthogonal seams, composed by `ConfigFile.layer`:
   wrap a codec and return one, so encryption + migrations + format compose.
 - **Resolver** — where the file is. `resolve`'s error channel is `never` **by
   contract**: `absorb` catches every filesystem failure into `Option.none()`, so
-  one unreadable tier never aborts the chain.
+  one unreadable tier never aborts the chain. `resolveMatch` is the same lookup
+  reporting a `ConfigMatch` — the anchor `dir` and the `subpath`/`filename`
+  candidate that matched — and `resolveProbe` extends that with the candidate
+  paths actually checked (`ConfigProbe.probed`), which `ConfigFileNotFoundError`
+  surfaces as `candidates` so the failure path is as informative as the success
+  path. Every built-in **derives `resolve` and `resolveMatch` from it** through
+  `fromProbe`, so the three cannot drift. Both are optional on the interface
+  forever: a consumer's hand-rolled resolver omits them and `discover` degrades —
+  to a bare `{ path }` on `ConfigSource.match`, and to no `candidates`
+  contribution on the failure path. `resolveMatch` exists because a resolver
+  `name` cannot say which candidate won once one resolver probes several —
+  `upwardWalk`'s `filenames` list is exactly that — which is what forced okfit to
+  string-match the discovered path's tail to find its project root; `resolveProbe`
+  exists because the same `name` under-reports what LOSING looked like (#651).
+- **`upwardWalk` probes directory-major**: every `subpaths × filenames` candidate
+  at one ancestor before ascending. Separate `upwardWalk` entries cannot express
+  it — `discover` exhausts one resolver to the filesystem root before starting
+  the next, so a parent's first candidate would beat a child's second.
 - **Strategy** — many sources → one value. Cannot fail; the empty case raises
   `ConfigFileNotFoundError` before a strategy is consulted.
 
@@ -81,6 +100,13 @@ merely for the keys it covers — measured, since the shape suggests the reverse
 A deliberate pass-through section therefore survives `"error"`, and structs
 without a rest stay strict independently. Default absent = core's
 behavior, so it is additive.
+
+**`ConfigCodecError.path` is attached by the pipeline, never by a codec** — a
+codec is handed a string and never sees a path. Every site in `ConfigFile` that
+feeds a codec a path it resolved (`loadFrom`'s parse, `encodeAndWrite`'s
+stringify, the one-shot `read`) re-raises through `withCodecPath`, so a
+discovery pass over several candidates still names the file that failed. An
+error that already carries a path is left alone.
 
 `ConfigFile.read(path, { schema, codec })` is the **one-shot** escape from all
 three seams: read + decode + validate one explicit path, no service, no layer,
@@ -98,6 +124,26 @@ and provide that const, or you mint two independent service instances.
 `ConfigFile.testLayer` seeds files into a temp dir and runs the **real**
 `makeImpl` over them — not a mock; it has no `defaultPath`, so `save`/`update`
 honestly fail with `ConfigDefaultPathMissingError` under it.
+
+Both take the key as `Context.Key<Self, S> & ([ConfigFileShape<A>] extends [S]
+? unknown : never)` with a defaulted `S extends ConfigFileShape<A>` — a pin
+against wider shapes, not `Context.Key<Self, ConfigFileShape<A>>`. A class key is
+checked structurally and method bivariance makes that covariant, so the plain
+form accepted a key over `ConfigFileShape<A> & { extra }` and handed it a value
+missing `extra`. `S` is defaulted so explicit four-type-argument calls still
+compile; `__test__/ConfigFileKeyTyping.test.ts` pins both directions. The pin
+proves mutual assignability, not identity: it cannot see through method-syntax
+parameter bivariance, so a member redeclared as a method with a wider
+parameter still compiles.
+
+`encode(value, options?)` is the **`--dry-run` primitive**: it returns the exact
+string `write` puts on disk — schema-encode, stringify, header — with no write,
+no event and path-less errors (`ConfigEncodeError = ConfigCodecError |
+ConfigValidationError`). `write(value, path, options?)` and `encode` share one
+`encodeTo`, so they cannot drift. `ConfigEncodeOptions.header` is prepended
+**verbatim** with exactly one newline; the caller owns its validity in the
+target format — JSON has no comment syntax, so a `#` header on `JsonCodec`
+yields an unparseable file by construction, and the package does not check.
 
 `ConfigFile.update` is serialized by a `Semaphore` (`Semaphore.makeUnsafe(1)`,
 then `withPermits(1)`) because load → transform → save is a read-modify-write.
@@ -176,11 +222,11 @@ now expressed over `Walker.ascend`, `Walker.findUpward` and `Walker.findRoot`.
 
 ## Testing and building
 
-Tests live in `__test__/` (14 files, 154 passing), use `@effect/vitest`, and
+Tests live in `__test__/` (18 files, 191 passing), use `@effect/vitest`, and
 assert with `assert.*` — **never** `expect`.
 
 ```bash
-pnpm vitest run --project @effected/config-file
+pnpm vitest run --project @effected/config-file   # from the repo root
 pnpm build --filter @effected/config-file   # from the repo root
 ```
 

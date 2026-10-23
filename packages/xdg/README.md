@@ -7,10 +7,10 @@
 
 XDG Base Directory resolution for Effect. `Xdg` reads the environment — `$HOME`, the four `*_HOME` variables, `$XDG_RUNTIME_DIR`, and the `$XDG_CONFIG_DIRS` / `$XDG_DATA_DIRS` search paths — once, at layer construction. `AppDirs` turns that into the config, data, cache, state and runtime directories for one application namespace, with on-demand creation. `NativeDirs` supplies the macOS and Windows conventions for applications that want them, and `XdgConfig` plugs the whole thing into [`@effected/config-file`](../config-file) as a resolver chain and a save target.
 
-> **Pre-release.** This package is part of the `@effected/*` kit, in pre-`1.0.0`
-> development against a single pinned Effect v4 prerelease. Packages graduate to
-> `1.0.0` once Effect `4.0.0` ships. To hold your own `effect` versions at
-> exactly the ones the kit is built and tested against, install
+> **Pre-`1.0.0`.** This package is part of the `@effected/*` kit, built on stable
+> Effect v4 (`effect` `^4.0.0`) and still in `0.x` development. Stable Effect
+> makes a kit `1.0.0` possible, not automatic. To keep your `effect` and
+> `@effect/*` versions on the line the kit is built and tested against, install
 > [`@effected/pnpm-plugin-effect`](https://www.npmjs.com/package/@effected/pnpm-plugin-effect).
 >
 > **Stability: unstable.** This package's API surface is not yet considered
@@ -127,6 +127,34 @@ Order matters: put `resolver` before `nativeResolver` so an existing `~/.config/
 | `AppDirsError` | A directory could not be created. Carries `directory` (which kind), `path` and the structural `cause`. | The only way `AppDirs` fails, because resolution already happened. Check permissions. |
 
 A namespace that is empty, or contains a path separator, or is exactly `.` or `..`, is a **defect** at layer construction rather than a typed error. It can only come from code, and `namespace: "../.."` would resolve the application's directories outside `$HOME` entirely.
+
+## Testing
+
+`@effected/memfs` virtualizes the filesystem, not the platform. `AppDirs` and `XdgConfig` read the platform through the `CurrentPlatform` reference, which defaults to the host's `process.platform`, so a test that only swaps the filesystem still takes the host's darwin, linux or win32 branch. Pin the platform as well:
+
+```ts
+import { MemoryFileSystem } from "@effected/memfs";
+import { AppDirs, CurrentPlatform, Xdg, XdgPaths } from "@effected/xdg";
+import { Effect, Layer, Path } from "effect";
+
+const TestEnv = Layer.mergeAll(
+  Xdg.layerFrom(XdgPaths.make({ home: "/home/ada", configDirs: ["/etc/xdg"], dataDirs: ["/usr/share"] })),
+  MemoryFileSystem.layer,
+  Path.layer,
+);
+
+const config = Effect.gen(function* () {
+  const appDirs = yield* AppDirs;
+  return appDirs.dirs.config;
+}).pipe(
+  Effect.provide(AppDirs.layer({ namespace: "myapp", native: true }).pipe(Layer.provide(TestEnv))),
+  Effect.provideService(CurrentPlatform, "linux"),
+);
+// "/home/ada/.myapp" on every host; pin "darwin" and the same program answers
+// "/home/ada/Library/Application Support/myapp"
+```
+
+`Layer.succeed(CurrentPlatform, "win32")` is the equivalent layer form, for composing the pin into a test layer graph.
 
 ## Features
 

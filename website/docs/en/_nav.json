@@ -8,7 +8,7 @@
 	{
 		"text": "Packages",
 		"link": "/packages",
-		"activeMatch": "^/(pnpm-plugin-effect|github-references|github-actions|tsconfig-json|package-json|config-file|schemastore|schema-org|workspaces|lockfiles|templates|commands|markdown|packages|runtimes|github|semver|walker|jsonc|jsonl|memfs|store|glob|sbom|spdx|toml|yaml|app|cli|git|npm|xdg)(/(.*)?)?$",
+		"activeMatch": "^/(pnpm-plugin-effect|github-references|github-commands|github-actions|tsconfig-json|package-json|config-file|schemastore|schema-org|workspaces|lockfiles|templates|commands|markdown|packages|runtimes|github|semver|walker|jsonc|jsonl|memfs|store|glob|images|jwt|sbom|spdx|toml|yaml|app|cli|git|npm|xdg|engine|mcp|lsp|env)(/(.*)?)?$",
 		"position": "right",
 		"items": [
 			{
@@ -32,6 +32,16 @@
 				"activeMatch": "^/config-file/?$"
 			},
 			{
+				"text": "@effected/engine",
+				"link": "/engine",
+				"activeMatch": "^/engine/?$"
+			},
+			{
+				"text": "@effected/env",
+				"link": "/env",
+				"activeMatch": "^/env/?$"
+			},
+			{
 				"text": "@effected/git",
 				"link": "/git",
 				"activeMatch": "^/git/?$"
@@ -47,6 +57,11 @@
 				"activeMatch": "^/github-actions/?$"
 			},
 			{
+				"text": "@effected/github-commands",
+				"link": "/github-commands",
+				"activeMatch": "^/github-commands/?$"
+			},
+			{
 				"text": "@effected/github-references",
 				"link": "/github-references",
 				"activeMatch": "^/github-references/?$"
@@ -55,6 +70,16 @@
 				"text": "@effected/glob",
 				"link": "/glob",
 				"activeMatch": "^/glob/?$"
+			},
+			{
+				"text": "@effected/images",
+				"link": "/images",
+				"activeMatch": "^/images/?$"
+			},
+			{
+				"text": "@effected/jwt",
+				"link": "/jwt",
+				"activeMatch": "^/jwt/?$"
 			},
 			{
 				"text": "@effected/jsonc",
@@ -72,9 +97,19 @@
 				"activeMatch": "^/lockfiles/?$"
 			},
 			{
+				"text": "@effected/lsp",
+				"link": "/lsp",
+				"activeMatch": "^/lsp/?$"
+			},
+			{
 				"text": "@effected/markdown",
 				"link": "/markdown",
 				"activeMatch": "^/markdown/?$"
+			},
+			{
+				"text": "@effected/mcp",
+				"link": "/mcp",
+				"activeMatch": "^/mcp/?$"
 			},
 			{
 				"text": "@effected/memfs",

@@ -7,20 +7,30 @@
 // does; nothing imports `YamlFormat.ts` back.
 //
 // Neither `format` nor `modify` catch the internal stringifier's
-// `StringifyFailure` (the circular-reference guard): both build their output
-// AST from either already-parsed nodes or `jsValueToNode`'s scalar-only
-// synthesis, so a cycle can never occur here — if `StringifyFailure` were
-// ever thrown it would indicate an internal invariant violation, not a
-// user-facing error, and is left to surface as an uncaught defect.
+// `StringifyFailure` (the circular-reference guard) or `StringifyDepthExceeded`:
+// `format` builds its output AST from already-parsed nodes, and `modify`'s
+// `jsValueToNode` runs BOTH guards itself while lowering the caller's value —
+// failing typed with a `CircularReference` / `NestingDepthExceeded` diagnostic
+// before a node ever reaches the stringifier. So neither internal throw can
+// occur here; were one ever thrown it would indicate an internal invariant
+// violation, not a user-facing error, and is left to surface as an uncaught
+// defect.
 
 import { Effect, Schema } from "effect";
 import { EMPTY_DOCUMENT, composeAllDocuments, composeFirstDocumentCounted } from "./internal/composer/document.js";
+import { MAX_NESTING_DEPTH } from "./internal/composer/state.js";
 import type { RawDiagnostic } from "./internal/diagnostics.js";
 import { isFatalCode } from "./internal/diagnostics.js";
 import { computeEdits } from "./internal/diff.js";
 import type { RawYamlDocument } from "./internal/raw-document.js";
 import { requoteScalarText } from "./internal/requote.js";
-import { stringifyDocument, stripNodeComments } from "./internal/stringifier.js";
+import {
+	renderDoubleQuoted,
+	renderSingleQuoted,
+	stringifyDocument,
+	stringifyValue,
+	stripNodeComments,
+} from "./internal/stringifier.js";
 import { YamlStringifyOptions } from "./Yaml.js";
 import { YamlDiagnostic } from "./YamlDiagnostic.js";
 import type { YamlPath, YamlSegment } from "./YamlEdit.js";
@@ -42,8 +52,8 @@ export type YamlRangeLike = YamlRange | { readonly offset: number; readonly leng
  * field (derived, not hand-duplicated — including `indentSequences`,
  * `quoteStyle` and `quoteCompat`) plus
  * `preserveComments` (default `true`), `range` (restrict edits to a
- * region; see the module-level remarks on the `range` parameter vs. this
- * field) and `requoteScalars` (default `false`).
+ * region; the positional `range` argument of {@link YamlFormat.format} takes
+ * precedence over this field) and `requoteScalars` (default `false`).
  *
  * `requoteScalars` makes `quoteStyle` apply to scalars **already quoted in
  * the source** on the format path — by default formatting preserves an
@@ -117,7 +127,13 @@ export class YamlModificationError extends Schema.TaggedError<YamlModificationEr
  * `modify` catches this and materializes {@link YamlModificationError}.
  */
 class ModifyFailure extends Error {
-	readonly code: "EmptyDocument" | "PathNotFound" | "InvalidIndex" | "NotNavigable";
+	readonly code:
+		| "EmptyDocument"
+		| "PathNotFound"
+		| "InvalidIndex"
+		| "NotNavigable"
+		| "CircularReference"
+		| "NestingDepthExceeded";
 	readonly offset: number;
 	readonly length: number;
 	constructor(code: ModifyFailure["code"], message: string, offset: number, length: number) {
@@ -165,7 +181,7 @@ function definedFields<T extends Record<string, unknown>>(fields: T): Partial<T>
 	return out;
 }
 
-// ── format: opt-in re-quoting (#347) ────────────────────────────────────────
+// ── format: opt-in re-quoting ────────────────────────────────────────
 
 /**
  * Walk a composed AST and flip the `style` of every scalar the shared
@@ -252,6 +268,18 @@ function toOutputDocument(doc: RawYamlDocument, preserveComments: boolean): RawY
  * A multi-document stream routes to {@link formatStream}, which formats
  * every document and shares the same directive refusal.
  */
+/**
+ * Re-attach the source's leading byte-order mark to a whole-document
+ * re-emission. The stringifier never emits a BOM (it is framing, not
+ * content), so without this every `format` and whole-pipeline `modify` on a
+ * BOM-prefixed file would produce a delete-at-offset-0 edit. Preserving it
+ * keeps the file's encoding signature the author's business, in line with
+ * the fidelity contract that leaves untouched bytes alone.
+ */
+function withSourceBom(text: string, formatted: string): string {
+	return text.startsWith("\uFEFF") ? `\uFEFF${formatted}` : formatted;
+}
+
 function formatDocument(text: string, options: YamlFormattingOptions | undefined): string | undefined {
 	// ONE composition serves both paths: the stream path receives the same
 	// documents and stream errors rather than composing the text a second
@@ -319,14 +347,75 @@ function formatStream(
 
 // ── modify: pure AST navigation ─────────────────────────────────────────────
 
-/** Convert a plain JS scalar value into a synthetic `YamlScalar` (offset/length are irrelevant — immediately re-stringified). */
-function jsValueToNode(value: unknown): YamlNode {
+/**
+ * Lower a plain JavaScript value into synthetic AST nodes (offset/length are
+ * irrelevant — the result is immediately re-stringified).
+ *
+ * Recursive by design: an array becomes a block {@link YamlSeq} and any other
+ * non-null object a block {@link YamlMap} over its own enumerable string keys,
+ * matching what `Yaml.stringify` does with the same value on the value path.
+ * Before this was recursive, a mapping or sequence value fell through to the
+ * node stringifier's `String(value)` fallback and landed in the document as
+ * the literal text `[object Object]` — a silent corruption that only surfaced
+ * on the next read.
+ *
+ * The two conditions with no finite rendering fail typed rather than hanging
+ * or overflowing the stack: a cycle raises `CircularReference` and a graph
+ * deeper than `MAX_NESTING_DEPTH` raises `NestingDepthExceeded`. `seen` holds
+ * the ancestors of the value being lowered, so a value repeated across
+ * siblings (a shared, acyclic sub-object) is lowered twice rather than
+ * rejected.
+ */
+function jsValueToNode(value: unknown, seen: Set<object>, depth: number): YamlNode {
+	if (depth > MAX_NESTING_DEPTH) {
+		throw new ModifyFailure(
+			"NestingDepthExceeded",
+			`Replacement value nests deeper than the maximum of ${MAX_NESTING_DEPTH}`,
+			0,
+			0,
+		);
+	}
+	if (typeof value === "object" && value !== null) {
+		if (seen.has(value)) {
+			throw new ModifyFailure("CircularReference", "Replacement value contains a circular reference", 0, 0);
+		}
+		seen.add(value);
+		try {
+			if (Array.isArray(value)) {
+				return YamlSeq.make({
+					items: value.map((item) => jsValueToNode(item, seen, depth + 1)),
+					style: "block",
+					offset: 0,
+					length: 0,
+				});
+			}
+			const record = value as Record<string, unknown>;
+			return YamlMap.make({
+				items: Object.keys(record).map((key) =>
+					YamlPair.make({
+						key: YamlScalar.make({ value: key, style: "plain", offset: 0, length: 0 }),
+						value: jsValueToNode(record[key], seen, depth + 1),
+					}),
+				),
+				style: "block",
+				offset: 0,
+				length: 0,
+			});
+		} finally {
+			seen.delete(value);
+		}
+	}
 	return YamlScalar.make({ value, style: "plain", offset: 0, length: 0 });
+}
+
+/** Entry point for {@link jsValueToNode}: one `seen` set per lowering. */
+function lowerValue(value: unknown): YamlNode {
+	return jsValueToNode(value, new Set<object>(), 0);
 }
 
 function modifyDocument(doc: RawYamlDocument, path: YamlPath, value: unknown): YamlNode | null {
 	if (path.length === 0) {
-		return value === undefined ? null : jsValueToNode(value);
+		return value === undefined ? null : lowerValue(value);
 	}
 	if (doc.contents === null) {
 		throw new ModifyFailure("EmptyDocument", "Cannot navigate path in empty document", 0, 0);
@@ -349,7 +438,7 @@ function modifyNode(node: YamlNode, path: YamlPath, depth: number, value: unknow
 				return rebuildMap(node, newItems);
 			}
 
-			const newValueNode = jsValueToNode(value);
+			const newValueNode = lowerValue(value);
 			if (pairIndex >= 0) {
 				const newItems = [...node.items];
 				const oldPair = newItems[pairIndex] as YamlPair;
@@ -396,9 +485,9 @@ function modifyNode(node: YamlNode, path: YamlPath, depth: number, value: unknow
 			if (value === undefined) {
 				if (idx < newItems.length) newItems.splice(idx, 1);
 			} else if (idx < newItems.length) {
-				newItems[idx] = jsValueToNode(value);
+				newItems[idx] = lowerValue(value);
 			} else {
-				newItems.push(jsValueToNode(value)); // Appends after the last element.
+				newItems.push(lowerValue(value)); // Appends after the last element.
 			}
 			return rebuildSeq(node, newItems);
 		}
@@ -455,10 +544,196 @@ function rebuildSeq(node: YamlSeq, items: ReadonlyArray<YamlNode>): YamlSeq {
 	});
 }
 
+// ── modify: region-confined scalar replacement ───────────────────────
+
+/**
+ * Whether a value carries characters single-quoted style cannot express (it
+ * escapes only `'`): C0 controls — newline, carriage return, tab among them —
+ * plus DEL and the C1 range, the same conservative set the requote helper
+ * uses. A value carrying any of these keeps the whole-document pipeline
+ * rather than switching quote style. Char-code based, mirroring the
+ * stringifier's own control-character checks.
+ */
+function isSingleQuoteUnsafe(s: string): boolean {
+	for (let i = 0; i < s.length; i++) {
+		const code = s.charCodeAt(i);
+		if (code <= 0x1f || (code >= 0x7f && code <= 0x9f)) return true;
+	}
+	return false;
+}
+
+/**
+ * Read-only navigation twin of `modifyNode`: returns the EXISTING node at
+ * `path` together with whether its parent collection is flow-styled, or
+ * `undefined` whenever the path does not resolve to a node (missing
+ * key/index, non-navigable node, empty path, null value mid-path).
+ * `undefined` sends `modify` down its normal pipeline, which owns the
+ * insert/append/remove semantics and the typed navigation errors — this
+ * helper never throws and never guesses.
+ */
+function findExistingTarget(
+	contents: YamlNode | null,
+	path: YamlPath,
+): { readonly node: YamlNode | null; readonly inFlow: boolean } | undefined {
+	if (contents === null || path.length === 0) return undefined;
+	let current: YamlNode = contents;
+	for (let depth = 0; depth < path.length; depth++) {
+		const segment = path[depth] as YamlSegment;
+		const isLast = depth === path.length - 1;
+		if (current instanceof YamlMap) {
+			const pair = current.items.find((p) => p.key instanceof YamlScalar && p.key.value === segment);
+			if (pair === undefined) return undefined;
+			if (isLast) return { node: pair.value, inFlow: current.style === "flow" };
+			if (pair.value === null) return undefined;
+			current = pair.value;
+		} else if (current instanceof YamlSeq) {
+			const idx = typeof segment === "number" ? segment : Number(segment);
+			if (Number.isNaN(idx) || idx < 0 || idx >= current.items.length) return undefined;
+			const child = current.items[idx] as YamlNode;
+			if (isLast) return { node: child, inFlow: current.style === "flow" };
+			current = child;
+		} else {
+			return undefined;
+		}
+	}
+	return undefined;
+}
+
+/**
+ * Render the replacement text for a region-confined splice, or `undefined`
+ * to fall back. A string keeps the target's quote style when that style can
+ * express it (single-quoted escapes only `'`, so newlines/tabs/controls bail
+ * out; double-quoted expresses everything); a non-string into a quoted
+ * target renders through `stringifyValue` — quoting it would change the
+ * resolved type — as does any plain target, so the stringifier's own
+ * plain-safety rules decide whether the text needs quotes — under the
+ * target's own context, so a flow indicator inside a value spliced into a
+ * flow collection is quoted rather than corrupting the collection. A
+ * rendering that spans lines (folding, block styles) bails out: the fast
+ * path never introduces a line break inside the spliced region.
+ */
+function renderRegionalScalarText(
+	target: YamlScalar,
+	value: string | number | boolean,
+	inFlow: boolean,
+	options?: YamlStringifyOptions,
+): string | undefined {
+	let rendered: string;
+	if (typeof value === "string" && target.style === "single-quoted") {
+		if (isSingleQuoteUnsafe(value)) return undefined;
+		rendered = renderSingleQuoted(value);
+	} else if (typeof value === "string" && target.style === "double-quoted") {
+		rendered = renderDoubleQuoted(value);
+	} else {
+		// finalNewline: false — the splice renders a scalar, never a document.
+		rendered = stringifyValue(value, { ...toStringifyInput(options), finalNewline: false, inFlow });
+	}
+	if (/[\n\r]/.test(rendered)) return undefined;
+	return rendered;
+}
+
+/**
+ * Prove the rendered text means exactly what the caller asked: re-compose a
+ * one-pair probe document and compare the resolved scalar with `Object.is`.
+ * The probe mirrors the target's context — `k: [rendered]` for a flow
+ * parent, so a rendering that would split or close the collection is caught
+ * as a structural surprise rather than a quiet corruption. Any parse error,
+ * structural surprise, or value drift (a plain rendering that re-resolves
+ * as a bool/timestamp instead of the caller's string, say) bails out to the
+ * whole-document pipeline.
+ */
+function regionalRenderPreservesValue(rendered: string, value: string | number | boolean, inFlow: boolean): boolean {
+	const probeText = inFlow ? `k: [${rendered}]\n` : `k: ${rendered}\n`;
+	const { document: probeDoc } = composeFirstDocumentCounted(probeText, {});
+	if (probeDoc.errors.some((e) => isFatalCode(e.code))) return false;
+	const contents = probeDoc.contents;
+	if (!(contents instanceof YamlMap)) return false;
+	const pair = contents.items.find((p) => p.key instanceof YamlScalar && p.key.value === "k");
+	let node = pair?.value;
+	if (inFlow) {
+		if (!(node instanceof YamlSeq) || node.items.length !== 1) return false;
+		node = node.items[0];
+	}
+	if (!(node instanceof YamlScalar)) return false;
+	return Object.is(node.value, value);
+}
+
+/**
+ * Attempt the region-confined scalar splice for `modify`: replace
+ * only the target scalar's byte range, re-emitting its original quote
+ * character and leaving line endings (and every other byte) elsewhere
+ * untouched. Returns the single edit, an empty array for a no-op
+ * replacement, or `undefined` when any precondition fails — the caller then
+ * runs the existing compose → replace → re-stringify → diff pipeline
+ * unchanged.
+ */
+function tryRegionalScalarEdit(
+	text: string,
+	doc: RawYamlDocument,
+	path: YamlPath,
+	value: unknown,
+	options?: YamlStringifyOptions,
+): ReadonlyArray<{ offset: number; length: number; content: string }> | undefined {
+	// `undefined` (removal), null, and object graphs keep the full pipeline:
+	// null renders as an empty scalar there (`a:` — the stringifier's own
+	// convention), and splicing an empty replacement would leave a trailing
+	// space instead.
+	if (typeof value !== "string" && typeof value !== "number" && typeof value !== "boolean") {
+		return undefined;
+	}
+	// Document-shaping options (sortKeys, indent, indentSequences, finalNewline)
+	// and explicit style requests all steer the whole-document pipeline.
+	// Silently dropping them on the fast path would change the output without
+	// error, so bail out to the existing compose → replace → re-stringify path.
+	if (
+		options?.defaultScalarStyle !== undefined ||
+		options?.forceDefaultStyles ||
+		options?.sortKeys === true ||
+		options?.indent !== undefined ||
+		options?.indentSequences !== undefined ||
+		options?.finalNewline !== undefined
+	)
+		return undefined;
+	const found = findExistingTarget(doc.contents, path);
+	if (found === undefined) return undefined;
+	const { node: target, inFlow } = found;
+	if (!(target instanceof YamlScalar)) return undefined;
+	// A synthesised empty span (`key:` with no value) is an insertion site,
+	// not a replaceable range.
+	if (target.length <= 0) return undefined;
+	if (target.tag !== undefined || target.anchor !== undefined) return undefined;
+	if (target.style !== "plain" && target.style !== "single-quoted" && target.style !== "double-quoted") {
+		return undefined;
+	}
+	if (target.sourceMultiline === true) return undefined;
+	const span = text.slice(target.offset, target.offset + target.length);
+	if (/[\n\r]/.test(span)) return undefined;
+	const rendered = renderRegionalScalarText(target, value, inFlow, options);
+	if (rendered === undefined) return undefined;
+	if (rendered === span) return []; // no-op replace: the span already says exactly this
+	if (!regionalRenderPreservesValue(rendered, value, inFlow)) return undefined;
+	return [{ offset: target.offset, length: target.length, content: rendered }];
+}
+
 // ── Facade ──────────────────────────────────────────────────────────────────
 
 /**
- * Formatting and modification statics. Not instantiable.
+ * Formats YAML text and modifies values at a path as byte-minimal edits that
+ * preserve comments and layout elsewhere. Not instantiable.
+ *
+ * @example
+ * ```ts
+ * import { YamlFormat } from "@effected/yaml";
+ * import { Effect } from "effect";
+ *
+ * const formatted = YamlFormat.formatToString("a:   1\nb:\n    - x\n    - y # c\n");
+ * // => "a: 1\nb:\n- x\n- y # c\n"
+ *
+ * const program = Effect.gen(function* () {
+ *   return yield* YamlFormat.modifyToString("port: 3000 # dev\n", ["port"], 8080);
+ *   // => "port: 8080 # dev\n"
+ * });
+ * ```
  *
  * @remarks
  * `format`/`formatToString` are pure and total (edit computation never fails
@@ -484,8 +759,8 @@ function rebuildSeq(node: YamlSeq, items: ReadonlyArray<YamlNode>): YamlSeq {
  * (`!e!foo`) turns a valid file into one no parser can read. So
  * `format`/`formatToString` leave such input byte-identical (no edits), and
  * `modify`/`modifyToString` fail typed with a `DirectiveCarryingDocument`
- * diagnostic. Directive re-emission is unimplemented, not undesired — the
- * refusal is the floor that stops corruption until it lands.
+ * diagnostic. Directive re-emission is unimplemented, and the refusal is what
+ * stops the corruption.
  *
  * @public
  */
@@ -516,6 +791,12 @@ export class YamlFormat {
 	 * directives is left untouched. Detection is directive-token-level: a
 	 * literal `%TAG` inside a scalar is content and formats normally.
 	 *
+	 * @param text - The YAML source to format.
+	 * @param range - Optional sub-range; only edits fully within it are returned.
+	 * @param options - Optional {@link YamlFormattingOptions}.
+	 * @returns The edits that bring `text` to canonical shape; apply them with
+	 *   `YamlEdit.applyAll`. Empty when the input cannot be formatted faithfully.
+	 *
 	 * @remarks
 	 * The positional `range` argument takes precedence over
 	 * `options?.range` when both are given; either accepts a plain
@@ -540,7 +821,7 @@ export class YamlFormat {
 		const formatted = formatDocument(text, options);
 		if (formatted === undefined) return [];
 
-		let edits = computeEdits(text, formatted);
+		let edits = computeEdits(text, withSourceBom(text, formatted));
 
 		const effectiveRange = resolveRange(range, options?.range);
 		if (effectiveRange !== undefined) {
@@ -562,6 +843,12 @@ export class YamlFormat {
 	 * document — single or in a stream — carrying `%YAML`/`%TAG` directives)
 	 * is returned byte-identical — never a truncated first document, never a
 	 * document re-emitted without the directive its tags depend on.
+	 *
+	 * @param text - The YAML source to format.
+	 * @param range - Optional sub-range; only edits fully within it are applied.
+	 * @param options - Optional {@link YamlFormattingOptions}.
+	 * @returns The formatted text, or `text` unchanged when it cannot be
+	 *   formatted faithfully.
 	 */
 	static formatToString(text: string, range?: YamlRangeLike, options?: YamlFormattingOptions): string {
 		return YamlEdit.applyAll(text, YamlFormat.format(text, range, options));
@@ -570,11 +857,42 @@ export class YamlFormat {
 	/**
 	 * Compute the edits that insert, replace, or remove a value at `path`.
 	 * Passing `value === undefined` removes the target key/element; a missing
-	 * insertion target appends after the last pair/element. Only
-	 * scalar-compatible values are supported (matching v3 — arbitrary object
-	 * graphs are not recursively lowered into AST nodes). Fails with
+	 * insertion target appends after the last pair/element. Fails with
 	 * {@link YamlModificationError} on a fatal parse error or a structural
 	 * navigation mismatch.
+	 *
+	 * **`value` may be a whole object graph.** An array is written as a block
+	 * sequence and any other non-null object as a block mapping over its own
+	 * enumerable string keys, recursively — the same lowering
+	 * {@link Yaml.stringify} applies to the same value, so `modify` and
+	 * `stringify` agree on what a given JavaScript value means. For a synthesized
+	 * subtree (an object/array value) only the surrounding document is
+	 * preserved byte-for-byte; the subtree carries no comments and takes the
+	 * stringifier's styles.
+	 *
+	 * **Scalar replacement is region-confined and quote-preserving.**
+	 * When the path resolves to an existing single-line `plain`,
+	 * `single-quoted`, or `double-quoted` scalar with no tag or anchor, and
+	 * the replacement is a string, number, or boolean, `modify` splices
+	 * ONLY the target scalar's source span and emits a single edit: a string
+	 * into a quoted scalar keeps the original quote character, a non-string
+	 * renders plain (quoting it would change the resolved type), and every
+	 * byte outside the span — line endings included, so a CRLF document keeps
+	 * its CRLFs and a same-line trailing comment survives — is untouched. The
+	 * splice is taken only when the rendered text re-parses to exactly the
+	 * caller's value and renders as a single line; a no-op replacement yields
+	 * no edits. Anything else — removals (`value === undefined`), nulls,
+	 * insertions, object/array values, block or multi-line scalars, tagged or anchored
+	 * targets, or any document-shaping / explicit-style option
+	 * (`defaultScalarStyle`, `forceDefaultStyles`, `sortKeys`, `indent`,
+	 * `indentSequences`, `finalNewline`) — falls back to re-serialising the
+	 * whole document, which normalises line endings to LF, applies those
+	 * options, and renders the replacement in the stringifier's styles.
+	 *
+	 * Two replacement values have no finite rendering and fail typed rather
+	 * than hanging or overflowing the stack: one containing a circular
+	 * reference (`CircularReference`) and one nesting deeper than 256 levels
+	 * (`NestingDepthExceeded`).
 	 *
 	 * **Single-document contract.** A `path` carries no document index, so on
 	 * a multi-document stream there is no rule for which document it names —
@@ -592,6 +910,15 @@ export class YamlFormat {
 	 * it — unparseable output. A typed refusal beats silent corruption;
 	 * directive re-emission is unimplemented, not undesired. A literal
 	 * `%TAG` inside a scalar is content and does not trigger the refusal.
+	 *
+	 * @param text - The YAML source to modify.
+	 * @param path - The location to insert, replace or remove.
+	 * @param value - The JavaScript value to write; `undefined` removes the
+	 *   target instead.
+	 * @param options - Optional {@link YamlStringifyOptions} for the
+	 *   re-stringify step.
+	 * @returns An `Effect` that succeeds with the edits to apply (via
+	 *   `YamlEdit.applyAll`), or fails with {@link YamlModificationError}.
 	 *
 	 * @remarks
 	 * `options` is a bare {@link YamlStringifyOptions} — it controls only the
@@ -646,6 +973,16 @@ export class YamlFormat {
 			});
 		}
 
+		// Region-confined scalar replacement: when the target is an
+		// existing single-line untagged scalar and the value is scalar-shaped,
+		// splice just its span — quote style preserved, CRLFs and every other
+		// byte outside the span untouched. Any precondition miss falls through
+		// to the whole-document pipeline below, unchanged.
+		const regional = tryRegionalScalarEdit(text, doc, path, value, options);
+		if (regional !== undefined) {
+			return regional.map((e) => YamlEdit.make(e)) as ReadonlyArray<YamlEdit>;
+		}
+
 		let newContents: YamlNode | null;
 		try {
 			newContents = modifyDocument(doc, path, value);
@@ -664,7 +1001,7 @@ export class YamlFormat {
 
 		const outputDoc: RawYamlDocument = { ...doc, contents: newContents };
 		const formatted = stringifyDocument(outputDoc, toStringifyInput(options));
-		return computeEdits(text, formatted).map((e) => YamlEdit.make(e)) as ReadonlyArray<YamlEdit>;
+		return computeEdits(text, withSourceBom(text, formatted)).map((e) => YamlEdit.make(e)) as ReadonlyArray<YamlEdit>;
 	});
 
 	/**
@@ -673,6 +1010,15 @@ export class YamlFormat {
 	 * error channel, including the single-document contract's
 	 * `MultiDocumentStream` refusal and the `DirectiveCarryingDocument`
 	 * refusal of `%YAML`/`%TAG`-carrying documents.
+	 *
+	 * @param text - The YAML source to modify.
+	 * @param path - The location to insert, replace or remove.
+	 * @param value - The JavaScript value to write; `undefined` removes the
+	 *   target instead.
+	 * @param options - Optional {@link YamlStringifyOptions} for the
+	 *   re-stringify step.
+	 * @returns An `Effect` that succeeds with the modified text, or fails with
+	 *   {@link YamlModificationError}.
 	 */
 	static readonly modifyToString = Effect.fn("YamlFormat.modifyToString")(function* (
 		text: string,

@@ -24,11 +24,13 @@ export class InvalidPackageNameError extends Schema.TaggedError<InvalidPackageNa
 	}
 }
 
-// npm name grammar, written lookahead-free so `Schema.toArbitrary` can derive a
-// generator (fast-check cannot synthesize lookahead). The first character may
-// not be `.` or `_`; the remainder is URL-safe lowercase.
-const UNSCOPED_RE = /^[a-z0-9-][a-z0-9._-]*$/;
-const SCOPED_RE = /^@[a-z0-9-][a-z0-9._-]*\/[a-z0-9-][a-z0-9._-]*$/;
+// npm name grammar, written lookahead-free so `Arbitrary.schema` can derive a
+// generator: the native regex compiler in `effect/Arbitrary` rejects
+// `(?=`/`(?!` and would fall back to filtering random strings, none of which
+// is ever a package name. The first character may not be `.` or `_`; the
+// remainder is URL-safe lowercase.
+const UNSCOPED_RE = /^[a-z0-9-][a-z0-9._-]*$/u;
+const SCOPED_RE = /^@[a-z0-9-][a-z0-9._-]*\/[a-z0-9-][a-z0-9._-]*$/u;
 const MAX_LENGTH = 214;
 
 /**
@@ -103,9 +105,19 @@ const isScoped = (name: string): boolean => name.startsWith("@");
 
 /**
  * The union of `ScopedPackageName` and `UnscopedPackageName`,
- * carrying the classification statics (`PackageName.isValid` and friends)
- * that absorb the v3 floating `PackageNameUtil` object. Use it as the schema
- * for a package-name field and reach for the statics to inspect a raw string.
+ * carrying the classification statics (`PackageName.isValid`,
+ * `PackageName.scope`, `PackageName.unscoped`, `PackageName.isScoped`). Use it as
+ * the schema for a package-name field and reach for the statics to inspect a raw
+ * string.
+ *
+ * @example
+ * ```ts
+ * import { PackageName } from "@effected/package-json";
+ *
+ * PackageName.isValid("@effected/semver"); // => true
+ * PackageName.scope("@effected/semver"); // => Option.some("effected")
+ * PackageName.unscoped("@effected/semver"); // => "semver"
+ * ```
  *
  * @public
  */

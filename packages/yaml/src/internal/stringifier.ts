@@ -2,9 +2,8 @@
 // text, including the canonical-output logic exercised by the
 // yaml-test-suite byte-equality assertion family.
 //
-// Sync throughout; the two v3 `Effect.try` failure wrappers become the
-// thrown `StringifyFailure`, which the public facade catches and
-// materializes into the public error type. Implements configurable
+// Sync throughout; failures are thrown as `StringifyFailure`, which the
+// public facade catches and materializes into the public error type. Implements configurable
 // formatting with support for block/flow styles, scalar quoting rules, and
 // round-trip preservation of AST node styles.
 
@@ -201,12 +200,21 @@ function wouldBeResolved11(s: string): boolean {
  * `quoteCompat` is strictly additive: `"yaml-1.1"` additionally quotes
  * strings a YAML 1.1 parser would coerce ({@link wouldBeResolved11}) and can
  * never un-quote anything the 1.2 rules require quoted.
+ *
+ * `inFlow` is additive too: inside a flow collection the flow indicators
+ * `,[]{}` are plain-unsafe anywhere in the scalar (YAML 1.2 §7.3.3,
+ * `ns-plain-safe(flow-in)` excludes `c-flow-indicator`), where block context
+ * lets them through. Without it a plain `p, q` rendered into `[x, y]` reads
+ * back as three items.
  */
-function requiresQuoting(s: string, ignoreType = false, quoteCompat?: QuoteCompat): boolean {
+function requiresQuoting(s: string, ignoreType = false, quoteCompat?: QuoteCompat, inFlow = false): boolean {
 	// Empty string must be quoted
 	if (s === "") return true;
 	// Contains newlines — use block literal instead
 	if (s.includes("\n")) return true;
+	// Flow context: any flow indicator anywhere terminates or corrupts the
+	// enclosing collection
+	if (inFlow && /[,[\]{}]/.test(s)) return true;
 	// Would be resolved as a non-string type (skip when a tag overrides resolution)
 	if (!ignoreType && wouldBeResolved(s)) return true;
 	// Would be coerced by the requested foreign dialect (same tag exemption)
@@ -348,6 +356,7 @@ function renderString(
 	quoteStyle: QuoteStyle = "single",
 	explicitIndent?: number,
 	quoteCompat?: QuoteCompat,
+	inFlow = false,
 ): string {
 	// Fidelity mode (everything but canonical) re-emits the EXPLICIT header
 	// indicators the source spelled — a redundant `+` keep-chomp or `|2`
@@ -416,7 +425,7 @@ function renderString(
 	}
 	switch (style) {
 		case "plain":
-			if (requiresQuoting(s, ignoreType, quoteCompat)) {
+			if (requiresQuoting(s, ignoreType, quoteCompat, inFlow)) {
 				// Chars needing YAML escapes (tab, CR, control chars) force
 				// double-quoted under either quoteStyle — single quotes cannot
 				// express them. Backslashes are literal in single-quoted YAML
@@ -519,6 +528,12 @@ interface StringifyContext {
 	 * for empty keep-chomp scalars only fires under block-map values).
 	 */
 	parentPosition?: "block-map-value" | "block-seq-item";
+	/**
+	 * True while rendering inside a flow collection, where the flow
+	 * indicators `,[]{}` make a plain scalar unsafe. Set by every flow
+	 * branch for its children; a bare root scalar is block context.
+	 */
+	inFlow: boolean;
 }
 
 /** Resolves optional stringify options into a fully-defaulted context. */
@@ -540,6 +555,7 @@ function createContext(options?: StringifyOptionsInput): StringifyContext {
 		quoteCompat: options?.quoteCompat,
 		forceDefaultStyles: options?.forceDefaultStyles ?? false,
 		seen: new Set(),
+		inFlow: options?.inFlow ?? false,
 	};
 }
 
@@ -585,6 +601,7 @@ function stringifyLines(value: unknown, ctx: StringifyContext, depth: number, al
 			ctx.quoteStyle,
 			undefined,
 			ctx.quoteCompat,
+			ctx.inFlow,
 		);
 		// Column-based folding only fires in block contexts (not flow items, whose
 		// lines are re-joined with spaces) and only for a positive lineWidth. The
@@ -630,7 +647,8 @@ function stringifyArrayLines(arr: unknown[], ctx: StringifyContext, depth: numbe
 
 	if (ctx.defaultCollectionStyle === "flow") {
 		// Flow items are re-joined with spaces, so folding must not run here.
-		const items = arr.map((item) => stringifyLines(item, ctx, depth + 1, false).join(" "));
+		const flowCtx: StringifyContext = { ...ctx, inFlow: true };
+		const items = arr.map((item) => stringifyLines(item, flowCtx, depth + 1, false).join(" "));
 		return [`[${items.join(", ")}]`];
 	}
 
@@ -693,14 +711,27 @@ function stringifyObjectLines(obj: Record<string, unknown>, ctx: StringifyContex
 	// Mapping keys render plain-styled, so they take the same `quoteStyle`
 	// fallback as plain values — a key like `@types/acorn` requires quoting and
 	// must honor the caller's preference, not a hardcoded single quote.
-	const renderPlainKey = (k: string): string =>
-		renderString(k, "plain", "", false, false, undefined, undefined, ctx.quoteStyle, undefined, ctx.quoteCompat);
+	const renderPlainKey = (k: string, inFlow = false): string =>
+		renderString(
+			k,
+			"plain",
+			"",
+			false,
+			false,
+			undefined,
+			undefined,
+			ctx.quoteStyle,
+			undefined,
+			ctx.quoteCompat,
+			inFlow,
+		);
 
 	if (ctx.defaultCollectionStyle === "flow") {
+		const flowCtx: StringifyContext = { ...ctx, inFlow: true };
 		const pairs = keys.map((k) => {
-			const keyStr = renderPlainKey(k);
+			const keyStr = renderPlainKey(k, true);
 			// Flow values are re-joined with spaces, so folding must not run here.
-			const valStr = stringifyLines(obj[k], ctx, depth + 1, false).join(" ");
+			const valStr = stringifyLines(obj[k], flowCtx, depth + 1, false).join(" ");
 			return `${keyStr}: ${valStr}`;
 		});
 		return [`{${pairs.join(", ")}}`];
@@ -1065,6 +1096,7 @@ function stringifyScalarNodeLines(node: YamlScalar, ctx: StringifyContext): stri
 			ctx.quoteStyle,
 			node.blockIndent,
 			ctx.quoteCompat,
+			ctx.inFlow,
 		);
 		lines = rendered.split("\n");
 	} else {
@@ -1252,7 +1284,7 @@ function pushExplicitKeyValueLines(
 		return lines.length - 1;
 	}
 	const valLines = stringifyNodeLines(valNode, ctx, depth + 1);
-	// #348: the value node's OWN leading comment needs a line of its own above
+	// The value node's OWN leading comment needs a line of its own above
 	// the value, which none of the compact spellings below can give it — take
 	// the non-compact `:` form so the comment block sits at the value's indent.
 	// Every sibling branch of the block-mapping stringifier already does this;
@@ -1345,6 +1377,7 @@ function stringifyMapNodeLines(node: YamlMap, ctx: StringifyContext, depth: numb
 
 	if (style === "flow") {
 		const flowPrefix = buildMetadataPrefix(node.tag, node.anchor);
+		const flowCtx: StringifyContext = { ...ctx, inFlow: true };
 		// Mirrors `rendersAcrossLines`: inner comments force the layout, and so
 		// does a terminal run that was written INSIDE the braces. A trailing
 		// comment written after the closing brace does not — it renders past
@@ -1369,8 +1402,8 @@ function stringifyMapNodeLines(node: YamlMap, ctx: StringifyContext, depth: numb
 					// would emit a whitespace-only line.
 					for (const cl of commentBlockLines(flowLeading)) flowLines.push(cl === "" ? "" : `${flowPad}${cl}`);
 				}
-				const keyStr = pair.key ? stringifyMappingKeyLines(pair.key, ctx, depth + 1).join(" ") : "null";
-				const valStr = pair.value ? stringifyNodeLines(pair.value, ctx, depth + 1).join(" ") : "null";
+				const keyStr = pair.key ? stringifyMappingKeyLines(pair.key, flowCtx, depth + 1).join(" ") : "null";
+				const valStr = pair.value ? stringifyNodeLines(pair.value, flowCtx, depth + 1).join(" ") : "null";
 				const comma = fi < items.length - 1 ? "," : "";
 				const flowTrailing = pairTrailing(pair);
 				const trailing = flowTrailing !== undefined ? renderTrailingComment(flowTrailing) : "";
@@ -1383,8 +1416,8 @@ function stringifyMapNodeLines(node: YamlMap, ctx: StringifyContext, depth: numb
 			return flowLines;
 		}
 		const pairs = items.map((pair) => {
-			const keyStr = pair.key ? stringifyMappingKeyLines(pair.key, ctx, depth + 1).join(" ") : "null";
-			const valStr = pair.value ? stringifyNodeLines(pair.value, ctx, depth + 1).join(" ") : "null";
+			const keyStr = pair.key ? stringifyMappingKeyLines(pair.key, flowCtx, depth + 1).join(" ") : "null";
+			const valStr = pair.value ? stringifyNodeLines(pair.value, flowCtx, depth + 1).join(" ") : "null";
 			return `${keyStr}: ${valStr}`;
 		});
 		let line = `{${pairs.join(", ")}}`;
@@ -1750,6 +1783,7 @@ function stringifySeqNodeLines(node: YamlSeq, ctx: StringifyContext, depth: numb
 
 	if (style === "flow") {
 		const flowPrefix = buildMetadataPrefix(node.tag, node.anchor);
+		const flowCtx: StringifyContext = { ...ctx, inFlow: true };
 		// Mirrors `rendersAcrossLines`: inner comments force the layout, and so
 		// does a terminal run that was written INSIDE the brackets. A trailing
 		// comment written after the closing bracket does not — it renders past
@@ -1772,7 +1806,7 @@ function stringifySeqNodeLines(node: YamlSeq, ctx: StringifyContext, depth: numb
 					// would emit a whitespace-only line.
 					for (const cl of commentBlockLines(fields.commentBefore)) flowLines.push(cl === "" ? "" : `${flowPad}${cl}`);
 				}
-				const itemStr = stringifyNodeLines(item, ctx, depth + 1).join(" ");
+				const itemStr = stringifyNodeLines(item, flowCtx, depth + 1).join(" ");
 				const comma = fi < items.length - 1 ? "," : "";
 				const trailing = fields?.comment !== undefined ? renderTrailingComment(fields.comment) : "";
 				flowLines.push(`${flowPad}${itemStr}${comma}${trailing}`);
@@ -1783,7 +1817,7 @@ function stringifySeqNodeLines(node: YamlSeq, ctx: StringifyContext, depth: numb
 			flowLines.push("]");
 			return flowLines;
 		}
-		const parts = items.map((item) => stringifyNodeLines(item, ctx, depth + 1).join(" "));
+		const parts = items.map((item) => stringifyNodeLines(item, flowCtx, depth + 1).join(" "));
 		let line = `[${parts.join(", ")}]`;
 		if (flowPrefix) line = `${flowPrefix} ${line}`;
 		return [line];
@@ -1826,7 +1860,7 @@ function stringifySeqNodeLines(node: YamlSeq, ctx: StringifyContext, depth: numb
 				for (let i = 1; i < itemLines.length; i++) {
 					lines.push(itemLines[i]);
 				}
-				// #341: a block scalar's HEADER line legally carries the item's
+				// A block scalar's HEADER line legally carries the item's
 				// trailing comment (`- | # c`); a multi-line quoted scalar closes
 				// on its last line, which carries it instead.
 				appendItemTrailing(isBlockScalarHeader ? headerIdx : lines.length - 1);
@@ -1926,9 +1960,9 @@ export function stringifyDocument(doc: RawYamlDocument, options?: StringifyOptio
 
 	const result = stringifyNodeLines(contents, ctx, 0).join("\n");
 
-	// #349: a block scalar at the DOCUMENT ROOT carries its captured header
+	// A block scalar at the DOCUMENT ROOT carries its captured header
 	// comment on the header line, exactly as the pair, seq-item and
-	// explicit-key paths do (#341). Splicing before `body` is formed covers the
+	// explicit-key paths do. Splicing before `body` is formed covers the
 	// bare, `---` and tag/anchor return branches alike; unlike those three
 	// paths the root has no competing pair-level comment, so the one header
 	// slot is never contested. Canonical mode stays comment-free.
@@ -1999,7 +2033,7 @@ export function stringifyDocument(doc: RawYamlDocument, options?: StringifyOptio
 	// A header comment sitting AFTER the `---` marker leads the ROOT NODE, and
 	// the root is the one position with no parent to emit a node's leading
 	// block for it — the same missing-slot shape as the root block-scalar
-	// header (#349). Emit it on the marker's far side.
+	// header. Emit it on the marker's far side.
 	// Not gated on the marker: a marker-LESS header over a scalar or empty
 	// collection root is stored the same way (a non-empty collection takes it
 	// on its first entry instead), and gating dropped it entirely.

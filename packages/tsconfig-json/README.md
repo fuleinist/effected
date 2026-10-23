@@ -7,10 +7,10 @@
 
 Composable tsconfig.json handling for Effect: document and compiler-option schemas, `extends`-chain resolution with tsc's own merge semantics, nearest-config discovery and a portable-config filter for virtual TypeScript environments. Every parse is JSONC — comments and trailing commas are legal everywhere, exactly as tsc treats them — and options the schemas do not know pass through decode and encode untouched instead of being dropped.
 
-> **Pre-release.** This package is part of the `@effected/*` kit, in pre-`1.0.0`
-> development against a single pinned Effect v4 prerelease. Packages graduate to
-> `1.0.0` once Effect `4.0.0` ships. To hold your own `effect` versions at
-> exactly the ones the kit is built and tested against, install
+> **Pre-`1.0.0`.** This package is part of the `@effected/*` kit, built on stable
+> Effect v4 (`effect` `^4.0.0`) and still in `0.x` development. Stable Effect
+> makes a kit `1.0.0` possible, not automatic. To keep your `effect` and
+> `@effect/*` versions on the line the kit is built and tested against, install
 > [`@effected/pnpm-plugin-effect`](https://www.npmjs.com/package/@effected/pnpm-plugin-effect).
 >
 > **Stability: unstable.** This package's API surface is not yet considered
@@ -39,7 +39,7 @@ Requires Node.js >=24.11.0. `effect` v4, `@effected/jsonc` and `@effected/walker
 
 All `@effected/*` packages are ESM-only: the exports maps publish only `import` conditions, so `require()` — including tools that resolve in CJS mode — fails with Node's `ERR_PACKAGE_PATH_NOT_EXPORTED` rather than loading a CJS build that does not exist. Import from an ES module.
 
-All IO goes through `FileSystem` and `Path` from `effect` core, not a platform package, so a consumer provides them once at the edge (`@effect/platform-node` on Node, `@effect/platform-bun` on Bun) and a test provides `Path.layer` and `FileSystem.layerNoop` straight from core with nothing else installed.
+All IO goes through `FileSystem` and `Path` from `effect` core, not a platform package, so a consumer provides them once at the edge (`@effect/platform-node` on Node, `@effect/platform-bun` on Bun) and a test provides core's `Path.layer` plus an in-memory volume from `@effected/memfs` — no platform package installed.
 
 ## Quick start
 

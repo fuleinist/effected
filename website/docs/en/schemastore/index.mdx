@@ -25,7 +25,7 @@ npm install @effected/schemastore effect
 pnpm add @effected/schemastore effect
 ```
 
-Requires Node.js >=24.11.0. `effect` v4 is the only peer dependency. Two regular dependencies ride along: [`@effected/semver`](/semver) backs the version ordering inside `SchemaVersioning` (no `SemVer` type surfaces in the public API), and `ajv` is the engine behind `SchemaValidator.layer`, so the validation examples need no extra install. Every module is pure except [`SchemaFile`](/schemastore/api/class/schemafile), whose layer requires core `FileSystem` and `Path` — supplied at the edge from `@effect/platform-node` or `@effect/platform-bun`.
+Requires Node.js >=24.11.0. `effect` v4 is the only peer dependency. One regular dependency rides along: [`@effected/semver`](/semver) backs the version ordering inside `SchemaVersioning` (no `SemVer` type surfaces in the public API). The validation engine is deliberately not here: `ajv` lives in the companion `@effected/schemastore-cli`, whose `AjvValidator` (documents) and `AjvInstanceValidator` (payloads) are the one shipped implementation each of this package's two validation contracts, so an application importing this package at runtime never pulls an engine into its install or bundle. Every module is pure except [`SchemaFile`](/schemastore/api/class/schemafile), whose layer requires core `FileSystem` and `Path` — supplied at the edge from `@effect/platform-node` or `@effect/platform-bun`.
 
 ## Quick start
 
@@ -57,9 +57,11 @@ console.log(Effect.runSync(program));
 //   "required": [
 //     "name"
 //   ],
-//   "additionalProperties": false
+//   "additionalProperties": true
 // }
 ```
+
+`additionalProperties: true` is core's default for a struct — `Schema.toJsonSchemaDocument` emits open objects unless told otherwise. Pass `jsonSchema: { onExcessProperty: "error" }` in the options for the closed form a config schema usually wants; a pipeline target takes the same option.
 
 [`fromSchema`](/schemastore/api/class/storedocument) runs the whole assembly — 2020-12 generation, the Draft-07 lowering, the `$ref` rewrite back to `$defs` and the declared-family gate — so every `$ref` in a built document already resolves against its own pool. `toJson()` is the flat publication shape (`$defs` omitted when empty), and `serializeResult()` routes through the owned canonical serializer.
 
@@ -75,13 +77,15 @@ One constraint bites consumers who do not know it: **annotate at the definition 
 
 [`DocumentLint`](/schemastore/api/class/documentlint) is the owned, always-available half: a total structural lint that returns findings as values and never fails. It checks that every `$ref` resolves against the `$defs` pool, that no keyword sits outside Draft-07 plus the declared families, that the root description ends in a docs URL (SchemaStore's convention, advisory), and it degrades to a finding rather than throwing on hostile nesting.
 
-[`SchemaValidator`](/schemastore/api/class/schemavalidator) is the real-engine half, and it ships closed: `SchemaValidator.layer` is ajv, not a contract you have to implement. Provide it and validation works. Findings are still values — a strict-mode rejection is a report, not an error — and the error channel is reserved for the engine failing as a mechanism. The declared keyword families are registered before compiling, so ajv cannot reject what the lint deliberately allows.
+[`SchemaValidator`](/schemastore/api/class/schemavalidator) is the real-engine half, and it ships as a contract: the library provides the service and its doubles (`noop`, `makeTest`/`layerTest`), and the one shipped implementation is `AjvValidator.layer` from `@effected/schemastore-cli`, which the `schemastore` command composes at its edge. Provide it and validation works. Findings are still values — a strict-mode rejection is a report, not an error — and the error channel is reserved for the engine failing as a mechanism. The declared keyword families are registered before compiling, so ajv cannot reject what the lint deliberately allows.
+
+`InstanceValidator` is the second contract, for the payload half of the publication story: not "is this document valid JSON Schema" but "does this instance conform to the published document it names in `$schema`". Its findings (`InstanceFinding`) carry the engine's pointer into the INSTANCE, its error channel is reserved for a mechanism failure (`InstanceValidatorError` — including a document the engine cannot compile, since there the subject is the instance), and it ships the same doubles-only shape: the one engine, `AjvInstanceValidator.layer`, lives in the CLI too, built through the same shared ajv setup so a document the gate admits always compiles there. The CLI's `schemastore validate <payload.json>` command composes it, resolving the reference file-first and then against every identity a config schema derives.
 
 ## Versioning is the decision, not the mechanics
 
 [`DocumentDiff.classify`](/schemastore/api/class/documentdiff) puts two emitted documents in one of three buckets — `"none"`, `"annotations"` or `"contract"` — and that is the answer to whether a change needs a new schema version. An `"annotations"` change replaces its predecessor transparently; a `"contract"` change does not. `default`, `examples`, `readOnly` and `writeOnly` count as contract rather than documentation, because consumers act on them: misreporting a contract change as annotations ships a silent break, while the reverse only costs a version bump.
 
-[`SchemaVersioning`](/schemastore/api/class/schemaversioning) then derives both catalog modes. `SchemaVersion` is a **full three-component SemVer** label, validated through `@effected/semver`'s own parse rather than a parallel regex, so ordering is plain precedence (`1.10.0` above `1.9.0`) and the label round-trips verbatim into `<name>-<version>.json`. Build metadata is rejected: precedence ignores it, so two labels differing only in build would compare equal and both claim to be latest.
+[`SchemaVersioning`](/schemastore/api/class/schemaversioning) then derives both catalog modes. `SchemaVersion` is a **one-to-three-component** label — `major`, `major.minor` or `major.minor.patch`, optionally with a prerelease — matched by a grammar regex and then validated through `@effected/semver`'s parse over the label padded to three components, so ordering is plain precedence (`1.10.0` above `1.9.0`, and `1`, `1.0` and `1.0.0` compare equal) while the label round-trips verbatim into `<name>-<version>.json`. Build metadata is rejected: precedence ignores it, so two labels differing only in build would compare equal and both claim to be latest.
 
 ## Write only what changed
 

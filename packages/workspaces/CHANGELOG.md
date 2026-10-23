@@ -1,5 +1,843 @@
 # @effected/workspaces
 
+## 0.36.1
+
+### Dependencies
+
+| Dependency | Type | Action | From | To |
+| --- | --- | --- | --- | --- |
+| @effected/lockfiles | dependency | updated | 0.19.0 | 0.19.1 |
+| @effected/npm | dependency | updated | 0.24.0 | 0.25.0 |
+| @effected/package-json | dependency | updated | 0.24.0 | 0.24.1 |
+
+## 0.36.0
+
+### Dependencies
+
+| Dependency | Type | Action | From | To |
+| --- | --- | --- | --- | --- |
+| @effected/commands | dependency | updated | 0.14.0 | 0.15.0 |
+| @effected/git | dependency | updated | 0.23.0 | 0.24.0 |
+| @effected/glob | dependency | updated | 0.13.0 | 0.14.0 |
+| @effected/jsonc | dependency | updated | 0.18.0 | 0.19.0 |
+| @effected/lockfiles | dependency | updated | 0.18.0 | 0.19.0 |
+| @effected/npm | dependency | updated | 0.23.0 | 0.24.0 |
+| @effected/package-json | dependency | updated | 0.23.0 | 0.24.0 |
+| @effected/semver | dependency | updated | 0.14.0 | 0.15.0 |
+| @effected/walker | dependency | updated | 0.18.0 | 0.19.0 |
+| @effected/yaml | dependency | updated | 0.22.0 | 0.23.0 |
+
+### Maintenance
+
+- Upgrades core Effect library dependencies to v4.0.6 [#1039][#1039]
+
+### Thanks
+
+Thanks to [@spencerbeggs](https://github.com/spencerbeggs) for their contributions!
+
+[#1039]: https://github.com/spencerbeggs/effected/pull/1039
+
+## 0.35.0
+
+### Bug Fixes
+
+#### `ImportGraph.undeclared` gives a nested file to its innermost package in every order
+
+- `ownerOf` decides which package owns a file. It asked whether the file sits under a package directory, and it answered with a `..${sep}` prefix test on `path.relative`. The direct parent case answers exactly `..`, and that test read it as inside. A parent package listed after a package nested in it therefore took that package's files. A root-wide `include` then checked a nested package's files against the root manifest. The test now rejects `..` as well. Fixes a review finding on #995. [#1017][#1017]
+
+### Dependencies
+
+| Dependency | Type | Action | From | To |
+| --- | --- | --- | --- | --- |
+| @effected/commands | dependency | updated | 0.13.0 | 0.14.0 |
+| @effected/git | dependency | updated | 0.22.0 | 0.23.0 |
+| @effected/glob | dependency | updated | 0.12.0 | 0.13.0 |
+| @effected/jsonc | dependency | updated | 0.17.0 | 0.18.0 |
+| @effected/lockfiles | dependency | updated | 0.17.0 | 0.18.0 |
+| @effected/npm | dependency | updated | 0.22.0 | 0.23.0 |
+| @effected/package-json | dependency | updated | 0.22.0 | 0.23.0 |
+| @effected/semver | dependency | updated | 0.13.0 | 0.14.0 |
+| @effected/walker | dependency | updated | 0.17.0 | 0.18.0 |
+| @effected/yaml | dependency | updated | 0.21.0 | 0.22.0 |
+
+### Maintenance
+
+- Upgrades core Effect library dependencies to v4.0.5 [#1019][#1019]
+
+### Thanks
+
+Thanks to [@fuleinist](https://github.com/fuleinist) and [@spencerbeggs](https://github.com/spencerbeggs) for their contributions!
+
+[#1017]: https://github.com/spencerbeggs/effected/pull/1017
+
+[#1019]: https://github.com/spencerbeggs/effected/pull/1019
+
+## 0.34.0
+
+### Dependencies
+
+| Dependency | Type | Action | From | To |
+| --- | --- | --- | --- | --- |
+| @effected/commands | dependency | updated | 0.12.0 | 0.13.0 |
+| @effected/git | dependency | updated | 0.21.0 | 0.22.0 |
+| @effected/glob | dependency | updated | 0.11.0 | 0.12.0 |
+| @effected/jsonc | dependency | updated | 0.16.0 | 0.17.0 |
+| @effected/lockfiles | dependency | updated | 0.16.0 | 0.17.0 |
+| @effected/npm | dependency | updated | 0.21.0 | 0.22.0 |
+| @effected/package-json | dependency | updated | 0.21.0 | 0.22.0 |
+| @effected/semver | dependency | updated | 0.12.0 | 0.13.0 |
+| @effected/walker | dependency | updated | 0.16.0 | 0.17.0 |
+| @effected/yaml | dependency | updated | 0.20.0 | 0.21.0 |
+
+### Maintenance
+
+- Upgrades core Effect library dependencies to v4.0.4 [#1008][#1008]
+
+### Thanks
+
+Thanks to [@spencerbeggs](https://github.com/spencerbeggs) for their contributions!
+
+[#1008]: https://github.com/spencerbeggs/effected/pull/1008
+
+## 0.33.0
+
+### Features
+
+#### `ImportGraph.reachability`
+
+- `@effected/workspaces/testing` gains the import-graph checks a one-file rule cannot express. `ImportGraph.reachability` walks from entry files through relative imports and reports every forbidden specifier a reached file imports, with the chain of files that reaches it. A directory rule approximates reachability, but a refactor that adds a new static path from the root entry into an allowed directory still passes it; the walk follows the real edges. Specifier matching is `forbidImports`' own: exact, subpath, or a trailing `*` prefix. Each file is visited once through its realpath, so a symlink loop terminates and a diamond reports one shortest chain, and a relative import no candidate resolves lands in `unresolved` rather than dropping the graph behind it silently. An entry that resolves to no file fails `EntryNotFoundError`, and an empty entry list fails `NoEntriesError`: the walk never proves nothing silently. `followPackage` is the extension point for walking into workspace packages. Closes #966.
+
+#### `ImportGraph.undeclared`
+
+- `ImportGraph.undeclared` checks each workspace package's runtime sources against its own manifest: every literal specifier whose package is not in `dependencies`, `peerDependencies` or `optionalDependencies` is reported with the package, the file and the specifier. Workspace hoisting resolves such an import at edit time, and only a packed install caught it before, far too slow for the edit loop. A `node:` specifier is always a built-in, and a caller spreads `builtinModules` from `node:module` for the bare spellings, since no built-in list ships here. Relative specifiers, `#` subpath imports and a package's self-reference are never flagged. Type-only imports are erased by the compiler and never flagged: `import type { X } from`, `export type` re-exports, and an `import()` in a type position (`typeof import("x")`, an annotation, a type alias right-hand side, a generic argument), judged by the construct enclosing the call so that a runtime `import("x")` in a typed initializer, an object literal, a ternary branch or a call argument is still reported. One `import type from "x"` is not type-only — TypeScript reads it as a runtime default import of a binding named `type`. A file under two discovered packages belongs to its innermost one, so a root-wide `include` checks a nested package's files only against that package's manifest. `include` globs (default `src/**`, walked from each glob's static prefix) name the runtime sources, so test files importing devDependencies stay out of scope by design.
+
+- Both checks are static analysis of literal specifiers, with no dynamic-import guarantee: a computed specifier is invisible to them, and `PackedInstall` remains the proof of what actually resolves at runtime. Both reuse `SourceBoundary`'s lexer, and its scan now shares one source-tree walker with them, so the three cannot drift on symlink loops, `node_modules` or what counts as a source file. [#995][#995]
+
+### Dependencies
+
+| Dependency | Type | Action | From | To |
+| --- | --- | --- | --- | --- |
+| @effected/commands | dependency | updated | 0.11.1 | 0.12.0 |
+| @effected/git | dependency | updated | 0.20.1 | 0.21.0 |
+| @effected/glob | dependency | updated | 0.10.1 | 0.11.0 |
+| @effected/jsonc | dependency | updated | 0.15.2 | 0.16.0 |
+| @effected/lockfiles | dependency | updated | 0.15.1 | 0.16.0 |
+| @effected/npm | dependency | updated | 0.20.1 | 0.21.0 |
+| @effected/package-json | dependency | updated | 0.20.2 | 0.21.0 |
+| @effected/semver | dependency | updated | 0.11.1 | 0.12.0 |
+| @effected/walker | dependency | updated | 0.15.1 | 0.16.0 |
+| @effected/yaml | dependency | updated | 0.19.2 | 0.20.0 |
+| effect | peerDependency | updated | 4.0.2 | ^4.0.3 |
+
+- Effect 4.0.3 advance: the `effect` peer and catalog move from the exact `4.0.2` hold back to `^4.0.3`. No API change. [#1000][#1000]
+
+### Thanks
+
+Thanks to [@fuleinist](https://github.com/fuleinist) and [@spencerbeggs](https://github.com/spencerbeggs) for their contributions!
+
+[#995]: https://github.com/spencerbeggs/effected/pull/995
+
+[#1000]: https://github.com/spencerbeggs/effected/pull/1000
+
+## 0.32.1
+
+### Bug Fixes
+
+- Republished with every `effect` and `@effect/*` version pinned exactly to `4.0.2`, both peer and dependency ranges.
+
+- On 2026-10-10, every `@effect/*` package published at `4.0.3`, but `effect@4.0.3` itself never reached npm (Effect-TS/effect#8994). The 4.0.3 packages require `effect ^4.0.3`. A caret range on any of them therefore resolves a 4.0.3 package next to `effect@4.0.2`, and the program crashes when it imports them. Exact pins keep a fresh install of any kit package on a matched set until `effect@4.0.3` is available. [#997][#997]
+
+### Dependencies
+
+| Dependency | Type | Action | From | To |
+| --- | --- | --- | --- | --- |
+| @effected/commands | dependency | updated | 0.11.0 | 0.11.1 |
+| @effected/git | dependency | updated | 0.20.0 | 0.20.1 |
+| @effected/glob | dependency | updated | 0.10.0 | 0.10.1 |
+| @effected/jsonc | dependency | updated | 0.15.1 | 0.15.2 |
+| @effected/lockfiles | dependency | updated | 0.15.0 | 0.15.1 |
+| @effected/npm | dependency | updated | 0.20.0 | 0.20.1 |
+| @effected/package-json | dependency | updated | 0.20.1 | 0.20.2 |
+| @effected/semver | dependency | updated | 0.11.0 | 0.11.1 |
+| @effected/walker | dependency | updated | 0.15.0 | 0.15.1 |
+| @effected/yaml | dependency | updated | 0.19.1 | 0.19.2 |
+
+### Thanks
+
+Thanks to [@spencerbeggs](https://github.com/spencerbeggs) for their contributions!
+
+[#997]: https://github.com/spencerbeggs/effected/pull/997
+
+## 0.32.0
+
+### Features
+
+#### Standard input for `runBin` and `runCarrierBin`
+
+- `RunBinOptions.stdin` accepts a string, bytes or a byte stream and feeds it to the child process. When omitted, the child sees end of input.
+
+#### `PackedInstall` preflight and gate
+
+- `PackedInstall.preflight(options)` reports `{ ready, missing }` for the build output a packed-install check needs.
+- `PackedInstall.gate(preflight)` turns that report into an effect yielding `{ action, message }`, where `action` is `run`, `skip` or `fail`. It reads CI through `Config` and fails under CI, so a missing production build never silently skips the check. [#944][#944]
+
+### Dependencies
+
+| Dependency | Type | Action | From | To |
+| --- | --- | --- | --- | --- |
+| @effected/jsonc | dependency | updated | 0.15.0 | 0.15.1 |
+| @effected/yaml | dependency | updated | 0.19.0 | 0.19.1 |
+
+### Thanks
+
+Thanks to [@spencerbeggs](https://github.com/spencerbeggs) for their contributions!
+
+[#944]: https://github.com/spencerbeggs/effected/pull/944
+
+## 0.31.0
+
+### Breaking Changes
+
+- The kit now builds on and peers stable `effect` `^4.0.0`, in place of an exact release-candidate pin. Move `effect` and every `@effect/*` package to the same `4.x` version in one install: Effect releases them together at one version. A package from this release cannot share an install with an `effect` release candidate. The peer is a caret range, so later `4.x` releases of Effect satisfy the kit without a kit release.
+- Kit exports are unchanged. A consumer moving to stable `effect` meets these changes in its own code:
+  - `Array`, `Chunk`, `Effect` and `Record` `partition`, their `separate` helpers and `Option.partitionMap` return `[successes, failures]`. Where both sides share a type, the reversed destructuring still compiles, so search for every call.
+  - `Schema.brand` takes one identifier and is type-only: the identifier is not stored on the AST and does not survive `SchemaRepresentation`. Compose distinct brands by applying `brand` more than once.
+  - `TestSchema`'s round-trip assertion is `verifyRoundTrip`, with Effect forms `succeedEffect`, `failEffect` and `verifyRoundTripEffect`.
+  - Effect marks some APIs `@stability unstable`: those may change in a minor Effect release. Untagged APIs follow semver.
+
+### Documentation
+
+- Every exported construct's TSDoc was reviewed against the current API. Summaries open with what the construct does, error channels and requirements are stated, examples use real imports and compile, and links resolve. Comments that described options, errors or defaults the code does not have were corrected. [#910][#910]
+
+### Dependencies
+
+| Dependency | Type | Action | From | To |
+| --- | --- | --- | --- | --- |
+| @effected/commands | dependency | updated | 0.10.0 | 0.11.0 |
+| @effected/git | dependency | updated | 0.19.0 | 0.20.0 |
+| @effected/glob | dependency | updated | 0.9.0 | 0.10.0 |
+| @effected/jsonc | dependency | updated | 0.14.0 | 0.15.0 |
+| @effected/lockfiles | dependency | updated | 0.14.0 | 0.15.0 |
+| @effected/npm | dependency | updated | 0.19.1 | 0.20.0 |
+| @effected/package-json | dependency | updated | 0.19.1 | 0.20.0 |
+| @effected/semver | dependency | updated | 0.10.1 | 0.11.0 |
+| @effected/walker | dependency | updated | 0.14.1 | 0.15.0 |
+| @effected/yaml | dependency | updated | 0.18.0 | 0.19.0 |
+
+### Thanks
+
+Thanks to [@spencerbeggs](https://github.com/spencerbeggs) for their contributions!
+
+[#910]: https://github.com/spencerbeggs/effected/pull/910
+
+## 0.30.4
+
+### Documentation
+
+- The `Workspaces` documentation now tells tests to provide an `@effected/memfs` volume. [#902][#902]
+
+### Dependencies
+
+| Dependency | Type | Action | From | To |
+| --- | --- | --- | --- | --- |
+| @effected/npm | dependency | updated | 0.19.0 | 0.19.1 |
+| @effected/walker | dependency | updated | 0.14.0 | 0.14.1 |
+
+### Thanks
+
+Thanks to [@spencerbeggs](https://github.com/spencerbeggs) for their contributions!
+
+[#902]: https://github.com/spencerbeggs/effected/pull/902
+
+## 0.30.3
+
+### Bug Fixes
+
+- `PackedInstall` consumers no longer fail on freshly published packages: Yarn Berry 4.10+ consumers get `npmMinimalAgeGate: 0`, which stops `YN0016` quarantine of versions under a day old
+- pnpm consumers' `pnpm-workspace.yaml` sets `minimumReleaseAge: 0`, so pnpm 11 and 12 no longer append `minimumReleaseAgeExclude:` entries or resolve a range to an older, mature match
+- Berry 2.x through 4.9 consumers are unchanged, since those versions reject an unknown `.yarnrc.yml` setting [#896][#896]
+
+### Thanks
+
+Thanks to [@spencerbeggs](https://github.com/spencerbeggs) for their contributions!
+
+[#896]: https://github.com/spencerbeggs/effected/pull/896
+
+## 0.30.2
+
+### Dependencies
+
+| Dependency | Type | Action | From | To |
+| --- | --- | --- | --- | --- |
+| @effected/git | dependency | updated | 0.18.1 | 0.19.0 |
+| @effected/walker | dependency | updated | 0.13.0 | 0.14.0 |
+
+## 0.30.1
+
+### Bug Fixes
+
+- JSON Schemas derived from this package's schemas carry their string `pattern` again. Effect's JSON Schema export emits a `Schema.isPattern` check as `pattern` only when its regular expression has the `u` flag, and without it the pattern was dropped silently, leaving a bare `{ "type": "string" }`. Decoding was never affected. Every pattern in the package now has the `u` flag, which does not change what it accepts. [#866][#866]
+
+### Dependencies
+
+| Dependency | Type | Action | From | To |
+| --- | --- | --- | --- | --- |
+| @effected/git | dependency | updated | 0.18.0 | 0.18.1 |
+| @effected/package-json | dependency | updated | 0.19.0 | 0.19.1 |
+| @effected/semver | dependency | updated | 0.10.0 | 0.10.1 |
+
+### Thanks
+
+Thanks to [@spencerbeggs](https://github.com/spencerbeggs) for their contributions!
+
+[#866]: https://github.com/spencerbeggs/effected/pull/866
+
+## 0.30.0
+
+### Breaking Changes
+
+- The kit now builds on and peers `effect` `4.0.0-rc.118`, pinned exactly. Consumers must move `effect` and every `@effect/*` package to `4.0.0-rc.118` in the same install. Effect removed the `effect/unstable/*` export paths in this release, so an `@effected` package built on rc.118 cannot share an install with `effect` rc.117.
+
+- Moving the pin also closes a fresh-install failure on rc.117. `@effect/platform-node@4.0.0-rc.117` depends on `@effect/platform-node-shared` with a caret, so an install without a lockfile paired the rc.118 shared package with `effect` rc.117 and failed at startup with `ERR_MODULE_NOT_FOUND`.
+
+- Consumers moving to this release: effect removed the `effect/unstable/*` export paths (imports become `effect/<module>`), moved `Arbitrary` to `effect`, split `effect/Encoding` into `effect/encoding/Base64`, `Base64Url` and `Hex`, and renamed the `Schema` range and string checks (`isLengthBetween` → `isBetweenLength`, `isStartsWith` → `isStartingWith`, and so on). Kit exports are otherwise unchanged; the kit's own imports moved onto the new paths. [#864][#864]
+
+### Dependencies
+
+| Dependency | Type | Action | From | To |
+| --- | --- | --- | --- | --- |
+| @effected/commands | dependency | updated | 0.9.0 | 0.10.0 |
+| @effected/git | dependency | updated | 0.17.0 | 0.18.0 |
+| @effected/glob | dependency | updated | 0.8.0 | 0.9.0 |
+| @effected/jsonc | dependency | updated | 0.13.0 | 0.14.0 |
+| @effected/lockfiles | dependency | updated | 0.13.0 | 0.14.0 |
+| @effected/npm | dependency | updated | 0.18.0 | 0.19.0 |
+| @effected/package-json | dependency | updated | 0.18.1 | 0.19.0 |
+| @effected/semver | dependency | updated | 0.9.0 | 0.10.0 |
+| @effected/walker | dependency | updated | 0.12.0 | 0.13.0 |
+| @effected/yaml | dependency | updated | 0.17.0 | 0.18.0 |
+
+### Thanks
+
+Thanks to [@spencerbeggs](https://github.com/spencerbeggs) for their contributions!
+
+[#864]: https://github.com/spencerbeggs/effected/pull/864
+
+## 0.29.0
+
+### Breaking Changes
+
+- `PackageStateSnapshot.version` is now optional and is never the empty string. Both capture paths omit `version` for a workspace member with no declared version instead of recording `""`, `PackageStateSnapshot.make` rejects an explicit `""`, and a snapshot serialized under the old `""` sentinel decodes to the field being absent. As a consequence, `WorkspaceStateSnapshot.versions` now lists only members that declared a version — use `package(name)` to check membership instead, since a version-less member no longer appears there. Closes #613. [#859][#859]
+
+### Features
+
+- `PeerCheck.run` accepts two new options that close the `link:` blind spot in peer verification (effected#800): under pnpm, every `workspace:` dependency resolves through `link:`, and pnpm records no peer declarations for a workspace project, so a linked parent's peers were invisible to the report even though `pnpm peers check` reads them from the manifest on disk. Without these options, a pnpm monorepo with internal dependencies now reports `unverified` where it previously reported clean — pass both to restore a "proven clean" answer:
+
+```ts
+const report = PeerCheck.run(lockfile, {
+	peerDependencyRules: yield* catalogs.peerDependencyRules(),
+	workspacePackages: yield* discovery.listPackages(),
+	catalogs: yield* catalogs.set(),
+});
+```
+
+- `workspacePackages` — the packages `WorkspaceDiscovery` already returns. Joins a `link:`-resolved parent's manifest peers into the walk (the root importer's linked targets included), naming the parent from its manifest (`probe-a@1.0.0`, not the lockfile row's `packages/a@0.0.0`) and judging its peers against the *importer's own* dependency set, which is where pnpm resolves them from. Presence of the key is the assertion: `"unresolvedEdge"` still fires for any `link:` target the supplied set does not cover, and for every target when the key is omitted, so the option answers only for what it covers.
+- A `link:` target matches a supplied package at its own directory or, when `publishConfig.directory` is set and `linkDirectory` is not `false` (pnpm's default), at that publish directory — the layout a workspace that links built output uses. A linked package's peers are judged for its direct consumer only, and a workspace package's own dependencies belong to its own importer, matching where `pnpm peers check` reports them.
+- `catalogs` — the workspace's `CatalogSet`, from `WorkspaceCatalogs.set()`. A joined manifest may declare a peer as `catalog:` or `catalog:<name>` rather than a plain range; with this key supplied, the specifier resolves through the set and the resolved range is judged and reported as `wanted` — the same value `pnpm peers check` reports as `wantedRange`.
+- A new `UnverifiedReason`, `"peerRangeUnresolved"`, fires when a joined peer's range is a protocol specifier (a `catalog:` entry the supplied set names nothing for, `catalogs` omitted, or any other protocol such as `workspace:*`) while something resolved for that peer, so the comparison was never performed. A peer with no provider at all is unaffected and is still reported as usual.
+- A new `UnverifiedReason`, `"peerVersionUnresolved"`, fires when a peer resolved to a non-workspace provider whose version is a protocol specifier: a `file:` directory or tarball, directly or through a `file:` override, and a git or remote-tarball provider, which pnpm keys by its URL. Such a peer was previously skipped as unparseable and passed as satisfied, while `pnpm peers check` reports it `bad`; it is now declined without a fabricated row, for lockfile-row and joined-manifest peers alike.
+
+#### `findWorkspaceRootSync` stop boundary
+
+- `findWorkspaceRootSync(cwd, options)` accepts an optional `stopAt` via the new exported `FindWorkspaceRootSyncOptions`, closing #846. The bound is inclusive, a relative path resolves against `process.cwd()` at lookup time, and the ascent returns `null` once it passes `stopAt` without finding a workspace root. Omitting `stopAt` keeps the ascent unbounded, matching prior behavior.
+
+```ts
+import { findWorkspaceRootSync } from "@effected/workspaces";
+import { nodeSyncOps } from "@effected/workspaces/node-sync";
+
+const root = findWorkspaceRootSync(process.cwd(), { ...nodeSyncOps, stopAt: process.cwd() });
+```
+
+#### `reason: "no-version"` on version-less resolution failures
+
+- Part of #612: a `versionOf` failure caused by a workspace member declaring no `version` — from both `WorkspaceDiscovery` and the snapshot resolvers — now carries `reason: "no-version"` and no `cause`, matching `@effected/npm`'s `DependencyResolutionError` shape.
+
+### Bug Fixes
+
+- `LockfileReader` passes `configOnly` to `Lockfile.parse` only when the workspace root has no `package.json`, so a config-dependency-only pnpm workspace reads as an empty lockfile while the same bytes left by an interrupted first install fail with `LockfileFramingError` instead of reading as a clean, empty workspace.
+
+### Dependencies
+
+| Dependency | Type | Action | From | To |
+| --- | --- | --- | --- | --- |
+| @effected/lockfiles | dependency | updated | 0.12.0 | 0.13.0 |
+| @effected/npm | dependency | updated | 0.17.0 | 0.18.0 |
+| @effected/package-json | dependency | updated | 0.18.0 | 0.18.1 |
+
+### Other
+
+- New committed oracle fixtures under `__test__/fixtures/peers/` (the `linkdeep*` and `linkchain*` sets) recording real pnpm 12.5.1/12.6.0 `peers check --json` output alongside the lockfile, covering the root importer's own linked dependencies, publish-directory links, and chains of linked workspace packages, plus a `filedep*` set recording pnpm 12.6.0 and 12.7.0 verdicts for `file:` directory, tarball, override and joined providers. [#811][#811]
+
+### Thanks
+
+Thanks to [@fuleinist](https://github.com/fuleinist) and [@spencerbeggs](https://github.com/spencerbeggs) for their contributions!
+
+[#811]: https://github.com/spencerbeggs/effected/pull/811
+
+[#859]: https://github.com/spencerbeggs/effected/pull/859
+
+## 0.28.0
+
+### Features
+
+#### Parse a pnpm configDependencies spec
+
+- `ConfigDependencySpec` models one `configDependencies` value from `pnpm-workspace.yaml`. It reads the bare form pnpm 11 and 12 write (`0.11.1`) and the deprecated inline-integrity form (`0.11.1+sha512-<base64>`). The version is an exact SemVer version. The integrity is an SRI hash, validated by `@effected/npm`'s `SriIntegrityHash` and present only on the inline form.
+
+- `ConfigDependencySpec.parse(spec)` and `parseResult(spec)` fail with `InvalidConfigDependencySpecError`. Its `reason` is `"version"` for a range, dist-tag or partial version, and `"integrity"` for a tail that is not an SRI hash. A corepack `sha512.<hex>` tail counts as `"integrity"`.
+
+- `bare` renders `<version>`, the form to write when normalizing the field.
+
+- `toString()` renders the form that was parsed, so a spec you only read round-trips byte for byte.
+
+- `ConfigDependencySpec.FromString` is the matching string codec.
+
+- Only the first `+` separates version from integrity, because an SRI's base64 can itself contain `+`. Hook replay splits specs the same way. It still validates neither half, so it resolves every spec it resolved before. [#843][#843]
+
+#### Cap the workspace root ascent with `stopAt`
+
+- `WorkspaceDiscoveryOptions`, `LockfileReaderOptions`, `WorkspaceCatalogsOptions`, `WorkspaceSnapshotsOptions` and `WorkspacesOptions` gain `stopAt`, a ceiling for the root ascent from `cwd`. It is passed through to `WorkspaceRoot.find`, so it is inclusive and resolved to an absolute path. A checkout nested under another directory's workspace used to adopt that outer workspace. With `stopAt: cwd` it now fails with `WorkspaceRootNotFoundError`, carrying the ceiling. A checkout that is itself a workspace root still resolves.
+
+- Every `Workspaces.*` composite forwards one `stopAt` to every service it builds, so discovery, lockfile, catalog and snapshot reads all refuse the enclosing workspace together.
+
+- `WorkspacesOptions` now extends the per-service option shapes it forwards, so an option a service grows reaches the composites too.
+
+- `Workspaces.localExecLayer` takes `stopAt` as well. A ceiling with no root below it gives the same `Option.none()` as no root at all.
+
+- The ceiling applies to layer-bound lookups only. `WorkspaceDiscovery`'s `infoIn`, `listPackagesIn` and `refreshIn` take a directory per call and still ascend unbounded.
+
+- The default is no ceiling, so existing callers see no change.
+
+#### Replay a config dependency version nobody installed
+
+- A snapshot diff across a config-dependency bump no longer fails on a fresh checkout (#842). The base side declares the old version, which neither `node_modules/.pnpm-config` nor the store holds. `ConfigDependencyHooks.layerSubprocess`, and so `Workspaces.layerWithGitAndConfigDependenciesSubprocess`, now fetches that version into the pnpm store.
+
+- The fetch is verified, fail-closed:
+
+- pnpm 11 or 12 runs `install --frozen-lockfile` in a scratch workspace, which is removed afterwards. Its lockfile pins the integrity the declaring side recorded, so pnpm itself refuses a tarball that does not match.
+
+- The integrity comes from the inline `<version>+<integrity>` spec when present, else from that side's `pnpm-lock.yaml` env preamble. `WorkspaceSnapshots.at(ref)` reads the lockfile at the ref, so the base side is checked against the base side's record.
+
+- Two sources that disagree fail with `reason: "integrityMismatch"`. No source fails with `reason: "integrityUnavailable"`. Nothing is fetched in either case.
+
+- A failed fetch fails with `reason: "fetchFailed"`, keeping the `pnpm add --config` remediation.
+
+- The scratch workspace fetches through the workspace's own registry config. The root `.npmrc` (scoped registries, mirrors, auth) is copied in as-is, with `${NPM_TOKEN}`-style references left for pnpm to expand, and removed with the scratch. The root `pnpm-workspace.yaml`'s `registry` and `registries` keys are carried over too. Both come from the current checkout for either side of a diff; a base ref's `.npmrc` is not read through git.
+
+- The fetch writes to the first store the ladder searched, so the next replay finds the version there. `HookReplaySource` gains `"fetched"`, recorded in `replays[name].source` when the fetch rung answered.
+
+- The other replaying layers still do not fetch. A version they find nowhere now fails with `reason: "notInstalled"`, and the message names the ref that declared it and explains the base-side cause.
+
+- `ConfigDependencyHooksShape.inject` takes an optional fifth argument, `HookReplayContext`, carrying the declaring side's `lockfile` text and `ref`. `WorkspaceCatalogs` and `WorkspaceSnapshots` supply it. A custom implementation may ignore it.
+
+#### The not-installed message no longer depends on a magic empty version
+
+- The replay ladder no longer uses an empty-string version to mean "this `package.json` carries no version". It now tracks that state as its own case, so no caller has to know the convention (part of #613). The error still reads "a package with no version". A manifest whose `version` is the empty string now counts as having no version too, so an empty declared version can no longer match it. [#843][#843]
+
+### Bug Fixes
+
+#### The not-found message names the `workspaces` field
+
+- The replay ladder no longer uses an empty-string version to mean "this `package.json` carries no version". It now tracks that state as its own case, so no caller has to know the convention (part of #613). The error still reads "a package with no version". A manifest whose `version` is the empty string now counts as having no version too, so an empty declared version can no longer match it. [#843][#843]
+
+### Dependencies
+
+| Dependency | Type | Action | From | To |
+| --- | --- | --- | --- | --- |
+| @effected/lockfiles | dependency | updated | 0.11.0 | 0.12.0 |
+| @effected/npm | dependency | updated | 0.16.0 | 0.17.0 |
+| @effected/package-json | dependency | updated | 0.17.0 | 0.18.0 |
+
+### Thanks
+
+Thanks to [@spencerbeggs](https://github.com/spencerbeggs) for their contributions!
+
+[#843]: https://github.com/spencerbeggs/effected/pull/843
+
+## 0.27.0
+
+### Breaking Changes
+
+- `PackedInstallResult.scratch` is a new **required** field. A hand-built
+  `PackedInstallResult` — a test double standing in for a run — must now
+  supply it.
+- `InstalledConsumer.runBin` applies `options.env` **after** the install's
+  scrubbed environment, not before, so an explicit entry there always wins
+  over the scrub.
+- `BinConflict` is checked by default. A closure member or `overrides`
+  package that declares one of the carrier's own bin names now fails the
+  run unless `allowSharedBins: true` is set. [#840][#840]
+
+### Features
+
+- `SourceBoundary` gains a `{ forbidTokens }` rule: forbid an exact piece of
+  text wherever it appears in code (comments, strings, template text and
+  regex bodies are blanked first), and confine it to named files with the
+  matching `allowRules.forbidTokens` glob — the house pattern for something
+  like `process.env.__PACKAGE_VERSION__`, which is forbidden everywhere
+  except `version.ts`.
+
+- `PackedInstall` gains a set of primitives for exercising an installed
+  consumer's own bins and dependency closure:
+
+  - `InstalledConsumer.runBin` runs an installed bin to completion and
+    collects its output; `InstalledConsumer.command` builds the same
+    command for a caller that wants to drive the child itself (an
+    `McpProbe`, say).
+  - `InstalledConsumer.carrierCommand` / `runCarrierBin` resolve and run the
+    carrier's own bin script directly through `node`, whichever package won
+    the `node_modules/.bin` slot — the tool for proving the carrier's own
+    shim works when bins are shared.
+  - `InstalledConsumer.binProvenance` reports which installed package a
+    `node_modules/.bin` symlink actually resolves into.
+  - `PackedInstallResult.scratch` is the scratch root holding the tarballs
+    and every consumer, removed when the run's scope closes.
+  - `PackedInstall.closure(carrier, options)` returns the packages a run
+    would pack, in order, without packing anything, and
+    `PackedInstall.timeoutBudget` / `timeoutBudgetFor` size a test's timeout
+    from a run's managers, packages and per-consumer work (one bin run's
+    minute unless the test says otherwise).
+  - `overrides` and `workspaceOverrides` steer a scratch consumer's
+    dependency resolution to a local directory or tarball outside the
+    workspace — the dogfood case, where a closure member needs a sibling
+    checkout's unreleased build.
+  - `packTimeout` bounds each package's `npm pack`, alongside the existing
+    `installTimeout`.
+
+- `PackedInstallOptions.bins` now fails the run before any install with a
+  new `BinConflict` error when a packed package other than the carrier
+  declares one of the carrier's own bin names — under a flat layout (npm,
+  bun, Yarn's `node-modules` linker) either package can take the `.bin`
+  slot, so an unflagged conflict lets a check or a bin run silently pass on
+  the wrong package. Set `allowSharedBins: true` to allow it explicitly, for
+  a carrier whose front ends declare the carrier's bin names on purpose.
+
+### Thanks
+
+Thanks to [@spencerbeggs](https://github.com/spencerbeggs) for their contributions!
+
+[#840]: https://github.com/spencerbeggs/effected/pull/840
+
+## 0.26.0
+
+### Features
+
+#### `@effected/workspaces/testing`
+
+- A new subpath of repo-shape checks for a monorepo's own test suite. It catches the drift unit tests miss: a platform-free package starting to read `process`, a low-level package growing an edge up into an application, or a bin that resolves inside the workspace but is missing once installed from its tarball. The main entry never re-exports it, and every check refuses to pass vacuously.
+
+- `SourceBoundary.scan({ root, rules, allow?, allowRules? })` lexes every module in a source tree and reports reads of the global `process`, forbidden imports, stdout writes and console writes. A `process` in a comment, string or regex is never a read. The rules are `"process"`, `"node:process"`, `"stdout-write"` (`stdout.write`, or `stdout.end` with a final chunk), `"console"`, `"console-stdout"` (spares the stderr-writing methods, for a stdio server) and `{ forbidImports: [...] }`.
+
+- `allow` exempts a file from every rule. `allowRules` waives a single rule per file, and each waived offence lands in `scan.waived` instead of disappearing, so a stale waiver fails an assertion. `SourceBoundary.verifyFixtures()` proves the scanner still flags and spares what its shipped fixtures say.
+
+- `LayerPolicy.load(path)` and `WorkspaceLayering.checkWorkspace(policy)` hold the discovered package graph to a committed `layers.json`: top-down `layers`, `tooling`, `unconstrained` globs, the dependency `fields` that count, and `requiredEdges` that must exist. Decoding is strict, so an unknown key such as a `requiredEdge` typo fails `LayerPolicyError` naming it.
+
+- `PackedInstall.run(options)` packs a carrier and the workspace packages it needs. It installs the carrier into a fresh project outside the workspace under each requested package manager that is available (npm, pnpm, Yarn, Bun), then checks every expected bin is linked and executable. `PackedInstall.scrubEnv` gives the bins the same scrubbed environment the installs ran under. POSIX-only. [#821][#821]
+
+```ts
+import { SourceBoundary } from "@effected/workspaces/testing";
+
+const scan = yield* SourceBoundary.scan({
+	root: SRC,
+	rules: ["process", "stdout-write", { forbidImports: ["node:*", "@effect/platform*"] }],
+	// main.ts hands process.stdout to a transport, but must never write to it itself.
+	allowRules: { process: ["main.ts"] },
+});
+assert.deepStrictEqual(scan.violations, []);
+```
+
+### Thanks
+
+Thanks to [@spencerbeggs](https://github.com/spencerbeggs) for their contributions!
+
+[#821]: https://github.com/spencerbeggs/effected/pull/821
+
+## 0.25.0
+
+### Features
+
+- Upgrades core Effect to `rc-117` [#812][#812]
+
+### Dependencies
+
+| Dependency | Type | Action | From | To |
+| --- | --- | --- | --- | --- |
+| @effected/commands | dependency | updated | 0.8.0 | 0.9.0 |
+| @effected/git | dependency | updated | 0.16.0 | 0.17.0 |
+| @effected/glob | dependency | updated | 0.7.0 | 0.8.0 |
+| @effected/jsonc | dependency | updated | 0.12.0 | 0.13.0 |
+| @effected/lockfiles | dependency | updated | 0.10.0 | 0.11.0 |
+| @effected/npm | dependency | updated | 0.15.0 | 0.16.0 |
+| @effected/package-json | dependency | updated | 0.16.0 | 0.17.0 |
+| @effected/semver | dependency | updated | 0.8.0 | 0.9.0 |
+| @effected/walker | dependency | updated | 0.11.0 | 0.12.0 |
+| @effected/yaml | dependency | updated | 0.16.0 | 0.17.0 |
+
+### Thanks
+
+Thanks to [@spencerbeggs](https://github.com/spencerbeggs) for their contributions!
+
+[#812]: https://github.com/spencerbeggs/effected/pull/812
+
+## 0.24.1
+
+### Dependencies
+
+| Dependency | Type | Action | From | To |
+| --- | --- | --- | --- | --- |
+| @effected/walker | dependency | updated | 0.10.0 | 0.11.0 |
+
+## 0.24.0
+
+### Features
+
+- `WorkspaceSnapshots.at(ref)` now replays that ref's `pnpm-workspace.yaml` `configDependencies` hooks at the version the ref itself declares, instead of always reading the live worktree's config. A hook-only catalog — one contributed entirely by a config-dependency's `pnpmfile.cjs`, such as `effect:peers` — now diffs correctly across a config-dependency bump between two refs; previously it could not change at all because `at(ref)` never re-ran hook replay for older refs.
+
+- Resolution walks a fail-closed ladder — `node_modules/.pnpm-config/<name>` when it holds the ref's declared version, else the pnpm store's `links/` tree — and a version installed nowhere now fails typed with a `CatalogAssemblyError` (`source: "hooks"`) naming the package, the declared version, and the remediation (`pnpm add --config <name>@<version>` in a throwaway workspace) instead of silently answering from whatever happens to be on disk. `WorkspaceSnapshots.layer` and `WorkspaceSnapshots.make`'s `R` gains `ConfigDependencyHooks` as a result.
+
+- New public surface supporting this:
+
+```ts
+import { ConfigDependencyHooks, Workspaces } from "@effected/workspaces";
+
+// Hermetic seam: replay caller-supplied pnpmfiles with no resolution at all.
+const hooks = ConfigDependencyHooks.layerFrom({
+	"@scope/plugin@1.0.0": "/fixtures/plugin-1/pnpmfile.mjs",
+	"@scope/plugin@2.0.0": "/fixtures/plugin-2/pnpmfile.mjs",
+});
+
+// Hand the SAME hooks reference to both WorkspaceCatalogs and WorkspaceSnapshots.
+const KitLayer = Workspaces.layerWithGitAndHooks(hooks);
+```
+
+- `ConfigDependencyHooks.layerFrom(entries)` — the hermetic test seam above.
+- `WorkspaceCatalogs.layerWithHooks(hooks, options)` and `Workspaces.layerWithGitAndHooks(hooks, options)` — build the catalogs/snapshots graph over a caller-chosen `ConfigDependencyHooks` layer instead of one of the fixed `layerNoop` / `layerLive` / `layerSubprocess` policies.
+- `WorkspaceCatalogs.hookReplays()` — which version each declared config dependency was actually replayed from, off the same memoized assemble pass as `set()`.
+- An optional `hookReplays` field (`name → declared version`) on `WorkspaceStateSnapshot`, set on every fresh read (`{}` under the no-op layer) and absent only when decoding a snapshot serialized before the field existed.
+- `HookReplay` and `HookReplaySource` (`"installed" | "store" | "supplied"`) — the types recording which resolution rung answered, exported alongside the new `HookInjection.replays` field. `replays` is a **required** field of `HookInjection`, so a consumer implementing the `ConfigDependencyHooks` contract itself (a hand-rolled `Layer.succeed`) must now return it — `{}` when nothing was replayed.
+
+### Bug Fixes
+
+- `PeerCheck` now applies both `ignoreMissing` and `allowAny` from `peerDependencyRules` — pnpm `@pnpm/matcher` peer-name patterns, not `parent>peer` keys — replicating pnpm's post-hoc suppression for a required peer that resolved to nothing (`ignoreMissing`) and a peer that resolved outside its wanted range (`allowAny`). Previously only `allowedVersions` was applied, so a workspace relying on either axis saw `unverified: ["peerRulesNotApplied"]` findings that `pnpm peers check` considers clean. [#797][#797]
+
+### Thanks
+
+Thanks to [@spencerbeggs](https://github.com/spencerbeggs) for their contributions!
+
+[#797]: https://github.com/spencerbeggs/effected/pull/797
+
+## 0.23.0
+
+### Breaking Changes
+
+#### The whole kit tracks Effect `4.0.0-rc.116`
+
+- Every package's `effect` peer moves from `4.0.0-rc.115` to `4.0.0-rc.116`. The kit uses exact prerelease pins rather than a caret, so a consumer must move with it. No `@effected` API changes shape on this advance; the kit itself needed one edit (`Stream.scan` now takes a lazy initial state, met once in `@effected/jsonl`'s `Journal.projection`). A consumer that upgrades meets the rc.116 renames on its own code:
+
+- `SchemaTransformation.make` is `makeTransformation`, and `Transformation#compose` is the dual standalone `SchemaTransformation.composeTransformation`.
+
+- `SchemaGetter.Getter` is a tagged union exposing only `pipe`: `new SchemaGetter.Getter`, `onSome` and `onNone` are gone in favour of `SchemaGetter.map` / `compose` / `run` and `transformEffect` / `transformOptionalEffect`.
+
+- `Stream.scan` and `Stream.scanEffect` take `() => initial`; `Stream.partition` returns `[passes, fails]`; `Stream.mapBoth` takes `onElement` / `onError`.
+
+- `Effect.orElseSucceed` passes the error to its fallback and `Effect.isEffect` narrows to `Effect<unknown, unknown, unknown>`.
+
+- `ByteSize.Input` string literals are checked at compile time; parse external strings with `ByteSize.fromString`.
+
+- Arbitrary shrinking changed, so property-test replay tokens recorded at rc.115 no longer reproduce.
+
+### Documentation
+
+#### The Claude Code and Copilot plugins teach the rc.116 surface
+
+- The `effect-v4-schema` transformation reference composes transformations with `SchemaTransformation.composeTransformation` and describes the `Getter` surface rc.116 left behind; the source-lookup and testing skills report rc.116 as the kit's pin and the two-copy lockfile shape the bridge now produces (`rc.115` for the toolchain, `rc.116` for the kit); the session-start briefing reports rc.116.
+
+### Dependencies
+
+| Dependency | Type | Action | From | To |
+| --- | --- | --- | --- | --- |
+| @effected/commands | dependency | updated | 0.7.2 | 0.8.0 |
+| @effected/git | dependency | updated | 0.15.2 | 0.16.0 |
+| @effected/glob | dependency | updated | 0.6.1 | 0.7.0 |
+| @effected/jsonc | dependency | updated | 0.11.1 | 0.12.0 |
+| @effected/lockfiles | dependency | updated | 0.9.1 | 0.10.0 |
+| @effected/npm | dependency | updated | 0.14.2 | 0.15.0 |
+| @effected/package-json | dependency | updated | 0.15.1 | 0.16.0 |
+| @effected/semver | dependency | updated | 0.7.1 | 0.8.0 |
+| @effected/walker | dependency | updated | 0.9.1 | 0.10.0 |
+| @effected/yaml | dependency | updated | 0.15.2 | 0.16.0 |
+| @effect/platform-node | devDependency | updated | 4.0.0-rc.115 | 4.0.0-rc.116 |
+| @effect/vitest | devDependency | updated | 4.0.0-rc.115 | 4.0.0-rc.116 |
+| effect | devDependency | updated | 4.0.0-rc.115 | 4.0.0-rc.116 |
+| effect | peerDependency | updated | 4.0.0-rc.115 | 4.0.0-rc.116 |
+
+### Maintenance
+
+#### The rc.115 `packageExtensions` bridge is retired
+
+- The toolchain (`@savvy-web/tsdown-plugins`, `rolldown-pnpm-config`, `@vitest-agent/*`) has republished declaring `effect` and its `@effected/*` inputs as regular dependencies, so the workspace no longer needs the `packageExtensions` block that pinned them by hand. Its ten keys named versions no longer installed and the lockfile diff on removal was the checksum line alone. Nothing published changes; this is the workspace's own install shape. [#792][#792]
+
+### Thanks
+
+Thanks to [@spencerbeggs](https://github.com/spencerbeggs) for their contributions!
+
+[#792]: https://github.com/spencerbeggs/effected/pull/792
+
+## 0.22.1
+
+### Bug Fixes
+
+- Fixes closure issues in all packages.
+
+### Dependencies
+
+| Dependency | Type | Action | From | To |
+| --- | --- | --- | --- | --- |
+| @effected/commands | dependency | updated | 0.7.1 | 0.7.2 |
+| @effected/git | dependency | updated | 0.15.1 | 0.15.2 |
+| @effected/glob | dependency | updated | 0.6.0 | 0.6.1 |
+| @effected/jsonc | dependency | updated | 0.11.0 | 0.11.1 |
+| @effected/lockfiles | dependency | updated | 0.9.0 | 0.9.1 |
+| @effected/npm | dependency | updated | 0.14.0 | 0.14.1 |
+| @effected/package-json | dependency | updated | 0.15.0 | 0.15.1 |
+| @effected/semver | dependency | updated | 0.7.0 | 0.7.1 |
+| @effected/walker | dependency | updated | 0.9.0 | 0.9.1 |
+| @effected/yaml | dependency | updated | 0.15.1 | 0.15.2 |
+
+### Thanks
+
+Thanks to [@spencerbeggs](https://github.com/spencerbeggs) for their contributions!
+
+## 0.22.0
+
+### Features
+
+- New `DuplicateCheck` value class: `DuplicateCheck.run(lockfile, { names? })` walks a parsed `@effected/lockfiles` `Lockfile` and reports every package name resolved at two or more distinct versions, each `DuplicatedVersion` naming every `DuplicateInstance` and the importers/packages that pull it (`Dependent`). `DuplicateCheck.kit` is the predicate for `effect` plus every `@effected/*` name — the check issue #298 and #603 asked for, now a report instead of a `pnpm why` transcript:
+
+```ts
+import { DuplicateCheck } from "@effected/workspaces";
+import { Lockfile } from "@effected/lockfiles";
+
+const lockfile = yield* Lockfile.parse(text, { format: "pnpm" });
+const report = DuplicateCheck.run(lockfile, { names: DuplicateCheck.kit });
+report.isClean; // false when any reported name resolved at >1 version
+```
+
+- `PeerCheck` and `DuplicateCheck` now share one join between importers and resolved instances, so both report the same `unresolvedImporters` (the npm/bun root-importer limitation) from the same code. [#708][#708]
+
+### Thanks
+
+Thanks to [@spencerbeggs](https://github.com/spencerbeggs) for their contributions!
+
+[#708]: https://github.com/spencerbeggs/effected/pull/708
+
+## 0.21.1
+
+### Dependencies
+
+| Dependency | Type | Action | From | To |
+| --- | --- | --- | --- | --- |
+| @effected/git | dependency | updated | 0.15.0 | 0.15.1 |
+| @effected/walker | dependency | updated | 0.8.0 | 0.9.0 |
+| @effected/yaml | dependency | updated | 0.15.0 | 0.15.1 |
+
+## 0.21.0
+
+### Breaking Changes
+
+#### The whole kit tracks Effect `4.0.0-rc.115`
+
+- Every package's `effect` peer moves from `4.0.0-rc.112` to `4.0.0-rc.115`. The kit uses exact prerelease pins rather than a caret, so a consumer must move with it. This advance is the first whose Effect changes are not source-compatible with the previous pin, so a consumer that upgrades meets the same renames the kit did:
+
+- `SchemaTransformation.transformOrFail` and `SchemaGetter.transformOrFail` are `transformEffect`.
+
+- The `Config` constructors are PascalCase (`Config.String`, `Config.Redacted`, `Config.Int`, `Config.Boolean`, …) and `Config.mapOrFail` is `Config.mapEffect`.
+
+- `FileSystem.Size` and `FileSystem.SizeInput` are gone in favour of the `ByteSize` module: `File.Info.size` is a `ByteSize`, `File.seek` takes a `bigint`, `read`/`write` return a `number`.
+
+- The fast-check bridge (`effect/testing/FastCheck`, `Schema.toArbitrary`, the `fastCheck` property-test option) is removed in favour of `effect/unstable/arbitrary/Arbitrary`; `it.effect.prop` takes `arbitrary: { runs, size, seed, … }`.
+
+#### `@effected/schemastore` documents are open unless told otherwise
+
+- `Schema.ToJsonSchemaOptions.additionalProperties` became `onExcessProperty: "ignore" | "error"` upstream, and its default now mirrors the decoder's: generated object schemas carry `additionalProperties: true` unless `jsonSchema: { onExcessProperty: "error" }` is passed. `StoreDocument.fromSchema` passes the option through unchanged, so a document that was closed by default at rc.112 is open by default now. Pass `onExcessProperty: "error"` to keep a closed document; a generator that silently disagreed with the decoder it is paired with would be the worse default.
+
+#### `@effected/memfs` seeks before the start of a file fail
+
+- `File.seek` gained a `PlatformError` channel upstream, and memfs now matches Node: a seek whose resulting position would be negative fails with `BadArgument` ("Cannot seek before the start of the file") and leaves the cursor unchanged, where it previously stored the negative position and failed on the next read. No memfs-declared type changes; the `File`/`File.Info` shape changes are Effect's own, reaching consumers through the peer.
+
+### Documentation
+
+#### A `Schema.Class` root is annotated on the `Struct` it wraps
+
+- [Effect-TS/effect#8084](https://github.com/Effect-TS/effect/issues/8084), which the rc.112 notes carried as an open limitation, was closed upstream as by design: annotations passed as `Schema.Class`'s second argument sit on the class node, while the `$defs` entry is generated from the encoded fields `Struct`. Annotate that `Struct` — `Schema.Class<X>("X")(Schema.Struct({ … }).annotate({ title, description, "x-taplo": … }))` — and every key reaches the document. `@effected/schemastore`'s design doc and context files now state the rule instead of the limitation.
+
+#### The Claude Code and Copilot plugins teach the rc.115 surface
+
+- The `effect-v4-schema`, `effect-v4-testing` and `effect-v4-module-index` skills describe the native `Arbitrary` module in place of the fast-check bridge, including the migration traps met on this advance: the `size` clamp (default 10) that silently shrinks a property's string and array domains, the `-0` the generator's near-zero bias emits for an unbounded `Schema.Int` or any `Schema.Number`, which JSON and YAML cannot round-trip, and the absence of `oneof`/`constantFrom`/`array` combinators. `ByteSize` has a module-index row, the `Config` and CLI constructors are shown in their PascalCase spellings, and the session-start briefing reports rc.115 as the kit's pin. [#686][#686]
+
+### Dependencies
+
+| Dependency | Type | Action | From | To |
+| --- | --- | --- | --- | --- |
+| @effected/commands | dependency | updated | 0.6.1 | 0.7.0 |
+| @effected/git | dependency | updated | 0.14.0 | 0.15.0 |
+| @effected/glob | dependency | updated | 0.5.0 | 0.6.0 |
+| @effected/lockfiles | dependency | updated | 0.8.2 | 0.9.0 |
+| @effected/npm | dependency | updated | 0.13.0 | 0.14.0 |
+| @effected/package-json | dependency | updated | 0.14.1 | 0.15.0 |
+| @effected/semver | dependency | updated | 0.6.0 | 0.7.0 |
+| @effected/walker | dependency | updated | 0.7.0 | 0.8.0 |
+| @effected/yaml | dependency | updated | 0.14.0 | 0.15.0 |
+| @effect/platform-node | devDependency | updated | 4.0.0-rc.112 | 4.0.0-rc.115 |
+| @effect/tsgo | devDependency | updated | 0.41.0 | 0.45.0 |
+| @effect/vitest | devDependency | updated | 4.0.0-rc.112 | 4.0.0-rc.115 |
+| effect | devDependency | updated | 4.0.0-rc.112 | 4.0.0-rc.115 |
+| effect | peerDependency | updated | 4.0.0-rc.112 | 4.0.0-rc.115 |
+
+### Thanks
+
+Thanks to [@spencerbeggs](https://github.com/spencerbeggs) for their contributions!
+
+[#686]: https://github.com/spencerbeggs/effected/pull/686
+
+## 0.20.3
+
+### Dependencies
+
+| Dependency | Type | Action | From | To |
+| --- | --- | --- | --- | --- |
+| @effected/git | dependency | updated | 0.13.0 | 0.14.0 |
+
+## 0.20.2
+
+### Dependencies
+
+| Dependency | Type | Action | From | To |
+| --- | --- | --- | --- | --- |
+| @effected/git | dependency | updated | 0.12.0 | 0.13.0 |
+
+## 0.20.1
+
+### Dependencies
+
+| Dependency | Type | Action | From | To |
+| --- | --- | --- | --- | --- |
+| @effected/commands | dependency | updated | 0.6.0 | 0.6.1 |
+| @effected/git | dependency | updated | 0.11.0 | 0.12.0 |
+| @effected/lockfiles | dependency | updated | 0.8.0 | 0.8.1 |
+| @effected/walker | dependency | updated | 0.6.0 | 0.7.0 |
+| @effected/yaml | dependency | updated | 0.13.0 | 0.14.0 |
+
 ## 0.20.0
 
 ### Breaking Changes
@@ -648,16 +1486,20 @@ Thanks to [@spencerbeggs](https://github.com/spencerbeggs) for their contributio
 ### Bug Fixes
 
 - `WorkspaceSnapshots`' internal cache key now separates the workspace root and
-  ref with a `\0` escape instead of a literal NUL byte. The literal byte made&#10;`file` classify the source as binary, so `grep`/`ripgrep` silently skipped it.
+  ref with a `\0` escape instead of a literal NUL byte. The literal byte made
+  `file` classify the source as binary, so `grep`/`ripgrep` silently skipped it.
 
 ### Documentation
 
 - Corrects two defects in the changelog published with `0.9.0`:
-  - **The `PublishabilityDetector` requirement claim was wrong.** `Workspaces.layer`,&#10;`layerWithGit` and `layerWithConfigDependencies` neither provide nor require a&#10;`PublishabilityDetector` — nothing inside any of them asks a publishability
+  - **The `PublishabilityDetector` requirement claim was wrong.** `Workspaces.layer`,
+    `layerWithGit` and `layerWithConfigDependencies` neither provide nor require a
+    `PublishabilityDetector` — nothing inside any of them asks a publishability
     question, so their `R` stays `FileSystem | Path`. The requirement surfaces in
     the `R` of the consuming *operation* that asks (`VersioningStrategy.detect`,
     for example), which can be well past the layer-wiring site.
-  - **The recommended wiring was backwards.** The published note suggested&#10;`Workspaces.layer().pipe(Layer.provide(PublishabilityDetector.layerNpm))`.
+  - **The recommended wiring was backwards.** The published note suggested
+    `Workspaces.layer().pipe(Layer.provide(PublishabilityDetector.layerNpm))`.
     Since the composite doesn't require a detector, `Layer.provide` discards it —
     it never reaches the program's `R`. Wire it with `Layer.mergeAll` instead:
 
@@ -668,7 +1510,8 @@ Thanks to [@spencerbeggs](https://github.com/spencerbeggs) for their contributio
   // Correct
   const layer = Layer.mergeAll(Workspaces.layer(), PublishabilityDetector.layerNpm);
   ```
-  Also: `Workspaces.layer`'s internal `localExecLayer` now passes `scriptPrefix`&#10;through when building an `ExecContext`, keeping pace with `@effected/commands`'
+  Also: `Workspaces.layer`'s internal `localExecLayer` now passes `scriptPrefix`
+  through when building an `ExecContext`, keeping pace with `@effected/commands`'
   new script-runner prefixes. [#191][#191]
 
 ### Dependencies
@@ -691,7 +1534,9 @@ Thanks to [@spencerbeggs](https://github.com/spencerbeggs) for their contributio
 ### Breaking Changes
 
 - ### `PublishabilityDetector` no longer has an ambient default
-  The bare `PublishabilityDetector.layer` is **removed**. `Workspaces.layer`,&#10;`layerWithGit` and `layerWithConfigDependencies` now all **require**&#10;`PublishabilityDetector` in `R` instead of silently supplying npm semantics —
+  The bare `PublishabilityDetector.layer` is **removed**. `Workspaces.layer`,
+  `layerWithGit` and `layerWithConfigDependencies` now all **require**
+  `PublishabilityDetector` in `R` instead of silently supplying npm semantics —
   the old default made `Layer.mergeAll(myDetector, Workspaces.layer())` resolve
   to the default rather than the override, because `mergeAll` is last-wins, with
   no type error to catch it.
@@ -705,16 +1550,21 @@ Thanks to [@spencerbeggs](https://github.com/spencerbeggs) for their contributio
   ```
   `PublishabilityDetector.layerNpm` replaces the old `.layer` (standard npm
   semantics); `PublishabilityDetector.layerNone` is a workspace where nothing
-  publishes. Each is also exposed as a plain value — `PublishabilityDetector.npm`&#10;/ `.none` — for composing a policy that defers to one of them.
+  publishes. Each is also exposed as a plain value — `PublishabilityDetector.npm`
+  / `.none` — for composing a policy that defers to one of them.
   ### `ReleaseTag`'s default version prefix is now `""`
-  `ReleaseTag.single` / `ReleaseTag.scoped` default `versionPrefix` to `""`&#10;(strict SemVer) uniformly, rather than defaulting unscoped package names to a&#10;`"v"` prefix. A consumer relying on the old `v`-prefixed tags for an unscoped
+  `ReleaseTag.single` / `ReleaseTag.scoped` default `versionPrefix` to `""`
+  (strict SemVer) uniformly, rather than defaulting unscoped package names to a
+  `"v"` prefix. A consumer relying on the old `v`-prefixed tags for an unscoped
   package must now pass `versionPrefix: "v"` explicitly.
 
 ### Features
 
 - ### `ReleaseTag` and `TrackingTag`
-  `ReleaseTag.single` / `.scoped` format a release's git tag name.&#10;`TrackingTag.forVersion` derives the floating-alias tags a version should
-  carry (`v1`, `v1.2`) and never floats onto a prerelease; `TrackingTag.classifyTag`&#10;tells a version tag from an alias tag by segment count.
+  `ReleaseTag.single` / `.scoped` format a release's git tag name.
+  `TrackingTag.forVersion` derives the floating-alias tags a version should
+  carry (`v1`, `v1.2`) and never floats onto a prerelease; `TrackingTag.classifyTag`
+  tells a version tag from an alias tag by segment count.
   ### `VersioningStrategy`
   `VersioningStrategy.classify` / `.detect` / `.tagsFor` — classify a package's
   versioning shape and compute the tags a release should push.
@@ -722,7 +1572,8 @@ Thanks to [@spencerbeggs](https://github.com/spencerbeggs) for their contributio
   Detection now runs three tiers: workspace markers, then a standalone tier
   (lockfile presence with no workspace config), then a declaration tier
   (`packageManager` / `devEngines.packageManager` with no lockfile at all — a
-  fresh clone before its first install). `PackageManagerDetector.makeTest` /&#10;`layerTest` are the sanctioned test doubles; an unstubbed `detect` dies rather
+  fresh clone before its first install). `PackageManagerDetector.makeTest` /
+  `layerTest` are the sanctioned test doubles; an unstubbed `detect` dies rather
   than guessing.
   ### `localExecLayer` implements `@effected/commands`' `LocalExec`
   `Workspaces.localExecLayer` teaches `@effected/commands`' `ToolDiscovery` how
@@ -872,7 +1723,8 @@ Thanks to [@spencerbeggs](https://github.com/spencerbeggs) for their contributio
   ```
   One hook replay now yields both the catalogs and the release-age keys
   (`minimumReleaseAge` / `minimumReleaseAgeExclude`) the hooks leave on the
-  config, so the config-dependency code — which executes arbitrary&#10;`pnpmfile.cjs` logic — still runs exactly once. When two hooks both set a
+  config, so the config-dependency code — which executes arbitrary
+  `pnpmfile.cjs` logic — still runs exactly once. When two hooks both set a
   release-age key, the later hook wins. `ConfigDependencyHooks.layerNoop` now
   returns `{ catalogs: seed, releaseAge: {} }` instead of the bare seed. A
   caller that awaited `inject` directly and read the catalogs off the resolved
@@ -881,7 +1733,8 @@ Thanks to [@spencerbeggs](https://github.com/spencerbeggs) for their contributio
 ### Features
 
 - ### `WorkspaceCatalogs.releaseAgeGate()`
-  Assembles the workspace's effective pnpm release-age gate from inline&#10;`pnpm-workspace.yaml` keys and the replayed config-dependency hooks,
+  Assembles the workspace's effective pnpm release-age gate from inline
+  `pnpm-workspace.yaml` keys and the replayed config-dependency hooks,
   strictest-wins via `ReleaseAgeGate.combine`, in the same single memoized
   assembly pass as `set()`:
   ```ts
@@ -893,9 +1746,12 @@ Thanks to [@spencerbeggs](https://github.com/spencerbeggs) for their contributio
   	// gate.ageMinutes, gate.exclude
   });
   ```
-  A present-but-malformed inline `minimumReleaseAge` or&#10;`minimumReleaseAgeExclude` now fails typed as `CatalogAssemblyError`&#10;(`source: "manifest"`) instead of being silently ignored — a silently-dropped
+  A present-but-malformed inline `minimumReleaseAge` or
+  `minimumReleaseAgeExclude` now fails typed as `CatalogAssemblyError`
+  (`source: "manifest"`) instead of being silently ignored — a silently-dropped
   gate is exactly the "install refuses a version the resolver already picked"
-  bug this vocabulary exists to prevent. A workspace with no&#10;`pnpm-workspace.yaml` (a bun/npm workspace) has no release-age keys, so the
+  bug this vocabulary exists to prevent. A workspace with no
+  `pnpm-workspace.yaml` (a bun/npm workspace) has no release-age keys, so the
   gate is the inert zero gate. `HookInjection` is exported from the package. [#139][#139]
 
 ### Dependencies
@@ -1025,7 +1881,8 @@ Thanks to [@spencerbeggs](https://github.com/spencerbeggs) for their contributio
   // After
   const root = findWorkspaceRootSync(process.cwd(), nodeSyncOps);
   ```
-  `cwd` is now required — the function no longer reads `process.cwd()`&#10;ambiently when it is omitted — and the `FindWorkspaceRootSyncOptions` type
+  `cwd` is now required — the function no longer reads `process.cwd()`
+  ambiently when it is omitted — and the `FindWorkspaceRootSyncOptions` type
   has been removed; pass `WorkspacesSyncOptions` directly. This is a
   pre-`0.1.0` change; nothing built on the old signature has been published.
 
@@ -1036,7 +1893,8 @@ Thanks to [@spencerbeggs](https://github.com/spencerbeggs) for their contributio
   defaulted so a test stubs only what it exercises. Defaults model an empty
   workspace; `getPackage`, `importerMap`, and `resolveFile`/`resolveFiles` are
   all derived from the effective `listPackages` (the override when one is
-  supplied), so stubbing just `listPackages` yields a consistent double.&#10;`getPackage` fails with the service's own typed `PackageNotFoundError` on a
+  supplied), so stubbing just `listPackages` yields a consistent double.
+  `getPackage` fails with the service's own typed `PackageNotFoundError` on a
   miss, exactly as the live implementation does; an unstubbed `info()` call
   dies with an explanatory defect rather than fabricating a root path.
   ```ts

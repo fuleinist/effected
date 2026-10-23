@@ -1,10 +1,9 @@
 import { Effect, Layer } from "effect";
-import * as SqlClient from "effect/unstable/sql/SqlClient";
+import * as SqlClient from "effect/sql/SqlClient";
+import type { SqlError } from "effect/sql/SqlError";
 
-/**
- * SQLite-only support shared by the `Store` and `Cache` batteries-included
- * layers. Facade-free like `migrator.ts`: it never imports a facade module.
- */
+// SQLite-only support shared by the `Store` and `Cache` batteries-included
+// layers. Facade-free like `migrator.ts`: it never imports a facade module.
 
 /**
  * A layer that registers a `PRAGMA wal_checkpoint(TRUNCATE)` finalizer against
@@ -30,3 +29,35 @@ export const walCheckpointOnClose = (): Layer.Layer<never, never, SqlClient.SqlC
 			yield* Effect.addFinalizer(() => sql`PRAGMA wal_checkpoint(TRUNCATE)`.pipe(Effect.ignore));
 		}),
 	);
+
+/**
+ * Re-provide `SqlClient` from `client` after running `onConnect` against it,
+ * so the hook completes before anything downstream — the ledger, adoption,
+ * migrations — touches the connection, and outside any transaction. The
+ * driver opens one connection per build, so this runs once per connection.
+ * `toError` maps the hook's `SqlError` onto the calling service's own error.
+ */
+export const withOnConnect = <E1, E2>(
+	client: Layer.Layer<SqlClient.SqlClient, E1>,
+	onConnect: ((sql: SqlClient.SqlClient) => Effect.Effect<unknown, SqlError>) | undefined,
+	toError: (cause: SqlError) => E2,
+): Layer.Layer<SqlClient.SqlClient, E1 | E2> =>
+	onConnect === undefined
+		? client
+		: Layer.effect(
+				SqlClient.SqlClient,
+				Effect.tap(SqlClient.SqlClient, (sql) => onConnect(sql).pipe(Effect.mapError(toError))),
+			).pipe(Layer.provide(client));
+
+/**
+ * Re-raise the driver's own setup failure — opening the file, configuring
+ * it, switching it to WAL — as the calling service's error, so the
+ * batteries-included layers keep their declared error unions. Apply it to the
+ * client layer once and reuse the result: layers memoize by reference, and
+ * the checkpoint layer must share the same connection.
+ */
+export const mapSetupError = <E>(
+	client: Layer.Layer<SqlClient.SqlClient, SqlError>,
+	toError: (cause: SqlError) => E,
+): Layer.Layer<SqlClient.SqlClient, E> =>
+	Layer.catchTag(client, "SqlError", (cause) => Layer.effect(SqlClient.SqlClient, Effect.fail(toError(cause))));

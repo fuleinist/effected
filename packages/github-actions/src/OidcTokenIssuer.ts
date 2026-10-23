@@ -1,7 +1,12 @@
+import type { ActionsOidcClaims } from "@effected/github";
+import { ActionsOidcClaimsFromWire } from "@effected/github";
+import { Oidc } from "@effected/oidc";
 import { Context, Effect, Layer, Redacted, Schema } from "effect";
-import { HttpClient } from "effect/unstable/http";
-import * as HttpClientResponse from "effect/unstable/http/HttpClientResponse";
+import * as Base64Url from "effect/encoding/Base64Url";
+import { HttpClient, HttpClientRequest } from "effect/http";
+import * as HttpClientResponse from "effect/http/HttpClientResponse";
 import { ActionEnvironment } from "./ActionEnvironment.js";
+import { unstubbed } from "./internal/unstubbed.js";
 
 /**
  * Raised when an OIDC token cannot be issued or read.
@@ -42,45 +47,6 @@ export class OidcTokenError extends Schema.TaggedError<OidcTokenError>()("OidcTo
 	}
 }
 
-/**
- * The claims a GitHub Actions OIDC token carries about the workflow that ran.
- *
- * @remarks
- * The field names are GitHub's own JWT claim names, kept verbatim rather than
- * translated to the kit's casing. They are an **external vocabulary** — the
- * same strings that appear in a SLSA provenance predicate and in every
- * published example of an Actions OIDC policy — and renaming them would put a
- * translation layer between a consumer and the specification they are reading.
- *
- * @public
- */
-export class OidcClaims extends Schema.Class<OidcClaims>("OidcClaims")({
-	/** The issuer, e.g. `https://token.actions.githubusercontent.com`. */
-	iss: Schema.String,
-	/** The full ref the workflow ran on. */
-	ref: Schema.String,
-	/** The commit. */
-	sha: Schema.String,
-	/** `owner/repo`. */
-	repository: Schema.String,
-	/** The event that triggered the run. */
-	event_name: Schema.String,
-	/** The reusable-workflow ref, which is what a verifier pins against. */
-	job_workflow_ref: Schema.String,
-	/** The calling workflow's ref. */
-	workflow_ref: Schema.String,
-	/** The numeric repository id, as a string. */
-	repository_id: Schema.String,
-	/** The numeric owner id, as a string. */
-	repository_owner_id: Schema.String,
-	/** `github-hosted` or `self-hosted`. */
-	runner_environment: Schema.String,
-	/** The run id, as a string. */
-	run_id: Schema.String,
-	/** The run attempt, as a string. */
-	run_attempt: Schema.String,
-}) {}
-
 /** The token envelope the runner's token service answers with. */
 const TokenEnvelope = Schema.Struct({
 	value: Schema.String,
@@ -91,46 +57,36 @@ const REQUEST_TOKEN = "ACTIONS_ID_TOKEN_REQUEST_TOKEN";
 const REQUEST_URL = "ACTIONS_ID_TOKEN_REQUEST_URL";
 
 /**
- * Decode a JWT payload segment.
- *
- * @remarks
- * `base64url` states the intent, though it is not what makes this work: Node's
- * plain `base64` decoder happens to accept the url alphabet and unpadded input
- * too (probed at beta.101), so the two are interchangeable *here*. They are not
- * interchangeable everywhere — `atob` is not forgiving — which is why the
- * declaration is the strict one and there is a test whose payload actually
- * contains `-` and `_`.
- */
-const decodeSegment = (segment: string): unknown => JSON.parse(Buffer.from(segment, "base64url").toString("utf8"));
-
-/**
  * Read the claims out of a JWT **without verifying its signature**.
  *
  * @remarks
  * The absence of verification is deliberate and is documented on
  * {@link OidcTokenIssuerShape.claims}; do not "fix" it here.
  */
-const readClaims = (token: string): Effect.Effect<OidcClaims, OidcTokenError> =>
-	Effect.gen(function* () {
-		const parts = token.split(".");
-		const payload = parts[1];
-		if (parts.length !== 3 || payload === undefined || payload === "") {
-			return yield* Effect.fail(
-				new OidcTokenError({ reason: "malformedToken", detail: `expected three segments, got ${parts.length}` }),
-			);
-		}
-		const decoded = yield* Effect.try({
-			try: () => decodeSegment(payload),
-			catch: (cause) =>
-				new OidcTokenError({ reason: "malformedToken", detail: "the payload is not base64url JSON", cause }),
-		});
-		return yield* Schema.decodeUnknownEffect(OidcClaims)(decoded).pipe(
-			Effect.mapError((cause) => new OidcTokenError({ reason: "missingClaims", cause })),
-		);
-	});
+const readClaims = (token: string): Effect.Effect<ActionsOidcClaims, OidcTokenError> =>
+	Oidc.decodeUnverified(token, ActionsOidcClaimsFromWire).pipe(
+		Effect.mapError((error) =>
+			// `claims` is the one reason that means the token decoded and its
+			// payload did not; every other reason is a token that is not a JWS.
+			error.reason === "claims"
+				? new OidcTokenError({ reason: "missingClaims", cause: error.cause ?? error })
+				: new OidcTokenError({ reason: "malformedToken", detail: error.detail, cause: error }),
+		),
+	);
 
 /**
- * The {@link OidcTokenIssuer} service shape.
+ * An **unsigned** JWT: `header.payload.unsigned`, each JSON segment
+ * base64url-encoded. For test doubles only; the signature segment is a
+ * placeholder, so the token fails any verifier.
+ */
+const unsignedJwt = (header: unknown, payload: unknown): string => {
+	const segment = (value: unknown): string => Base64Url.encode(JSON.stringify(value));
+	return `${segment(header)}.${segment(payload)}.unsigned`;
+};
+
+/**
+ * The members of the {@link OidcTokenIssuer} service: request an ID `token`
+ * and read its decoded `claims`, both failing with {@link OidcTokenError}.
  *
  * @public
  */
@@ -145,7 +101,8 @@ export interface OidcTokenIssuerShape {
 	 */
 	readonly token: (audience?: string) => Effect.Effect<Redacted.Redacted<string>, OidcTokenError>;
 	/**
-	 * The token's claims, decoded.
+	 * The token's claims, decoded into `@effected/github`'s `ActionsOidcClaims`,
+	 * the same class `ActionsOidc.verify` returns.
 	 *
 	 * @remarks
 	 * **The signature is deliberately not verified**, for three reasons that are
@@ -166,11 +123,11 @@ export interface OidcTokenIssuerShape {
 	 *
 	 * Claims are on the surface rather than left to the call site because that is
 	 * what makes the provenance path reachable in a test: a double built with
-	 * {@link OidcTokenIssuer.layerFor} answers with real, decodable claims, where
-	 * the synthetic non-JWT its predecessor returned made every consumer's
-	 * `decodeJwtClaims` yield nothing and silently skipped the path under test.
+	 * {@link OidcTokenIssuer.layerFor} answers with real, decodable claims, so
+	 * a test cannot silently skip the path under test because the double
+	 * returned a token that is not a JWT.
 	 */
-	readonly claims: (audience?: string) => Effect.Effect<OidcClaims, OidcTokenError>;
+	readonly claims: (audience?: string) => Effect.Effect<ActionsOidcClaims, OidcTokenError>;
 }
 
 const make = Effect.gen(function* () {
@@ -188,9 +145,7 @@ const make = Effect.gen(function* () {
 	 * `Redacted.value` does not appear in this module at all — the package's
 	 * declassification invariant is that `Secret.ts` is the only place a secret
 	 * becomes a string, and a wrap-then-immediately-unwrap here would be a
-	 * genuine exception to it rather than a cosmetic one. A structural test over
-	 * `src/` enforces this, and it caught exactly this call when the first draft
-	 * did it the obvious way.
+	 * genuine exception to it rather than a cosmetic one.
 	 */
 	const issue = Effect.fn("OidcTokenIssuer.token")(function* (audience?: string) {
 		const bearer = yield* required(REQUEST_TOKEN);
@@ -200,7 +155,7 @@ const make = Effect.gen(function* () {
 		const url = audience === undefined ? base : `${base}&audience=${encodeURIComponent(audience)}`;
 
 		const response = yield* http
-			.get(url, { headers: { authorization: `Bearer ${bearer}`, accept: "application/json" } })
+			.execute(HttpClientRequest.get(url).pipe(HttpClientRequest.bearerToken(bearer), HttpClientRequest.acceptJson))
 			.pipe(Effect.mapError((cause) => new OidcTokenError({ reason: "requestFailed", cause })));
 
 		if (response.status < 200 || response.status >= 300) {
@@ -221,9 +176,7 @@ const make = Effect.gen(function* () {
 	} satisfies OidcTokenIssuerShape;
 });
 
-const unimplemented = (member: string): never => {
-	throw new Error(`OidcTokenIssuer.makeTest: ${member}() was called but not stubbed — pass a \`${member}\` override.`);
-};
+const dies = unstubbed("OidcTokenIssuer.makeTest");
 
 /**
  * The runner's OIDC token service.
@@ -242,7 +195,7 @@ const unimplemented = (member: string): never => {
  * const program = Effect.gen(function* () {
  *   const issuer = yield* OidcTokenIssuer;
  *   const claims = yield* issuer.claims("sigstore");
- *   return claims.job_workflow_ref;
+ *   return claims.jobWorkflowRef;
  * });
  * ```
  *
@@ -251,6 +204,13 @@ const unimplemented = (member: string): never => {
 export class OidcTokenIssuer extends Context.Service<OidcTokenIssuer, OidcTokenIssuerShape>()(
 	"@effected/github-actions/OidcTokenIssuer",
 ) {
+	/**
+	 * The live issuer, requesting tokens from the runner's token service.
+	 *
+	 * @remarks
+	 * Fails with {@link OidcTokenError} (`unavailable`) at use when the workflow
+	 * lacks `permissions: id-token: write`.
+	 */
 	static readonly layer: Layer.Layer<OidcTokenIssuer, never, ActionEnvironment | HttpClient.HttpClient> = Layer.effect(
 		this,
 		make,
@@ -261,22 +221,17 @@ export class OidcTokenIssuer extends Context.Service<OidcTokenIssuer, OidcTokenI
 	 *
 	 * @remarks
 	 * For building test doubles, and nothing else: the signature segment is a
-	 * placeholder, so this token would fail any verifier. It exists because the
-	 * alternative — a double returning a synthetic non-JWT — is what made the
-	 * provenance path structurally unreachable in the source package, drawing
-	 * four separate apologetic comments from one consumer.
+	 * placeholder, so this token would fail any verifier. It exists because a
+	 * double returning a synthetic non-JWT would make the provenance path
+	 * structurally unreachable in a test.
 	 */
-	static readonly unsignedTokenFor = (claims: OidcClaims): Redacted.Redacted<string> => {
-		const segment = (value: unknown): string => Buffer.from(JSON.stringify(value), "utf8").toString("base64url");
-		return Redacted.make(
-			`${segment({ alg: "RS256", typ: "JWT" })}.${segment(Schema.encodeUnknownSync(OidcClaims)(claims))}.unsigned`,
-		);
-	};
+	static readonly unsignedTokenFor = (claims: ActionsOidcClaims): Redacted.Redacted<string> =>
+		Redacted.make(unsignedJwt({ alg: "RS256", typ: "JWT" }, Schema.encodeSync(ActionsOidcClaimsFromWire)(claims)));
 
 	/** A test double. Unstubbed members die rather than answering with a non-token. */
 	static readonly makeTest = (overrides: Partial<OidcTokenIssuerShape> = {}): OidcTokenIssuerShape => ({
-		token: () => Effect.sync(() => unimplemented("token")),
-		claims: () => Effect.sync(() => unimplemented("claims")),
+		token: () => dies("token"),
+		claims: () => dies("claims"),
 		...overrides,
 	});
 
@@ -294,7 +249,7 @@ export class OidcTokenIssuer extends Context.Service<OidcTokenIssuer, OidcTokenI
 	 * members can disagree is how a test proves a path works while production
 	 * takes the other one.
 	 */
-	static readonly layerFor = (claims: OidcClaims): Layer.Layer<OidcTokenIssuer> =>
+	static readonly layerFor = (claims: ActionsOidcClaims): Layer.Layer<OidcTokenIssuer> =>
 		Layer.succeed(OidcTokenIssuer, {
 			token: () => Effect.succeed(OidcTokenIssuer.unsignedTokenFor(claims)),
 			claims: () => Effect.succeed(claims),

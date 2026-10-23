@@ -1,12 +1,17 @@
-// The synchronous escape hatch takes CONSUMER-SUPPLIED operations — these
-// tests exercise it three ways: over real `node:fs` (a real temporary tree,
-// proving the documented one-liner wiring works), over a pure in-memory fake
-// (proving no ambient Node dependency survives in `src/`), and over a
-// win32-flavored `node:path.win32` (proving the path implementation is
-// respected end to end).
+// The synchronous escape hatch takes CONSUMER-SUPPLIED operations. These tests
+// drive it over `@effected/memfs`' node-shaped sync port (`handle.sync`), which
+// throws node's exact errno on a miss — so nothing below exists on disk, and a
+// `src/` that still reached for `node:fs` could not pass. A win32-flavored
+// `node:path.win32` drives the same port through a separator shim, proving the
+// path implementation is respected end to end.
+//
+// The documented one-liner `node:fs` wiring is pinned ONCE, against this real
+// repository, by `integration/node-sync.int.test.ts` (its `handWired` oracle).
+// The one real-disk suite left here is the `readDirectoryWithTypes` fast path,
+// which pins node `Dirent` semantics over real symlinks — see its header.
 //
 // `findWorkspaceRootSync` / `getWorkspacePackagesSync` are plain synchronous
-// functions, not Effects, so plain `it()` is correct here.
+// functions, not Effects, so plain `it()` is correct where no Effect runs.
 
 import {
 	existsSync,
@@ -20,11 +25,11 @@ import {
 	writeFileSync,
 } from "node:fs";
 import { tmpdir } from "node:os";
-import nodePath, { dirname, join } from "node:path";
-import { NodeFileSystem, NodePath } from "@effect/platform-node";
-import { afterAll, assert, beforeAll, describe, it } from "@effect/vitest";
+import nodePath, { join } from "node:path";
+import { afterAll, afterEach, assert, beforeAll, describe, it, vi } from "@effect/vitest";
+import type { MemoryFileSystemHandle } from "@effected/memfs";
 import { MemoryFileSystem } from "@effected/memfs";
-import { Effect, FileSystem, Layer, Path } from "effect";
+import { Effect, Layer } from "effect";
 import type { SyncFileSystem, WorkspacePackage, WorkspacesSyncOptions } from "../src/index.js";
 import {
 	WorkspaceDiscovery,
@@ -35,106 +40,78 @@ import {
 	getWorkspacePackagesSync,
 } from "../src/index.js";
 
-// The documented consumer wiring, verbatim: every member is a one-liner over a
-// Node built-in. `statSync` THROWS on a missing path — that is the contract's
-// "may throw" degraded-skip case, deliberately not smoothed over here.
-const nodeOps: WorkspacesSyncOptions = {
-	fileSystem: {
-		exists: existsSync,
-		readFile: (p) => readFileSync(p, "utf8"),
-		readDirectory: (p) => readdirSync(p),
-		isDirectory: (p) => statSync(p).isDirectory(),
-	},
-	path: nodePath,
-};
-
-let root = "";
-
-/** Write `content` to `root/relative`, creating parent directories. */
-const write = (relative: string, content: string): void => {
-	const file = join(root, relative);
-	mkdirSync(dirname(file), { recursive: true });
-	writeFileSync(file, content, "utf8");
-};
-
-beforeAll(() => {
-	root = mkdtempSync(join(tmpdir(), "effected-workspaces-sync-"));
-	write("pnpm-workspace.yaml", "packages:\n  - 'packages/*'\n");
-	write("package.json", JSON.stringify({ name: "root", version: "0.0.0", private: true }));
-	write("packages/good/package.json", JSON.stringify({ name: "@x/good", version: "1.0.0" }));
-
-	// The hostile manifests. Each is VALID JSON that does not decode to an object,
-	// which is the case a `raw === undefined` guard does not cover: `JSON.parse`
-	// returns `null` / a number / a string, never `undefined`.
-	write("packages/null-manifest/package.json", "null");
-	write("packages/number-manifest/package.json", "42");
-	write("packages/string-manifest/package.json", '"nope"');
-	write("packages/array-manifest/package.json", "[1, 2, 3]");
-	// And an outright syntax error, which the `undefined` guard DID cover.
-	write("packages/broken-manifest/package.json", "{ not json");
-});
-
-afterAll(() => {
-	if (root !== "") rmSync(root, { recursive: true, force: true });
+/** Sync ops over a fresh memfs volume holding exactly `seed`. */
+const memOps = (seed: Readonly<Record<string, string>>): WorkspacesSyncOptions => ({
+	fileSystem: MemoryFileSystem.makeSync(seed).sync,
+	path: nodePath.posix,
 });
 
 describe("getWorkspacePackagesSync — hostile manifests", () => {
+	const ops = memOps({
+		"/repo/pnpm-workspace.yaml": "packages:\n  - 'packages/*'\n",
+		"/repo/package.json": JSON.stringify({ name: "root", version: "0.0.0", private: true }),
+		"/repo/packages/good/package.json": JSON.stringify({ name: "@x/good", version: "1.0.0" }),
+		// The hostile manifests. Each is VALID JSON that does not decode to an
+		// object, which is the case a `raw === undefined` guard does not cover:
+		// `JSON.parse` returns `null` / a number / a string, never `undefined`.
+		"/repo/packages/null-manifest/package.json": "null",
+		"/repo/packages/number-manifest/package.json": "42",
+		"/repo/packages/string-manifest/package.json": '"nope"',
+		"/repo/packages/array-manifest/package.json": "[1, 2, 3]",
+		// And an outright syntax error, which the `undefined` guard DID cover.
+		"/repo/packages/broken-manifest/package.json": "{ not json",
+	});
+
 	it("a package.json containing exactly `null` does not crash the enumeration", () => {
 		// Regression: `readJson` returned `JSON.parse`'s result typed as
 		// `Record | undefined`, but `JSON.parse("null")` is `null`. The
 		// `raw === undefined` guard let it through and `raw.name` threw a
 		// TypeError — malformed input escaping as a DEFECT out of a function
 		// documented as total. A Vitest config calling this would simply crash.
-		const packages = getWorkspacePackagesSync(root, nodeOps);
+		const packages = getWorkspacePackagesSync("/repo", ops);
 		const names = packages.map((pkg) => pkg.name);
 		assert.include(names, "@x/good");
 	});
 
 	it("every non-object manifest is skipped, not decoded into a member", () => {
-		const names = getWorkspacePackagesSync(root, nodeOps).map((pkg) => pkg.name);
+		const names = getWorkspacePackagesSync("/repo", ops).map((pkg) => pkg.name);
 		// Only the root and the one good member survive; the five hostile
 		// directories contribute nothing.
 		assert.deepStrictEqual(names.slice().sort(), ["@x/good", "root"]);
 	});
 
 	it("the good member is still fully decoded alongside the hostile ones", () => {
-		const good = getWorkspacePackagesSync(root, nodeOps).find((pkg) => pkg.name === "@x/good");
+		const good = getWorkspacePackagesSync("/repo", ops).find((pkg) => pkg.name === "@x/good");
 		assert.isDefined(good);
 		assert.strictEqual(good?.version, "1.0.0");
 		assert.strictEqual(good?.relativePath, "packages/good");
 	});
 
 	it("the as-read manifest record rides along on every member", () => {
-		const good = getWorkspacePackagesSync(root, nodeOps).find((pkg) => pkg.name === "@x/good");
+		const good = getWorkspacePackagesSync("/repo", ops).find((pkg) => pkg.name === "@x/good");
 		assert.deepStrictEqual(good?.manifestRecord, { name: "@x/good", version: "1.0.0" });
+	});
+
+	it("finds the root from a nested directory", () => {
+		assert.strictEqual(findWorkspaceRootSync("/repo/packages/good", ops), "/repo");
 	});
 });
 
 describe("findWorkspaceRootSync", () => {
-	it("finds the root from a nested directory", () => {
-		assert.strictEqual(findWorkspaceRootSync(join(root, "packages", "good"), nodeOps), root);
-	});
-
 	it("a root whose package.json is `null` still resolves via pnpm-workspace.yaml", () => {
-		// The shared fixture's root manifest is VALID, so asserting against it here
-		// would only re-test pnpm marker discovery and never create the hostile
-		// state this test is named for. Build the state explicitly.
-		const hostile = mkdtempSync(join(tmpdir(), "effected-workspaces-null-root-"));
-		try {
-			writeFileSync(join(hostile, "package.json"), "null", "utf8");
-			writeFileSync(join(hostile, "pnpm-workspace.yaml"), "packages:\n  - 'packages/*'\n", "utf8");
-			mkdirSync(join(hostile, "packages", "a"), { recursive: true });
-			writeFileSync(join(hostile, "packages", "a", "package.json"), JSON.stringify({ name: "@h/a", version: "1.0.0" }));
-
-			assert.strictEqual(findWorkspaceRootSync(join(hostile, "packages", "a"), nodeOps), hostile);
-			// And enumeration over that root still works, skipping the null root manifest.
-			assert.deepStrictEqual(
-				getWorkspacePackagesSync(hostile, nodeOps).map((pkg) => pkg.name),
-				["@h/a"],
-			);
-		} finally {
-			rmSync(hostile, { recursive: true, force: true });
-		}
+		// A VALID root manifest would only re-test pnpm marker discovery and never
+		// create the hostile state this test is named for. Build the state explicitly.
+		const ops = memOps({
+			"/hostile/package.json": "null",
+			"/hostile/pnpm-workspace.yaml": "packages:\n  - 'packages/*'\n",
+			"/hostile/packages/a/package.json": JSON.stringify({ name: "@h/a", version: "1.0.0" }),
+		});
+		assert.strictEqual(findWorkspaceRootSync("/hostile/packages/a", ops), "/hostile");
+		// And enumeration over that root still works, skipping the null root manifest.
+		assert.deepStrictEqual(
+			getWorkspacePackagesSync("/hostile", ops).map((pkg) => pkg.name),
+			["@h/a"],
+		);
 	});
 });
 
@@ -147,146 +124,98 @@ describe("findWorkspaceRootSync", () => {
 // same tree.
 //
 // A test that exercises only one entry point cannot catch that class of bug, so
-// this suite runs BOTH against the same real directory tree, at the depth
-// boundary, and asserts they agree.
+// this suite runs BOTH against ONE memfs volume — `handle.layer` for the Effect
+// side, `handle.sync` for the sync side — at the depth boundary, and asserts
+// they agree.
 
-/** `packages/**` with a package at exactly `depth` levels below `packages/`. */
-const treeOfDepth = (depth: number): string => {
-	const dir = mkdtempSync(join(tmpdir(), "effected-workspaces-depth-"));
-	writeFileSync(join(dir, "pnpm-workspace.yaml"), "packages:\n  - 'packages/**'\n", "utf8");
-	writeFileSync(join(dir, "package.json"), JSON.stringify({ name: "root", version: "0.0.0" }), "utf8");
-	// depth 1 => packages/a ; depth 2 => packages/n1/a ; depth 3 => packages/n1/n2/a
-	const segments = Array.from({ length: depth - 1 }, (_, i) => `n${i + 1}`);
-	const leaf = join(dir, "packages", ...segments, "deep");
-	mkdirSync(leaf, { recursive: true });
-	writeFileSync(join(leaf, "package.json"), JSON.stringify({ name: "@d/deep", version: "1.0.0" }), "utf8");
-	return dir;
+/** `packages/**` with a package at exactly `depth` levels below `packages/`, as ONE volume. */
+const treeOfDepth = (depth: number) => {
+	// depth 1 => packages/deep ; depth 2 => packages/n1/deep ; depth 3 => packages/n1/n2/deep
+	const segments = Array.from({ length: depth - 1 }, (_, i) => `n${i + 1}/`).join("");
+	return MemoryFileSystem.makeSync({
+		"/repo/pnpm-workspace.yaml": "packages:\n  - 'packages/**'\n",
+		"/repo/package.json": JSON.stringify({ name: "root", version: "0.0.0" }),
+		[`/repo/packages/${segments}deep/package.json`]: JSON.stringify({ name: "@d/deep", version: "1.0.0" }),
+	});
 };
 
-const Platform = Layer.mergeAll(NodeFileSystem.layer, NodePath.layer);
-
-/** The Effect enumerator over the SAME real directory, through the public discovery service. */
-const effectNames = (dir: string, maxDepth: number) =>
+/** The Effect enumerator over a handle's pinned volume, through the public discovery service. */
+const listPackagesOver = (handle: MemoryFileSystemHandle, options: { readonly maxDepth?: number } = {}) =>
 	Effect.gen(function* () {
 		const discovery = yield* WorkspaceDiscovery;
-		return (yield* discovery.listPackages()).map((pkg) => pkg.name);
+		return yield* discovery.listPackages();
 	}).pipe(
 		Effect.provide(
-			WorkspaceDiscovery.layer({ cwd: dir, maxDepth }).pipe(
+			WorkspaceDiscovery.layer({ cwd: "/repo", ...options }).pipe(
 				Layer.provide(WorkspaceRoot.layer),
-				Layer.provideMerge(Platform),
+				Layer.provideMerge(handle.layer),
 			),
 		),
 	);
+
+/** The Effect side's package names over the SAME volume the sync side reads. */
+const effectNames = (handle: MemoryFileSystemHandle, maxDepth: number) =>
+	listPackagesOver(handle, { maxDepth }).pipe(Effect.map((packages) => packages.map((pkg) => pkg.name)));
 
 describe("the sync hatch and the Effect enumerator agree at the depth boundary", () => {
 	it.effect("AT the cap, both find the deep package", () =>
 		Effect.gen(function* () {
 			// The leaf sits exactly `maxDepth` levels below `packages/`.
-			const dir = treeOfDepth(2);
-			try {
-				const sync = getWorkspacePackagesSync(dir, { ...nodeOps, maxDepth: 2 }).map((pkg) => pkg.name);
-				const eff = yield* effectNames(dir, 2);
-				assert.include(sync, "@d/deep");
-				assert.deepStrictEqual(sync.slice().sort(), eff.slice().sort());
-			} finally {
-				rmSync(dir, { recursive: true, force: true });
-			}
+			const handle = treeOfDepth(2);
+			const sync = getWorkspacePackagesSync("/repo", {
+				fileSystem: handle.sync,
+				path: nodePath.posix,
+				maxDepth: 2,
+			}).map((pkg) => pkg.name);
+			const eff = yield* effectNames(handle, 2);
+			assert.include(sync, "@d/deep");
+			assert.deepStrictEqual(sync.slice().sort(), eff.slice().sort());
 		}),
 	);
 
 	it.effect("BEYOND the cap, the sync hatch does NOT return a package the Effect path rejects", () =>
 		Effect.gen(function* () {
 			// The leaf sits one level past `maxDepth`.
-			const dir = treeOfDepth(3);
-			try {
-				const sync = getWorkspacePackagesSync(dir, { ...nodeOps, maxDepth: 2 }).map((pkg) => pkg.name);
-				// THE DRIFT: the old sync worklist accepted the child and then declined
-				// to descend, so `@d/deep` came back here while the Effect enumerator
-				// failed with depthExceeded on the identical tree.
-				assert.notInclude(sync, "@d/deep");
+			const handle = treeOfDepth(3);
+			const sync = getWorkspacePackagesSync("/repo", {
+				fileSystem: handle.sync,
+				path: nodePath.posix,
+				maxDepth: 2,
+			}).map((pkg) => pkg.name);
+			// THE DRIFT: the old sync worklist accepted the child and then declined
+			// to descend, so `@d/deep` came back here while the Effect enumerator
+			// failed with depthExceeded on the identical tree.
+			assert.notInclude(sync, "@d/deep");
+			// Positive control: the sync side did read the tree.
+			assert.include(sync, "root");
 
-				// The Effect path fails typed on the same input. That difference — fail
-				// vs truncate — is the ONE deliberate divergence: the sync hatch has no
-				// error channel. What must never differ is which packages are in scope.
-				const error = yield* Effect.flip(effectNames(dir, 2));
-				assert.instanceOf(error, WorkspacePatternError);
-				assert.strictEqual(error.kind, "depthExceeded");
-			} finally {
-				rmSync(dir, { recursive: true, force: true });
-			}
+			// The Effect path fails typed on the same input. That difference — fail
+			// vs truncate — is the ONE deliberate divergence: the sync hatch has no
+			// error channel. What must never differ is which packages are in scope.
+			const error = yield* Effect.flip(effectNames(handle, 2));
+			assert.instanceOf(error, WorkspacePatternError);
+			assert.strictEqual(error.kind, "depthExceeded");
 		}),
 	);
 
 	it("a maxDepth that is not a positive integer is a caller error, not a silent empty result", () => {
-		const dir = treeOfDepth(1);
-		try {
-			// NaN and 2.5 both slip past a bare `maxDepth < 1`, and a NaN bound then
-			// enumerates nothing — indistinguishable from a legitimately empty
-			// workspace. Same predicate as the enumerator's `Effect.die`.
-			assert.throws(() => getWorkspacePackagesSync(dir, { ...nodeOps, maxDepth: Number.NaN }), RangeError);
-			assert.throws(() => getWorkspacePackagesSync(dir, { ...nodeOps, maxDepth: 2.5 }), RangeError);
-			assert.throws(() => getWorkspacePackagesSync(dir, { ...nodeOps, maxDepth: 0 }), RangeError);
-		} finally {
-			rmSync(dir, { recursive: true, force: true });
-		}
+		const ops = { fileSystem: treeOfDepth(1).sync, path: nodePath.posix };
+		// NaN and 2.5 both slip past a bare `maxDepth < 1`, and a NaN bound then
+		// enumerates nothing — indistinguishable from a legitimately empty
+		// workspace. Same predicate as the enumerator's `Effect.die`.
+		assert.throws(() => getWorkspacePackagesSync("/repo", { ...ops, maxDepth: Number.NaN }), RangeError);
+		assert.throws(() => getWorkspacePackagesSync("/repo", { ...ops, maxDepth: 2.5 }), RangeError);
+		assert.throws(() => getWorkspacePackagesSync("/repo", { ...ops, maxDepth: 0 }), RangeError);
 	});
 });
 
 // ── consumer-supplied ops: no ambient Node dependency ───────────────────────
 //
-// A pure in-memory `SyncFileSystem` over a record of files. If `src/` still
-// reached for `node:fs` anywhere, these suites could not work: nothing below
-// exists on disk. The separator-normalization also serves the win32 suite,
-// whose `path.win32.join` produces backslashed paths over the same store.
-
-const fakeFs = (files: Readonly<Record<string, string>>): SyncFileSystem => {
-	const normalize = (p: string): string => p.replace(/\\/g, "/");
-	const dirs = new Set<string>();
-	for (const key of Object.keys(files)) {
-		let dir = key.slice(0, key.lastIndexOf("/"));
-		while (dir.length > 0 && !dirs.has(dir)) {
-			dirs.add(dir);
-			dir = dir.slice(0, dir.lastIndexOf("/"));
-		}
-	}
-	return {
-		exists: (p) => {
-			const n = normalize(p);
-			return Object.hasOwn(files, n) || dirs.has(n);
-		},
-		readFile: (p) => {
-			const hit = files[normalize(p)];
-			// A miss THROWS, per the consumer contract (readFileSync semantics);
-			// the hatch must degrade it to a skip, never propagate it.
-			if (hit === undefined) throw new Error(`ENOENT: no such file or directory, open '${p}'`);
-			return hit;
-		},
-		readDirectory: (p) => {
-			const n = normalize(p);
-			if (!dirs.has(n)) throw new Error(`ENOENT: no such file or directory, scandir '${p}'`);
-			const prefix = `${n}/`;
-			const entries = new Set<string>();
-			for (const candidate of [...Object.keys(files), ...dirs]) {
-				if (!candidate.startsWith(prefix)) continue;
-				const rest = candidate.slice(prefix.length);
-				const head = rest.includes("/") ? rest.slice(0, rest.indexOf("/")) : rest;
-				if (head.length > 0) entries.add(head);
-			}
-			return [...entries].sort();
-		},
-		// `statSync(p).isDirectory()` THROWS on a missing path; the fake mirrors
-		// the readable half only — a miss is `false` would be too kind, so throw.
-		isDirectory: (p) => {
-			const n = normalize(p);
-			if (!dirs.has(n) && !Object.hasOwn(files, n)) throw new Error(`ENOENT: no such file or directory, stat '${p}'`);
-			return dirs.has(n);
-		},
-	};
-};
+// Every suite below runs over a memfs volume. If `src/` still reached for
+// `node:fs` anywhere, these suites could not work: nothing below exists on disk.
 
 describe("getWorkspacePackagesSync over pure in-memory ops (no ambient Node fs)", () => {
-	const files: Record<string, string> = {
+	const ops = memOps({
 		"/repo/pnpm-workspace.yaml": "packages:\n  - 'packages/*'\n",
 		"/repo/package.json": JSON.stringify({ name: "root", version: "0.0.0", private: true }),
 		"/repo/packages/a/package.json": JSON.stringify({
@@ -295,8 +224,7 @@ describe("getWorkspacePackagesSync over pure in-memory ops (no ambient Node fs)"
 			scripts: { build: "tsc" },
 		}),
 		"/repo/packages/b/package.json": JSON.stringify({ name: "@mem/b", version: "3.0.0" }),
-	};
-	const ops: WorkspacesSyncOptions = { fileSystem: fakeFs(files), path: nodePath.posix };
+	});
 
 	it("enumerates the virtual workspace", () => {
 		const names = getWorkspacePackagesSync("/repo", ops).map((pkg) => pkg.name);
@@ -313,6 +241,65 @@ describe("getWorkspacePackagesSync over pure in-memory ops (no ambient Node fs)"
 	});
 });
 
+// ── stopAt: the nested-checkout layout ───────────────────────────────────
+//
+// Mirrors `WorkspacesStopAt.test.ts`: a plain single-package repository
+// checked out inside a directory that is itself a pnpm workspace root. With no
+// ceiling the ascent adopts the OUTER workspace (the control, proving the tree
+// resolves at all); with `stopAt: cwd` it must answer `null` instead.
+
+describe("findWorkspaceRootSync — stopAt over a nested checkout", () => {
+	const CWD = "/outer/checkout";
+	const files: Record<string, string> = {
+		"/outer/pnpm-workspace.yaml": "packages:\n  - 'pkgs/*'\n",
+		"/outer/package.json": JSON.stringify({ name: "outer-root", version: "0.0.0", private: true }),
+		"/outer/pkgs/other/package.json": JSON.stringify({ name: "other", version: "1.0.0" }),
+		"/outer/checkout/package.json": JSON.stringify({ name: "checkout", version: "1.0.0" }),
+	};
+	const ops = memOps(files);
+
+	afterEach(() => {
+		vi.restoreAllMocks();
+	});
+
+	it("control: with no ceiling the ascent adopts the outer workspace", () => {
+		assert.strictEqual(findWorkspaceRootSync(CWD, ops), "/outer");
+	});
+
+	it("stopAt: cwd refuses the enclosing workspace", () => {
+		assert.isNull(findWorkspaceRootSync(CWD, { ...ops, stopAt: CWD }));
+	});
+
+	it("the ceiling is inclusive — a ceiling that is itself the root resolves", () => {
+		assert.strictEqual(findWorkspaceRootSync(CWD, { ...ops, stopAt: "/outer" }), "/outer");
+	});
+
+	it("a checkout that is itself a root still resolves under stopAt: cwd", () => {
+		const selfRooted = memOps({ ...files, "/outer/checkout/pnpm-workspace.yaml": "packages: []\n" });
+		assert.strictEqual(findWorkspaceRootSync(CWD, { ...selfRooted, stopAt: CWD }), CWD);
+	});
+
+	it("an unnormalized ceiling is resolved before comparison, not string-matched raw", () => {
+		assert.isNull(findWorkspaceRootSync(CWD, { ...ops, stopAt: "/outer/checkout/./" }));
+	});
+
+	it("a relative ceiling resolves against the process cwd at lookup time", () => {
+		// Built BEFORE the cwd moves: the ceiling must be resolved when the call
+		// runs, not when the options object was assembled.
+		const bounded = { ...ops, stopAt: "checkout" };
+		vi.spyOn(process, "cwd").mockReturnValue("/outer");
+		assert.isNull(findWorkspaceRootSync(CWD, bounded));
+		// Discriminating control: the same relative ceiling under a cwd that makes
+		// it name a non-ancestor never matches, so the ascent is unbounded again.
+		vi.spyOn(process, "cwd").mockReturnValue("/elsewhere");
+		assert.strictEqual(findWorkspaceRootSync(CWD, bounded), "/outer");
+	});
+
+	it("a ceiling naming no ancestor never matches — the ascent runs to the filesystem root", () => {
+		assert.strictEqual(findWorkspaceRootSync(CWD, { ...ops, stopAt: "/unrelated" }), "/outer");
+	});
+});
+
 // ── exclusions: the gate is at ACCEPTANCE, never at descent ────────────────
 //
 // The sync hatch mirrors the async enumerator's exclusion handling, so it owes
@@ -322,14 +309,13 @@ describe("getWorkspacePackagesSync over pure in-memory ops (no ambient Node fs)"
 // on the exclusion instead would drop it silently.
 
 describe("getWorkspacePackagesSync — exclusions", () => {
-	const files: Record<string, string> = {
+	const ops = memOps({
 		"/repo/pnpm-workspace.yaml": "packages:\n  - 'packages/**'\n  - '!packages/private-*'\n",
 		"/repo/package.json": JSON.stringify({ name: "root", version: "0.0.0", private: true }),
 		"/repo/packages/alpha/package.json": JSON.stringify({ name: "@mem/alpha", version: "1.0.0" }),
 		"/repo/packages/private-thing/package.json": JSON.stringify({ name: "@mem/private", version: "1.0.0" }),
 		"/repo/packages/private-thing/nested/package.json": JSON.stringify({ name: "@mem/nested", version: "1.0.0" }),
-	};
-	const ops: WorkspacesSyncOptions = { fileSystem: fakeFs(files), path: nodePath.posix };
+	});
 
 	it("a leading-bang pattern excludes the package the includes matched", () => {
 		const names = getWorkspacePackagesSync("/repo", ops).map((pkg) => pkg.name);
@@ -346,18 +332,31 @@ describe("getWorkspacePackagesSync — exclusions", () => {
 // ── the consumer's path implementation is respected end to end ─────────────
 //
 // A win32-flavored `SyncPath` (drive-letter roots, backslash output) drives the
-// whole enumeration over the same in-memory store. Under the posix
+// whole enumeration. memfs is a POSIX volume, so a four-line shim maps each
+// win32 path the enumerator hands the port onto the volume (`C:\repo` →
+// `/C:/repo`); everything past the shim is the real memfs port. Under the posix
 // implementation these inputs cannot even ascend: `path.posix.dirname` of a
 // backslashed path is `"."` immediately — pinned below so the suite cannot
 // pass vacuously.
 
-describe("WorkspacesSync with a win32 SyncPath", () => {
-	const files: Record<string, string> = {
-		"C:/repo/pnpm-workspace.yaml": "packages:\n  - 'packages/*'\n",
-		"C:/repo/package.json": JSON.stringify({ name: "root", version: "0.0.0", private: true }),
-		"C:/repo/packages/a/package.json": JSON.stringify({ name: "@win/a", version: "1.0.0" }),
+/** A win32-path view of a POSIX port: backslashes become slashes, under `/`. */
+const win32Shim = (port: SyncFileSystem): SyncFileSystem => {
+	const posix = (p: string): string => `/${p.replace(/\\/g, "/")}`;
+	return {
+		exists: (p) => port.exists(posix(p)),
+		readFile: (p) => port.readFile(posix(p)),
+		readDirectory: (p) => port.readDirectory(posix(p)),
+		isDirectory: (p) => port.isDirectory(posix(p)),
 	};
-	const ops: WorkspacesSyncOptions = { fileSystem: fakeFs(files), path: nodePath.win32 };
+};
+
+describe("WorkspacesSync with a win32 SyncPath", () => {
+	const handle = MemoryFileSystem.makeSync({
+		"/C:/repo/pnpm-workspace.yaml": "packages:\n  - 'packages/*'\n",
+		"/C:/repo/package.json": JSON.stringify({ name: "root", version: "0.0.0", private: true }),
+		"/C:/repo/packages/a/package.json": JSON.stringify({ name: "@win/a", version: "1.0.0" }),
+	});
+	const ops: WorkspacesSyncOptions = { fileSystem: win32Shim(handle.sync), path: nodePath.win32 };
 
 	it("finds the root by ascending a drive-letter path", () => {
 		assert.strictEqual(findWorkspaceRootSync("C:\\repo\\packages\\a", ops), "C:\\repo");
@@ -391,6 +390,12 @@ describe("WorkspacesSync with a win32 SyncPath", () => {
 // including one whose package directories are SYMLINKS — the case where a
 // naive implementation trusting `Dirent.isDirectory()` silently drops packages,
 // because a dirent describes the link and not its target.
+//
+// This is the one suite left on the REAL disk, deliberately: it pins node's own
+// `readdirSync(p, { withFileTypes: true })` Dirent semantics over a real
+// symlink. memfs' sync port has no `withFileTypes` form (only its promises port
+// does), so serving the fast path from a volume would mean hand-writing the
+// very Dirent adapter this suite exists to check against node.
 describe("SyncFileSystem.readDirectoryWithTypes (optional fast path)", () => {
 	let root: string;
 
@@ -444,16 +449,28 @@ describe("SyncFileSystem.readDirectoryWithTypes (optional fast path)", () => {
 	});
 
 	it("a throwing fast path skips the directory rather than propagating", () => {
+		// No symlink or Dirent semantics needed here, so the tree is a memfs volume
+		// and the failure is node's own EACCES errno.
+		const handle = MemoryFileSystem.makeSync({
+			"/repo/package.json": `{ "name": "root", "version": "0.0.0", "private": true }`,
+			"/repo/pnpm-workspace.yaml": "packages:\n  - packages/*\n",
+			"/repo/packages/a/package.json": `{ "name": "@x/a", "version": "1.0.0" }`,
+		});
 		const throwing: SyncFileSystem = {
-			...slow,
-			readDirectoryWithTypes: () => {
-				throw new Error("EACCES");
+			...handle.sync,
+			readDirectoryWithTypes: (p) => {
+				throw MemoryFileSystem.errno("EACCES", "scandir", p);
 			},
 		};
+		// Positive control: without the throwing fast path the member IS found.
+		assert.include(
+			getWorkspacePackagesSync("/repo", { fileSystem: handle.sync, path: nodePath.posix }).map((pkg) => pkg.name),
+			"@x/a",
+		);
 		// The whole wildcard base is unreadable, so no wildcard member survives —
 		// but the root package still resolves and nothing escapes.
 		assert.deepStrictEqual(
-			getWorkspacePackagesSync(root, { fileSystem: throwing, path: nodePath }).map((pkg) => pkg.name),
+			getWorkspacePackagesSync("/repo", { fileSystem: throwing, path: nodePath.posix }).map((pkg) => pkg.name),
 			["root"],
 		);
 	});
@@ -476,7 +493,7 @@ describe("SyncFileSystem over a memfs volume", () => {
 
 	it.effect("enumerates a symlinked package directory, as the node binding does", () =>
 		Effect.gen(function* () {
-			const { volume } = yield* MemoryFileSystem.makeInspectableWith(seed);
+			const { volume } = yield* MemoryFileSystem.makeHandle(seed);
 			const fileSystem = MemoryFileSystem.syncFileSystem(volume);
 
 			const found = getWorkspacePackagesSync("/repo", { fileSystem, path: nodePath.posix })
@@ -491,7 +508,7 @@ describe("SyncFileSystem over a memfs volume", () => {
 
 	it.effect("resolves the workspace root through a symlinked directory", () =>
 		Effect.gen(function* () {
-			const { volume } = yield* MemoryFileSystem.makeInspectableWith(seed);
+			const { volume } = yield* MemoryFileSystem.makeHandle(seed);
 			const fileSystem = MemoryFileSystem.syncFileSystem(volume);
 			assert.strictEqual(findWorkspaceRootSync("/repo/packages/b", { fileSystem, path: nodePath.posix }), "/repo");
 		}),
@@ -516,7 +533,7 @@ describe("getWorkspacePackagesSync — version-less manifests and skip reporting
 
 	it.effect("a version-less root AND member are returned, root first, with `version` absent", () =>
 		Effect.gen(function* () {
-			const { volume } = yield* MemoryFileSystem.makeInspectableWith(seed);
+			const { volume } = yield* MemoryFileSystem.makeHandle(seed);
 			const fileSystem = MemoryFileSystem.syncFileSystem(volume);
 			const packages = getWorkspacePackagesSync("/repo", { fileSystem, path: nodePath.posix });
 			assert.deepStrictEqual(
@@ -533,7 +550,7 @@ describe("getWorkspacePackagesSync — version-less manifests and skip reporting
 
 	it.effect("every skipped manifest is reported with its path and kind through `onSkip`", () =>
 		Effect.gen(function* () {
-			const { volume } = yield* MemoryFileSystem.makeInspectableWith(seed);
+			const { volume } = yield* MemoryFileSystem.makeHandle(seed);
 			const fileSystem = MemoryFileSystem.syncFileSystem(volume);
 			const skipped: Array<{ readonly path: string; readonly kind: string; readonly root: string }> = [];
 			getWorkspacePackagesSync("/repo", {
@@ -557,16 +574,16 @@ describe("getWorkspacePackagesSync — version-less manifests and skip reporting
 
 	it.effect("a throwing `readFile` is reported as a `read` skip carrying the thrown cause", () =>
 		Effect.gen(function* () {
-			const { volume } = yield* MemoryFileSystem.makeInspectableWith(seed);
-			const base = MemoryFileSystem.syncFileSystem(volume);
-			const boom = new Error("EACCES");
-			const fileSystem: SyncFileSystem = {
-				...base,
-				readFile: (p) => {
-					if (p === "/repo/packages/versioned/package.json") throw boom;
-					return base.readFile(p);
+			const handle = yield* MemoryFileSystem.makeHandle(seed);
+			const boom = MemoryFileSystem.errno("EACCES", "open", "/repo/packages/versioned/package.json");
+			const { sync: fileSystem } = handle.withFaults({
+				sync: {
+					readFile: (p) => {
+						if (p === "/repo/packages/versioned/package.json") throw boom;
+						return undefined; // every other path delegates to the volume
+					},
 				},
-			};
+			});
 			const skipped: Array<{ readonly path: string; readonly kind: string; readonly cause: unknown }> = [];
 			const names = getWorkspacePackagesSync("/repo", {
 				fileSystem,
@@ -582,7 +599,7 @@ describe("getWorkspacePackagesSync — version-less manifests and skip reporting
 
 	it.effect("a skipped ROOT manifest is reported too, not silently dropped", () =>
 		Effect.gen(function* () {
-			const { volume } = yield* MemoryFileSystem.makeInspectableWith({
+			const { volume } = yield* MemoryFileSystem.makeHandle({
 				...seed,
 				"/repo/package.json": "null",
 			});
@@ -600,7 +617,7 @@ describe("getWorkspacePackagesSync — version-less manifests and skip reporting
 
 	it.effect("a version that is PRESENT but EMPTY is skipped as invalidShape, never admitted", () =>
 		Effect.gen(function* () {
-			const { volume } = yield* MemoryFileSystem.makeInspectableWith({
+			const { volume } = yield* MemoryFileSystem.makeHandle({
 				...seed,
 				"/repo/packages/empty/package.json": `{ "name": "@x/empty", "version": "" }`,
 			});
@@ -626,7 +643,7 @@ describe("getWorkspacePackagesSync — version-less manifests and skip reporting
 
 	it.effect("every skip carries the cause the Effect surface fails with; only missingName has none", () =>
 		Effect.gen(function* () {
-			const { volume } = yield* MemoryFileSystem.makeInspectableWith({
+			const { volume } = yield* MemoryFileSystem.makeHandle({
 				...seed,
 				"/repo/packages/empty/package.json": `{ "name": "@x/empty", "version": "" }`,
 			});
@@ -656,7 +673,7 @@ describe("getWorkspacePackagesSync — version-less manifests and skip reporting
 
 	it.effect("without `onSkip` the call stays total and returns the same members", () =>
 		Effect.gen(function* () {
-			const { volume } = yield* MemoryFileSystem.makeInspectableWith(seed);
+			const { volume } = yield* MemoryFileSystem.makeHandle(seed);
 			const fileSystem = MemoryFileSystem.syncFileSystem(volume);
 			const names = getWorkspacePackagesSync("/repo", { fileSystem, path: nodePath.posix }).map((pkg) => pkg.name);
 			assert.deepStrictEqual(names, ["root", "@x/bare", "@x/versioned"]);
@@ -667,8 +684,8 @@ describe("getWorkspacePackagesSync — version-less manifests and skip reporting
 // ── the two surfaces agree about a version-less tree (#605) ────────────────
 
 describe("the sync hatch and the Effect enumerator agree about `version`", () => {
-	// One seed, read both ways: the Effect enumerator over the volume's own
-	// `FileSystem`, the sync facade over `syncFileSystem` of the same volume.
+	// One seed, read both ways: the Effect enumerator over the handle's pinned
+	// `layer`, the sync facade over the same handle's `sync` port.
 	// Anything the two disagree about here is a real divergence, not a fixture
 	// difference — which is what a separate real-directory fixture could not
 	// prove.
@@ -686,17 +703,9 @@ describe("the sync hatch and the Effect enumerator agree about `version`", () =>
 
 	it.effect("identical (name, hasOwn version, version) tuples, and one skip vocabulary", () =>
 		Effect.gen(function* () {
-			const { fileSystem, volume } = yield* MemoryFileSystem.makeInspectableWith(paritySeed);
-			const sync = MemoryFileSystem.syncFileSystem(volume);
-			const platform = Layer.mergeAll(Layer.succeed(FileSystem.FileSystem, fileSystem), Path.layer);
-			const roots = WorkspaceRoot.layer.pipe(Layer.provide(platform));
-			const discovery = WorkspaceDiscovery.layer({ cwd: "/repo" }).pipe(Layer.provide(roots), Layer.provide(platform));
-
-			const asyncPackages = yield* Effect.gen(function* () {
-				const service = yield* WorkspaceDiscovery;
-				return yield* service.listPackages();
-			}).pipe(Effect.provide(Layer.mergeAll(discovery, roots).pipe(Layer.provideMerge(platform))));
-			const syncPackages = getWorkspacePackagesSync("/repo", { fileSystem: sync, path: nodePath.posix });
+			const handle = yield* MemoryFileSystem.makeHandle(paritySeed);
+			const asyncPackages = yield* listPackagesOver(handle);
+			const syncPackages = getWorkspacePackagesSync("/repo", { fileSystem: handle.sync, path: nodePath.posix });
 
 			// The positive control: both actually found the tree. Comparing two
 			// empty arrays would pass under any implementation.
@@ -708,31 +717,14 @@ describe("the sync hatch and the Effect enumerator agree about `version`", () =>
 
 			// And the skip vocabulary: a nameless member fails the Effect surface
 			// with the kind the sync facade reports it under.
-			const { fileSystem: namelessFs, volume: namelessVolume } = yield* MemoryFileSystem.makeInspectableWith({
+			const nameless = yield* MemoryFileSystem.makeHandle({
 				...paritySeed,
 				"/repo/packages/nameless/package.json": `{ "version": "1.0.0" }`,
 			});
-			const namelessPlatform = Layer.mergeAll(Layer.succeed(FileSystem.FileSystem, namelessFs), Path.layer);
-			const namelessRoots = WorkspaceRoot.layer.pipe(Layer.provide(namelessPlatform));
-			const failure = yield* Effect.flip(
-				Effect.gen(function* () {
-					const service = yield* WorkspaceDiscovery;
-					return yield* service.listPackages();
-				}).pipe(
-					Effect.provide(
-						Layer.mergeAll(
-							WorkspaceDiscovery.layer({ cwd: "/repo" }).pipe(
-								Layer.provide(namelessRoots),
-								Layer.provide(namelessPlatform),
-							),
-							namelessRoots,
-						).pipe(Layer.provideMerge(namelessPlatform)),
-					),
-				),
-			);
+			const failure = yield* Effect.flip(listPackagesOver(nameless));
 			const skipped: Array<{ readonly path: string; readonly kind: string }> = [];
 			getWorkspacePackagesSync("/repo", {
-				fileSystem: MemoryFileSystem.syncFileSystem(namelessVolume),
+				fileSystem: nameless.sync,
 				path: nodePath.posix,
 				onSkip: (skip) => skipped.push({ path: skip.path, kind: skip.kind }),
 			});

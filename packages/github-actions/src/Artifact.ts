@@ -1,15 +1,19 @@
-import { createHash } from "node:crypto";
 import { BlobClient, BlockBlobClient } from "@azure/storage-blob";
-import { Context, Effect, FileSystem, Layer, Option, Path, Result, Schema, Stream } from "effect";
-import { HttpClient } from "effect/unstable/http";
-import { ChildProcess, ChildProcessSpawner } from "effect/unstable/process";
+import { Context, DateTime, Duration, Effect, FileSystem, Layer, Option, Path, Result, Schema } from "effect";
+import { HttpClient } from "effect/http";
+import type { ChildProcess } from "effect/process";
+import { ChildProcessSpawner } from "effect/process";
 import { ActionEnvironment } from "./ActionEnvironment.js";
 import type { FileBlobTransfer } from "./BlobTransfer.js";
 import { BlobTransferError } from "./BlobTransfer.js";
 import type { BackendIds } from "./internal/actionsResults.js";
-import { resultsBackend } from "./internal/actionsResults.js";
-import type { TwirpFailure } from "./internal/twirp.js";
-import { CONFLICT, field, isOk, stringField, twirpCall } from "./internal/twirp.js";
+import { misconfiguredDetail, resultsBackend } from "./internal/actionsResults.js";
+import { unzipCommand, zipCommand, zipManifest } from "./internal/archiveCommands.js";
+import { digestFileHex } from "./internal/digest.js";
+import { isWindowsRunner } from "./internal/runner.js";
+import { spawnOnce } from "./internal/spawn.js";
+import { CONFLICT, field, isOk, stringField, twirpCall, twirpFailureFields } from "./internal/twirp.js";
+import { unstubbed } from "./internal/unstubbed.js";
 
 /**
  * Raised when an artifact cannot be uploaded, listed, downloaded or deleted.
@@ -77,6 +81,7 @@ export class ArtifactError extends Schema.TaggedError<ArtifactError>()("Artifact
 export interface ArtifactItem {
 	/** The database id, which is what `download` takes. */
 	readonly id: number;
+	/** The name the artifact was uploaded under. */
 	readonly name: string;
 	/** The size of the stored zip, in bytes. */
 	readonly size: number;
@@ -104,8 +109,9 @@ export interface UploadOptions {
 	 * The zlib level, 0–9, defaulting to 6 as `@actions/artifact` does.
 	 *
 	 * @remarks
-	 * Out-of-range values are clamped. No effect on Windows, where
-	 * `Compress-Archive` has no numeric equivalent.
+	 * Out-of-range values are clamped. On Windows the level maps onto .NET's
+	 * `CompressionLevel`: `0` is `NoCompression`, `1..3` `Fastest`, `4..8`
+	 * `Optimal`, `9` `SmallestSize`.
 	 */
 	readonly compressionLevel?: number | undefined;
 }
@@ -116,6 +122,7 @@ export interface UploadOptions {
  * @public
  */
 export interface UploadResult {
+	/** The new artifact's database id, which `download` takes. */
 	readonly id: number;
 	/** The size of the uploaded zip, in bytes. */
 	readonly size: number;
@@ -142,16 +149,18 @@ export interface DownloadResult {
 }
 
 /**
- * A reference to an artifact that is no longer there.
+ * The id of an artifact that `delete` removed.
  *
  * @public
  */
 export interface ArtifactRef {
+	/** The deleted artifact's database id. */
 	readonly id: number;
 }
 
 /**
- * The {@link Artifact} service shape.
+ * The members of the {@link Artifact} service: upload, list, get, download and
+ * delete, each failing with {@link ArtifactError}.
  *
  * @public
  */
@@ -223,21 +232,6 @@ const azure: FileBlobTransfer = {
 		}).pipe(Effect.asVoid),
 };
 
-const fromTwirp = (failure: TwirpFailure, artifact: string): ArtifactError =>
-	failure.kind === "status"
-		? new ArtifactError({
-				reason: "refused",
-				artifact,
-				detail: failure.method,
-				...(failure.status === undefined ? {} : { status: failure.status }),
-			})
-		: new ArtifactError({
-				reason: "unreachable",
-				artifact,
-				detail: `${failure.method} did not answer with a Twirp body`,
-				...(failure.cause === undefined ? {} : { cause: failure.cause }),
-			});
-
 /** One row of a `ListArtifacts` answer, read under either field spelling. */
 const toItem = (row: unknown): ArtifactItem => {
 	const createdAt = stringField(row, "createdAt");
@@ -267,9 +261,7 @@ const make = (
 		const spawner = yield* ChildProcessSpawner.ChildProcessSpawner;
 		// Resolved once, at construction, so every member's `R` is `never`.
 		const env = yield* ActionEnvironment;
-		const windows = yield* Effect.map(env.getOptional("RUNNER_OS"), (found) =>
-			Option.match(found, { onNone: () => false, onSome: (os) => os.toLowerCase() === "windows" }),
-		);
+		const windows = yield* isWindowsRunner(env);
 
 		const backend = (artifact: string) =>
 			resultsBackend(env).pipe(
@@ -278,7 +270,7 @@ const make = (
 						new ArtifactError({
 							reason: "misconfigured",
 							artifact,
-							detail: `${name} is not set — the artifact service is only reachable from a \`uses:\` step, never from \`run:\``,
+							detail: misconfiguredDetail(name, "artifact service"),
 						}),
 				),
 				Effect.flatMap((resolved) =>
@@ -299,14 +291,14 @@ const make = (
 		const call = (method: string, body: (ids: BackendIds) => Record<string, unknown>, artifact: string) =>
 			Effect.gen(function* () {
 				const { baseUrl, ids, token } = yield* backend(artifact);
-				return yield* twirpCall<unknown>({
+				return yield* twirpCall({
 					http,
 					baseUrl,
 					service: SERVICE,
 					token,
 					method,
 					body: { ...ids, ...body(ids) },
-				}).pipe(Effect.mapError((failure) => fromTwirp(failure, artifact)));
+				}).pipe(Effect.mapError((failure) => new ArtifactError({ ...twirpFailureFields(failure), artifact })));
 			});
 
 		const listAll = (artifact: string) =>
@@ -321,15 +313,12 @@ const make = (
 				},
 			);
 
-		/** Run an archiving command, keeping its stderr. */
+		/** Run an archiving command ONCE (`internal/spawn.ts`), keeping its stderr. */
 		const archive = (command: ChildProcess.Command, artifact: string) =>
 			Effect.gen(function* () {
-				const output = yield* spawner
-					.string(command, { includeStderr: true })
-					.pipe(Effect.mapError((cause) => new ArtifactError({ reason: "archiveFailed", artifact, cause })));
-				const code = yield* spawner
-					.exitCode(command)
-					.pipe(Effect.mapError((cause) => new ArtifactError({ reason: "archiveFailed", artifact, cause })));
+				const { output, code } = yield* spawnOnce(spawner, command).pipe(
+					Effect.mapError((cause) => new ArtifactError({ reason: "archiveFailed", artifact, cause })),
+				);
 				if (code !== 0) {
 					return yield* Effect.fail(new ArtifactError({ reason: "archiveFailed", artifact, stderr: output.trim() }));
 				}
@@ -356,62 +345,53 @@ const make = (
 		 * roughly seven gigabytes of memory for everything.
 		 */
 		const digestOf = (file: string, artifact: string) =>
-			Effect.gen(function* () {
-				const accumulator = createHash("sha256");
-				yield* Stream.runForEach(fs.stream(file), (chunk) =>
-					Effect.sync(() => {
-						accumulator.update(chunk);
-					}),
-				).pipe(Effect.mapError((cause) => new ArtifactError({ reason: "archiveFailed", artifact, cause })));
-				return accumulator.digest("hex");
-			});
+			digestFileHex(fs, file, "sha256").pipe(
+				Effect.mapError((cause) => new ArtifactError({ reason: "archiveFailed", artifact, cause })),
+			);
 
 		const moved = (artifact: string) =>
 			Effect.mapError((cause: BlobTransferError) => new ArtifactError({ reason: "transferFailed", artifact, cause }));
 
-		const zip = (files: ReadonlyArray<string>, root: string, destination: string, level: number, artifact: string) => {
-			// Stored relative to `rootDirectory`: `zip` and `Compress-Archive` both
-			// record the paths exactly as given, so absolute inputs would extract
-			// into a tree named after the runner that produced them.
-			const relative = files.map((file) => path.relative(root, file));
-			return windows
-				? archive(
-						ChildProcess.make(
-							"pwsh",
-							[
-								"-NoProfile",
-								"-NonInteractive",
-								"-Command",
-								`Compress-Archive -Path ${relative.map((file) => `'${file.replaceAll("'", "''")}'`).join(",")} -DestinationPath '${destination.replaceAll("'", "''")}' -Force`,
-							],
-							{ cwd: root },
-						),
-						artifact,
-					)
-				: archive(
-						ChildProcess.make(
-							"zip",
-							[`-${Math.min(9, Math.max(0, Math.trunc(level)))}`, "-qr", destination, ...relative],
-							{
-								cwd: root,
-							},
-						),
-						artifact,
+		const zip = (files: ReadonlyArray<string>, root: string, destination: string, level: number, artifact: string) =>
+			// Stored relative to `rootDirectory`: `zip` records the paths exactly
+			// as given, and the Windows script states each entry name explicitly
+			// from the same relative path, so the two archives have one structure
+			// — and absolute inputs would extract into a tree named after the
+			// runner that produced them.
+			Effect.gen(function* () {
+				const relative = files.map((file) => path.relative(root, file));
+				// The Windows list travels one path per line (`internal/archiveCommands.ts`
+				// says why), so a path holding a line break cannot be represented.
+				// Rejected on every platform: the same upload must not succeed on one
+				// runner and fail on another.
+				const unrepresentable = relative.find((file) => file.includes("\n") || file.includes("\r"));
+				if (unrepresentable !== undefined) {
+					return yield* Effect.fail(
+						new ArtifactError({
+							reason: "invalidOptions",
+							artifact,
+							detail: `a file path may not contain a line break: ${JSON.stringify(unrepresentable)}`,
+						}),
 					);
-		};
+				}
+				// Beside the archive inside the scratch directory, so `scratch`'s
+				// release removes it with the zip. `writeFileString` is UTF-8 with no
+				// BOM, which is what `File.ReadAllLines` needs to read the first path
+				// intact.
+				const manifest = path.join(path.dirname(destination), "artifact.manifest");
+				if (windows) {
+					yield* fs
+						.writeFileString(manifest, zipManifest(relative))
+						.pipe(Effect.mapError((cause) => new ArtifactError({ reason: "archiveFailed", artifact, cause })));
+				}
+				yield* archive(zipCommand({ windows, root, files: relative, manifest, destination, level }), artifact);
+			});
 
+		// One spelling with ToolInstaller.extractZip (`internal/archiveCommands.ts`):
+		// the Windows half must use the overwrite overload, or a download into a
+		// non-empty path fails with an empty stderr.
 		const unzip = (source: string, destination: string, artifact: string) =>
-			windows
-				? archive(
-						ChildProcess.make("pwsh", [
-							"-NoProfile",
-							"-NonInteractive",
-							"-Command",
-							`Add-Type -AssemblyName System.IO.Compression.FileSystem; [System.IO.Compression.ZipFile]::ExtractToDirectory('${source.replaceAll("'", "''")}', '${destination.replaceAll("'", "''")}')`,
-						]),
-						artifact,
-					)
-				: archive(ChildProcess.make("unzip", ["-oq", source, "-d", destination]), artifact);
+			archive(unzipCommand({ windows, source, destination }), artifact);
 
 		return {
 			upload: Effect.fn("Artifact.upload")(function* (
@@ -473,15 +453,18 @@ const make = (
 							.stat(packed)
 							.pipe(Effect.mapError((cause) => new ArtifactError({ reason: "archiveFailed", artifact: name, cause })));
 						const digest = yield* digestOf(packed, name);
+						// From `Clock`, so `TestClock` drives the expiry.
+						const expiresAt =
+							options?.retentionDays === undefined
+								? undefined
+								: DateTime.formatIso(DateTime.addDuration(yield* DateTime.now, Duration.days(options.retentionDays)));
 						const finalized = yield* call(
 							"FinalizeArtifact",
 							() => ({
 								name,
 								size: String(size.size),
 								hash: `sha256:${digest}`,
-								...(options?.retentionDays === undefined
-									? {}
-									: { expiresAt: new Date(Date.now() + options.retentionDays * 86_400_000).toISOString() }),
+								...(expiresAt === undefined ? {} : { expiresAt }),
 							}),
 							name,
 						);
@@ -574,9 +557,7 @@ const make = (
 		} satisfies ArtifactShape;
 	});
 
-const unimplemented = (member: string): never => {
-	throw new Error(`Artifact.makeTest: ${member}() was called but not stubbed — pass a \`${member}\` override.`);
-};
+const dies = unstubbed("Artifact.makeTest");
 
 /**
  * Upload, list, download and delete GitHub Actions artifacts.
@@ -592,14 +573,10 @@ const unimplemented = (member: string): never => {
  * third thing that can be absent, and it is reported as `misconfigured` for the
  * same reason.
  *
- * **This surface is provisional.** Unlike every other service here it was
- * ported without a call site to shape it against, so it keeps the source's
- * shape rather than a narrower one invented from nothing. The first consumer to
- * adopt it is the one whose feedback reshapes it — the members lost their
- * `Artifact` prefix (`artifact.uploadArtifact(...)` stutters) and the
- * cross-run `findBy` lookup is **not** ported, because every path through it in
- * the source is a typed "not implemented" failure. Adding it later is additive;
- * shipping a parameter that has never had behavior is not.
+ * **This surface is provisional.** It has not yet been shaped by a real call
+ * site, so it may be reworked once a consumer adopts it. It covers the current
+ * run only: there is no cross-run lookup, and adding one later would be
+ * additive.
  *
  * @example
  * ```ts
@@ -652,11 +629,11 @@ export class Artifact extends Context.Service<Artifact, ArtifactShape>()("@effec
 
 	/** A test double. Unstubbed members die rather than reporting an empty run. */
 	static readonly makeTest = (overrides: Partial<ArtifactShape> = {}): ArtifactShape => ({
-		upload: () => Effect.sync(() => unimplemented("upload")),
-		list: () => Effect.sync(() => unimplemented("list")),
-		get: () => Effect.sync(() => unimplemented("get")),
-		download: () => Effect.sync(() => unimplemented("download")),
-		delete: () => Effect.sync(() => unimplemented("delete")),
+		upload: () => dies("upload"),
+		list: () => dies("list"),
+		get: () => dies("get"),
+		download: () => dies("download"),
+		delete: () => dies("delete"),
 		...overrides,
 	});
 

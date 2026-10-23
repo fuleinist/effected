@@ -87,8 +87,7 @@ export class SchemaGateError extends Schema.TaggedError<SchemaGateError>()("Sche
  *   any write. A target with no `version`, or with a prerelease label, is a
  *   document that replaces its predecessor in place and is rewritten as
  *   before.
- * - `"allow"` — classify and report only, never refuse: the pre-guard
- *   behaviour. Also the sanctioned REPAIR path for a published file whose
+ * - `"allow"` — classify and report only, never refuse. Also the sanctioned REPAIR path for a published file whose
  *   text no longer parses — `SchemaFile` classifies unparseable text as
  *   `"contract"` so it stays regenerable, and under the default that
  *   classification is refused.
@@ -304,18 +303,21 @@ const gate = (
 
 /**
  * The emit pipeline over a target manifest: generate, lint, validate, gate,
- * write — the loop every consumer of this package was writing by hand.
+ * and write each schema document.
  *
  * Requires `SchemaFile` and `SchemaValidator` in `R`; provide
- * `SchemaFile.layer` and `SchemaValidator.layer` (plus a platform
- * `FileSystem` / `Path`) at the edge. Findings come back as **values**, so
+ * `SchemaFile.layer` and an engine — `AjvValidator.layer` from
+ * `@effected/schemastore-cli`, which is what the `schemastore` command
+ * composes, or `SchemaValidator.noop` to skip validation — plus a platform
+ * `FileSystem` / `Path` at the edge. Findings come back as **values**, so
  * the package never chooses your log wording — but the gating decision,
  * which is the part that must not silently differ between consumers, has
  * one default and one override point.
  *
  * @example
  * ```ts
- * import { SchemaFile, SchemaPipeline, SchemaTarget, SchemaValidator } from "@effected/schemastore";
+ * import { SchemaFile, SchemaPipeline, SchemaTarget } from "@effected/schemastore";
+ * import { AjvValidator } from "@effected/schemastore-cli";
  * import { NodeServices } from "@effect/platform-node";
  * import { Effect, Layer, Schema } from "effect";
  *
@@ -328,7 +330,7 @@ const gate = (
  * ];
  *
  * const program = SchemaPipeline.run(targets).pipe(
- *   Effect.provide(Layer.mergeAll(SchemaFile.layer, SchemaValidator.layer)),
+ *   Effect.provide(Layer.mergeAll(SchemaFile.layer, AjvValidator.layer)),
  *   Effect.provide(NodeServices.layer),
  * );
  * ```
@@ -404,7 +406,11 @@ export class SchemaPipeline {
 
 			// Phase 1 — generate, gate and classify. Nothing is written here.
 			for (const target of targets) {
-				const document = yield* StoreDocument.fromSchema(target.schema, { $id: target.$id });
+				const document = yield* StoreDocument.fromSchema(target.schema, {
+					$id: target.$id,
+					...(target.jsonSchema !== undefined ? { jsonSchema: target.jsonSchema } : {}),
+					...(target.rootAnnotations !== undefined ? { rootAnnotations: target.rootAnnotations } : {}),
+				});
 				const findings = yield* gather(document, options);
 				yield* gate(target, findings, options);
 				const version = target.version;
@@ -479,7 +485,11 @@ export class SchemaPipeline {
 			const files = yield* SchemaFile;
 			const results: Array<PipelineCheckResult> = [];
 			for (const target of targets) {
-				const document = yield* StoreDocument.fromSchema(target.schema, { $id: target.$id });
+				const document = yield* StoreDocument.fromSchema(target.schema, {
+					$id: target.$id,
+					...(target.jsonSchema !== undefined ? { jsonSchema: target.jsonSchema } : {}),
+					...(target.rootAnnotations !== undefined ? { rootAnnotations: target.rootAnnotations } : {}),
+				});
 				const findings = yield* gather(document, options);
 				const { wouldWrite, change } = yield* files.check(target.path, document, options?.write);
 				results.push({

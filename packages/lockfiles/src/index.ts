@@ -9,12 +9,20 @@
  * `lockfileVersion` 3+; older formats fail typed rather than parsing into a
  * model that cannot answer resolution questions.
  *
+ * `PnpmEnvLockfile.packageManager` reads the package manager a
+ * `pnpm-lock.yaml` pins, with its recorded integrity, out of the env preamble
+ * document pnpm writes ahead of the lockfile, and
+ * `PnpmEnvLockfile.configDependencies` the config dependencies it records,
+ * each with its integrity.
+ *
  * Every entrypoint takes content as a string; this package performs no IO.
  *
  * @example
  * ```typescript
  * import { Lockfile } from "@effected/lockfiles";
  * import { Effect } from "effect";
+ *
+ * declare const content: string; // the text of a pnpm-lock.yaml
  *
  * const program = Effect.gen(function* () {
  *   const lockfile = yield* Lockfile.parse(content, { format: "pnpm" });
@@ -26,11 +34,14 @@
  */
 
 export { BunExtension } from "./BunExtension.js";
+export { ConfigDependencyLock } from "./ConfigDependencyLock.js";
 export { ImporterDependency } from "./ImporterDependency.js";
 export { Lockfile, LockfileFramingError, LockfileParseError } from "./Lockfile.js";
 export { LockfileFormat, filenameFor, filenamesFor, fromFilename } from "./LockfileFormat.js";
 export { LockfileImporter } from "./LockfileImporter.js";
 export { LockfileIntegrity, WorkspaceManifest } from "./LockfileIntegrity.js";
+export { PackageManagerLock } from "./PackageManagerLock.js";
+export { PnpmEnvLockfile, type PnpmEnvLockfileReaders } from "./PnpmEnvLockfile.js";
 export { type PnpmCatalogs, PnpmExtension } from "./PnpmExtension.js";
 export { ResolvedPackage } from "./ResolvedPackage.js";
 export { type UnsupportedLockfileVersion, isUnsupportedLockfileVersion } from "./UnsupportedLockfileVersion.js";

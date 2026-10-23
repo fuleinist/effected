@@ -2,14 +2,15 @@ import { Effect, Schema } from "effect";
 import { LockfileImporter } from "../LockfileImporter.js";
 import { PnpmExtension } from "../PnpmExtension.js";
 import { ResolvedPackage } from "../ResolvedPackage.js";
-import { selectPnpmDocument } from "./documents.js";
+import { splitPnpmStream } from "./documents.js";
 import type { LockfileFields, ParseFailure, WorkspaceEntry } from "./shared.js";
 import {
 	extractWorkspaceDeps,
 	framingFailure,
+	gatePnpmVersion,
 	importerDependencies,
 	peerDeclarations,
-	requireLockfileVersion,
+	splitNameVersion,
 	splitPeerSuffix,
 	toIntegrityHash,
 	validationFailure,
@@ -31,21 +32,6 @@ const PnpmImporter = Schema.Struct({
 	// exact evidence that lets a `link:<importer>/<publishDirectory>` edge name
 	// its importer.
 	publishDirectory: Schema.optionalKey(Schema.String),
-});
-
-/**
- * The version gate's own input: `lockfileVersion` and nothing else.
- *
- * The gate has to read the version *before* the shape decode, because the
- * shape it decodes against is the shape of a supported version. `importers` is
- * a required key here and a pre-v9 single-project lockfile has none — it
- * records its dependencies at the top level — so a shape-first order reports a
- * lockfile we reject for being too old as merely malformed instead.
- *
- * @internal
- */
-const PnpmVersionProbe = Schema.Struct({
-	lockfileVersion: Schema.Union([Schema.String, Schema.Number]),
 });
 
 const PnpmLockfileRaw = Schema.Struct({
@@ -105,10 +91,22 @@ type PnpmPackageEntry = NonNullable<PnpmLockfileRawType["packages"]>[string];
  *
  * `pnpm-lock.yaml` is a YAML *stream*, not a single document: a workspace
  * using `configDependencies` gets a config-dependencies preamble document
- * ahead of the lockfile. {@link selectPnpmDocument} locates the lockfile
- * deterministically (it is the last document); a stream carrying no lockfile
- * document fails through the typed framing channel rather than silently
- * reporting the preamble as an empty workspace.
+ * ahead of the lockfile. {@link splitPnpmStream} locates the lockfile
+ * deterministically (it is the last document); the preamble is never read as
+ * the lockfile.
+ *
+ * An empty main document after a preamble is **ambiguous**: pnpm 11 and 12
+ * write exactly those bytes both for a config-dependency-only workspace with
+ * no root `package.json` and for a workspace whose first install failed after
+ * its config dependencies were installed. The bytes cannot tell the two apart,
+ * so the parser does not decide: only when the caller asserts `configOnly`
+ * (it knows the root has no `package.json`) does the stream read as an empty
+ * lockfile — no packages, importers or workspace edges, versioned by the
+ * preamble's `lockfileVersion` after the preamble passes the same version
+ * gate. The preamble's own packages are config dependencies, not the
+ * workspace's, so none of them is reported. Without the assertion, and always
+ * when there is no preamble to vouch for the stream, an empty main document
+ * fails `noLockfileDocument`. The flag loosens nothing else.
  *
  * Workspace packages are keyed by importer *path* with version `"0.0.0"`;
  * `Lockfile#withImporterNames` is the explicit second stage that rewrites
@@ -116,9 +114,22 @@ type PnpmPackageEntry = NonNullable<PnpmLockfileRawType["packages"]>[string];
  *
  * @internal
  */
-export const parsePnpm = (content: string): Effect.Effect<LockfileFields, ParseFailure> =>
+export const parsePnpm = (content: string, configOnly: boolean): Effect.Effect<LockfileFields, ParseFailure> =>
 	Effect.gen(function* () {
-		const { document, documents } = yield* selectPnpmDocument(content);
+		const { preamble, main: document, documents } = yield* splitPnpmStream(content);
+		if (document === undefined) {
+			if (preamble === undefined || !configOnly) {
+				return yield* Effect.fail(framingFailure("noLockfileDocument", documents));
+			}
+			const lockfileVersion = yield* gatePnpmVersion(preamble);
+			return {
+				lockfileVersion,
+				packages: [],
+				workspaceDependencies: [],
+				importers: [],
+				extension: PnpmExtension.make({}),
+			};
+		}
 		// Format-version gate. Deliberately NOT a check for `snapshots:` being
 		// present or populated: a dependency-free v9 workspace legitimately has
 		// zero snapshot entries, so an emptiness guard would reject a valid
@@ -129,10 +140,7 @@ export const parsePnpm = (content: string): Effect.Effect<LockfileFields, ParseF
 		// lockfile carries no `importers` map, so decoding first would report a
 		// too-old lockfile as malformed — losing the distinction the
 		// `UnsupportedLockfileVersion` cause exists to carry.
-		const probe = yield* Schema.decodeUnknownEffect(PnpmVersionProbe)(document).pipe(
-			Effect.mapError(validationFailure),
-		);
-		yield* requireLockfileVersion("pnpm", probe.lockfileVersion);
+		yield* gatePnpmVersion(document);
 		const validated = yield* Schema.decodeUnknownEffect(PnpmLockfileRaw)(document).pipe(
 			Effect.mapError(validationFailure),
 		);
@@ -194,9 +202,9 @@ const resolveEdges = (
 			// in two spellings: the snapshot body keeps the readable `link:<path>`
 			// while the peer suffix carries a MANGLED identity
 			// (`react@packages+fakereact`) that appears nowhere as a key. Neither
-			// spelling composes, so the edge used to be dropped — and one layer up
-			// a dropped edge for a peer reads as an unsatisfied peer, turning a
-			// satisfied `link:` into a false positive.
+			// spelling composes, and a dropped edge for a peer reads one layer up as
+			// an unsatisfied peer, turning a satisfied `link:` into a false positive,
+			// so the edge is resolved explicitly.
 			//
 			// A snapshot's `link:` target is recorded relative to the workspace
 			// ROOT (importer sections record theirs relative to the importer), so
@@ -491,15 +499,13 @@ const toFields = (raw: PnpmLockfileRawType): Effect.Effect<LockfileFields, Parse
 			edges: ReadonlyArray<Readonly<Record<string, string>> | undefined>,
 		) =>
 			Effect.gen(function* () {
-				// Keys may carry a peer-resolution suffix — "fdir@6.5.0(picomatch@4.0.4)" —
-				// whose inner "@" would corrupt the split; splitPeerSuffix (the one
-				// stripping implementation, shared with the importer path) drops
-				// everything from the first "(".
-				const { plain: bare } = splitPeerSuffix(instanceId);
-				const atIndex = bare.lastIndexOf("@");
-				if (atIndex <= 0) return; // malformed "name@version" keys are skipped, never thrown on
-				const name = bare.slice(0, atIndex);
-				const version = bare.slice(atIndex + 1);
+				// Keys may carry a peer-resolution suffix — "fdir@6.5.0(picomatch@4.0.4)",
+				// "lib@file:vendor/lib(react@18.3.1)" — whose inner "@" would corrupt
+				// the split; splitPeerSuffix (the one stripping implementation, shared
+				// with the importer path) drops it first.
+				const split = splitNameVersion(splitPeerSuffix(instanceId).plain);
+				if (split === undefined) return; // malformed "name@version" keys are skipped, never thrown on
+				const { name, version } = split;
 				const integrity = yield* toIntegrityHash(meta?.resolution?.integrity);
 				emitted.add(instanceId);
 				packages.push(

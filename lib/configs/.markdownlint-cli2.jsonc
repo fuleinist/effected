@@ -88,11 +88,20 @@
 		"**/dist",
 		"**/CHANGELOG.md",
 		"**/.claude/plans",
+		"**/.claude/worktrees",
 		"**/docs/superpowers",
 		"**/__test__/**/fixtures/**",
 		"**/__fixtures__/**",
 		"**/skills/*/references/[0-9]*.md",
-		"**/.repos"
+		"**/.repos",
+		"plugin/builds/**"
 	],
-	"noBanner": true
+	"noBanner": true,
+	"overrides": [
+		{
+			"combine": "merge",
+			"config": { "MD025": false },
+			"filter": ["okf/**/index.md"]
+		}
+	]
 }

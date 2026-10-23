@@ -13,7 +13,7 @@
 // `"sideEffects": false` (asserted below) plus the module-per-file output the
 // builder emits. What it does prove is the part we control: no edge exists.
 
-import { readFileSync } from "node:fs";
+import { readFileSync, readdirSync } from "node:fs";
 import { dirname, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import { assert, describe, it } from "@effect/vitest";
@@ -98,10 +98,16 @@ const LIGHT_MODULES = [
 	"PackageManagerInstaller.ts",
 	"Secret.ts",
 	"ToolInstaller.ts",
-	"WorkflowCommand.ts",
 	"internal/actionsResults.ts",
+	"internal/archiveCommands.ts",
+	"internal/cacheService.ts",
+	"internal/digest.ts",
+	"internal/fsProbe.ts",
+	"internal/runner.ts",
+	"internal/runnerFile.ts",
+	"internal/spawn.ts",
 	"internal/twirp.ts",
-	"internal/sigv4.ts",
+	"internal/unstubbed.ts",
 ];
 
 describe("bundle reachability", () => {
@@ -147,24 +153,38 @@ describe("bundle reachability", () => {
 		// Exact edge sets, so a stray value import fails here rather than in a
 		// consumer's bundle — and so a stripper that blinded the walker shows up as
 		// an empty set rather than as a pass.
-		assert.deepStrictEqual([...reachableBareImports("ActionOutputs.ts")].sort(), ["effect"]);
+		assert.deepStrictEqual([...reachableBareImports("ActionOutputs.ts")].sort(), [
+			"@effected/github-commands",
+			"effect",
+		]);
 		assert.deepStrictEqual([...reachableBareImports("BlobEnvelope.ts")].sort(), ["effect"]);
-		// `node:crypto` is the sanctioned import, and it is here because core
-		// `Crypto` is RNG-only at beta.101 — no digest, no HMAC.
+		// `node:crypto` arrives through `internal/digest.ts`, its one sanctioned
+		// home: `CacheKey`'s digests are synchronous, and moving them onto core
+		// `Crypto.digest` would make them effectful with `Crypto` in `R`.
+		// `@effected/walker` is the file walker under `matchingFiles`; its own
+		// graph is `effect` and `@effected/glob`, both already here.
 		assert.deepStrictEqual([...reachableBareImports("CacheKey.ts")].sort(), [
 			"@effected/glob",
+			"@effected/walker",
 			"effect",
+			"effect/encoding/Hex",
 			"node:crypto",
 		]);
+		// SigV4 is `@effected/crypto`'s (HMAC over WebCrypto, digests through core
+		// `Crypto` in `R`), so the S3 store reaches no `node:crypto` at all.
 		assert.deepStrictEqual([...reachableBareImports("BlobStore.ts")].sort(), [
+			"@effected/crypto",
+			"@effected/github-commands",
 			"effect",
-			"effect/unstable/http",
-			"node:crypto",
+			"effect/http",
 		]);
-		// The workflow-command protocol imports NOTHING — not even `effect`. It is
-		// the one piece of this package a non-Actions consumer might legitimately
-		// want, and it stays a pure string renderer so it costs nothing to take.
-		assert.deepStrictEqual([...reachableBareImports("WorkflowCommand.ts")], []);
+		// The workflow-command protocol is not in this package any more: it lives in the pure
+		// `@effected/github-commands` (which imports nothing, not even `effect`), and this package takes it as a peer. The
+		// modules that write commands reach it as one bare import and nothing else.
+		assert.deepStrictEqual(
+			[...reachableBareImports("ActionLogger.ts")].filter((name) => name.startsWith("@effected/")),
+			["@effected/github-commands"],
+		);
 		// Same posture for the child-env helper: a pure value builder for core's
 		// CommandOptions contract, importing nothing — not even `effect`.
 		assert.deepStrictEqual([...reachableBareImports("ChildEnv.ts")], []);
@@ -174,8 +194,9 @@ describe("bundle reachability", () => {
 		// merely sets an output.
 		assert.deepStrictEqual([...reachableBareImports("Action.ts")].sort(), [
 			"@effect/platform-node",
+			"@effected/github-commands",
 			"effect",
-			"effect/unstable/http",
+			"effect/http",
 		]);
 	});
 
@@ -226,8 +247,10 @@ describe("bundle reachability", () => {
 		assert.deepStrictEqual([...reachableBareImports("PackageManagerInstaller.ts")].sort(), [
 			"@effected/npm",
 			"effect",
-			"effect/unstable/http",
-			"effect/unstable/process",
+			"effect/encoding/Base64",
+			"effect/encoding/Hex",
+			"effect/http",
+			"effect/process",
 			"node:crypto",
 		]);
 	});
@@ -237,12 +260,73 @@ describe("bundle reachability", () => {
 		// heavy modules share a Twirp client and a results-backend reader, and
 		// hoisting their fifteen lines of Azure into either one would put the
 		// client on the graph of everything that speaks the protocol.
-		assert.deepStrictEqual([...reachableBareImports("internal/actionsResults.ts")].sort(), ["effect"]);
+		assert.deepStrictEqual([...reachableBareImports("internal/actionsResults.ts")].sort(), ["@effected/jwt", "effect"]);
 		assert.deepStrictEqual(
 			[...reachableBareImports("internal/twirp.ts")].sort(),
-			["effect", "effect/unstable/http"],
+			["effect", "effect/http"],
 			"the Twirp client speaks HTTP and nothing heavier",
 		);
+		// The cache-entry choreography shared by `ActionCache` and
+		// `BlobStore.githubCache` owns the three RPCs and NOT the Azure transfer
+		// between them — that is the whole point of it being an internal.
+		assert.deepStrictEqual([...reachableBareImports("internal/cacheService.ts")].sort(), ["effect", "effect/http"]);
+		// `effect/process` is a type-only import there: the spawner
+		// arrives as a value from the caller.
+		assert.deepStrictEqual([...reachableBareImports("internal/spawn.ts")].sort(), ["effect"]);
+		// The command-line half of every archiver call: `ChildProcess.make` is a
+		// VALUE import there, and it is shared by `Artifact` (Azure) and
+		// `ToolInstaller` (light) — exactly the kind of helper that must never
+		// grow a heavier edge.
+		assert.deepStrictEqual([...reachableBareImports("internal/archiveCommands.ts")].sort(), ["effect/process"]);
+		assert.deepStrictEqual([...reachableBareImports("internal/digest.ts")].sort(), [
+			"effect",
+			"effect/encoding/Hex",
+			"node:crypto",
+		]);
+		assert.deepStrictEqual([...reachableBareImports("internal/fsProbe.ts")].sort(), ["effect"]);
+		assert.deepStrictEqual([...reachableBareImports("internal/runner.ts")].sort(), ["effect"]);
+		assert.deepStrictEqual([...reachableBareImports("internal/runnerFile.ts")], []);
+		assert.deepStrictEqual([...reachableBareImports("internal/unstubbed.ts")].sort(), ["effect"]);
+	});
+
+	it("the OIDC modules reach @effected/oidc and @effected/github's claims, not a JWT codec of their own", () => {
+		// The token issuer reads claims through `Oidc.decodeUnverified` and
+		// `ActionsOidcClaims`' wire codec; the identity adapter closes oidc's
+		// `IdentityToken`. The first assertion is the control: it proves the
+		// walker sees these modules' package edges at all.
+		assert.deepStrictEqual([...reachableBareImports("OidcTokenIssuer.ts")].sort(), [
+			"@effected/github",
+			"@effected/oidc",
+			"effect",
+			"effect/encoding/Base64Url",
+			"effect/http",
+			"effect/http/HttpClientResponse",
+		]);
+		for (const entry of ["ActionsIdentityToken.ts", "ActionsProvenance.ts"]) {
+			assert.isTrue(reachableBareImports(entry).has("@effected/oidc"), `${entry} does not reach @effected/oidc`);
+		}
+		// The identity contract comes from oidc now, never from sbom. The
+		// provenance adapter still reaches sbom (its `SlsaProvenance`), which is
+		// the control that the walker sees the sbom edge at all.
+		assert.isTrue(reachableBareImports("ActionsProvenance.ts").has("@effected/sbom"));
+		assert.isFalse(
+			reachableBareImports("ActionsIdentityToken.ts").has("@effected/sbom"),
+			"ActionsIdentityToken reaches @effected/sbom: the identity contract is oidc's",
+		);
+	});
+
+	it("node:crypto is imported by internal/digest.ts and nothing else", () => {
+		// The recorded verdicts of #767: `node:crypto` stays for the streamed
+		// `digestFile` (nothing in core or WebCrypto hashes a stream) and for the
+		// synchronous `CacheKey` digests (core `Crypto.digest` would make them
+		// effectful). HMAC moved to `@effected/crypto`. Every `createHash` lives
+		// in one module so that licence is auditable in one place.
+		const importers = (readdirSync(SRC, { recursive: true }) as Array<string>)
+			.filter((file) => file.endsWith(".ts"))
+			.filter((file) => runtimeSpecifiers(readFileSync(resolve(SRC, file), "utf8")).includes("node:crypto"))
+			.map((file) => file.split("\\").join("/"))
+			.sort();
+		assert.deepStrictEqual(importers, ["internal/digest.ts"]);
 	});
 
 	it("the entry point reaches Azure, and that is correct", () => {

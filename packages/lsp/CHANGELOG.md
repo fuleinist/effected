@@ -1,0 +1,115 @@
+# @effected/lsp
+
+## 0.5.0
+
+### Maintenance
+
+- Upgrades core Effect library dependencies to v4.0.6 [#1039][#1039]
+
+### Thanks
+
+Thanks to [@spencerbeggs](https://github.com/spencerbeggs) for their contributions!
+
+[#1039]: https://github.com/spencerbeggs/effected/pull/1039
+
+## 0.4.0
+
+### Maintenance
+
+- Upgrades core Effect library dependencies to v4.0.5 [#1019][#1019]
+
+### Thanks
+
+Thanks to [@spencerbeggs](https://github.com/spencerbeggs) for their contributions!
+
+[#1019]: https://github.com/spencerbeggs/effected/pull/1019
+
+## 0.3.0
+
+### Maintenance
+
+- Upgrades core Effect library dependencies to v4.0.4 [#1008][#1008]
+
+### Thanks
+
+Thanks to [@spencerbeggs](https://github.com/spencerbeggs) for their contributions!
+
+[#1008]: https://github.com/spencerbeggs/effected/pull/1008
+
+## 0.2.0
+
+### Dependencies
+
+| Dependency | Type | Action | From | To |
+| --- | --- | --- | --- | --- |
+| effect | peerDependency | updated | 4.0.2 | ^4.0.3 |
+
+- Effect 4.0.3 advance: the `effect` peer and catalog move from the exact `4.0.2` hold back to `^4.0.3`. No API change. [#1000][#1000]
+
+### Thanks
+
+Thanks to [@spencerbeggs](https://github.com/spencerbeggs) for their contributions!
+
+[#1000]: https://github.com/spencerbeggs/effected/pull/1000
+
+## 0.1.2
+
+### Bug Fixes
+
+- Republished with every `effect` and `@effect/*` version pinned exactly to `4.0.2`, both peer and dependency ranges.
+
+- On 2026-10-10, every `@effect/*` package published at `4.0.3`, but `effect@4.0.3` itself never reached npm (Effect-TS/effect#8994). The 4.0.3 packages require `effect ^4.0.3`. A caret range on any of them therefore resolves a 4.0.3 package next to `effect@4.0.2`, and the program crashes when it imports them. Exact pins keep a fresh install of any kit package on a matched set until `effect@4.0.3` is available. [#997][#997]
+
+### Thanks
+
+Thanks to [@spencerbeggs](https://github.com/spencerbeggs) for their contributions!
+
+[#997]: https://github.com/spencerbeggs/effected/pull/997
+
+## 0.1.1
+
+### Maintenance
+
+- Republished to re-verify the package's npm trusted publishing setup. No code changes. [#986][#986]
+
+### Thanks
+
+Thanks to [@spencerbeggs](https://github.com/spencerbeggs) for their contributions!
+
+[#986]: https://github.com/spencerbeggs/effected/pull/986
+
+## 0.1.0
+
+### Features
+
+#### Base-protocol framing
+
+- `LspFrame` encodes and decodes Content-Length framed Language Server Protocol messages: `LspFrame.encode`, `LspFrame.decode` and `LspFrame.decodeStream`. Malformed frames fail with `LspFrameError`.
+
+#### Stdio launcher for an Effect language server
+
+- `LspStdio` is the `main.ts` of an Effect language server over stdio:
+
+```ts
+NodeRuntime.runMain(LspStdio.launch(serve), { teardown: LspStdio.teardown(process) })
+```
+
+- `LspStdio.launch` reports a failed server on stderr. Without it, `runMain` writes the report to stdout, the protocol wire, even when the program provides `LogToStderr`.
+- `LspStdio.exitCode` applies the specification's rule to the `LspSessionEnd` your message loop returns: `exit` without a prior `shutdown` exits 1.
+- `LspStdio.teardown` ends the process on `exit`. Otherwise a server whose stdin is still open never exits on its own.
+
+#### Test clients for a language server bin
+
+- The `@effected/lsp/testing` entry exports:
+
+- `LspProbe.initialize`, which drives a server bin through `initialize`, `initialized`, `shutdown` and `exit` to prove it boots and exits cleanly.
+
+- `LspProcess.spawn`, which drives a server bin message by message: `send`, `readUntilResponse`, `stderrUntil` for a report that lands later, and `assertOnlyFrames`, which proves stdout carried nothing but well-formed frames.
+
+- Failures are reported as `LspTestFailure`. [#944][#944]
+
+### Thanks
+
+Thanks to [@spencerbeggs](https://github.com/spencerbeggs) for their contributions!
+
+[#944]: https://github.com/spencerbeggs/effected/pull/944

@@ -2,22 +2,25 @@ import { fileURLToPath } from "node:url";
 import { AgentPlugin, DefaultDiscoverStrategy } from "@vitest-agent/plugin";
 import { defineConfig } from "vitest/config";
 
-// Global coverage thresholds are enforced on CI and on an explicit `--coverage`
-// run, and nowhere else. They measure the whole repo, so a filtered run
-// (`vitest run <path>`, `--project <name>`) fails them by construction even when
-// every test it selected passed — which makes the exit code carry no information
-// on exactly the runs developers and agents make most often. Once "a subset run
-// always exits 1" is learned, the only remaining signal is the `Tests:` line,
-// where a zero-collection run reads as `0/0 passed` and looks like success.
-// Enforcing here restores the exit code as a real signal locally; `ci:test` runs
-// the whole suite with CI set, so nothing is weakened where it counts.
-const enforceCoverageThresholds = Boolean(process.env.CI) || process.argv.includes("--coverage");
-
 export default async () => {
 	// Scratchpad is a local-only probe venue: discovered as a normal project on
 	// dev machines, invisible to ci:test.
 	const strategy = new DefaultDiscoverStrategy().extend({
-		buildProject: async (input, inherited) => (input.name === "scratchpad" && process.env.CI ? null : inherited),
+		buildProject: async (input, inherited) => {
+			if (input.name === "scratchpad" && process.env.CI) return null;
+			// @effected/cli registers its own snapshot serializer the way a consumer does: through the config, by the
+			// module whose default export it is, never with expect.addSnapshotSerializer (effected#909).
+			if (input.name === "@effected/cli" && inherited !== null) {
+				return {
+					...inherited,
+					test: {
+						...inherited.test,
+						snapshotSerializers: [fileURLToPath(new URL("packages/cli/src/ui-testing-serializer.ts", import.meta.url))],
+					},
+				};
+			}
+			return inherited;
+		},
 	});
 	const { projects, tags } = await AgentPlugin.discover(strategy);
 	return defineConfig({
@@ -35,32 +38,27 @@ export default async () => {
 			tags,
 			pool: "forks",
 			// Resolved against THIS file, not the cwd. A bare relative path here
-			// resolves against wherever vitest was invoked, so running from inside
-			// a package died with `Failed to load url .../packages/<pkg>/vitest.setup.ts`
+			// resolves against wherever vitest was invoked, so a run from inside a
+			// package that points `--config` here dies with
+			// `Failed to load url .../packages/<pkg>/vitest.setup.ts`
 			// — an error that reads as a missing file you were meant to create,
 			// whose tempting "fix" is to create a per-package setup and fork it
 			// permanently (effected#455).
 			//
-			// Vitest walks up from the cwd to find this config and anchors its
-			// root here, so far less is cwd-sensitive than the folklore claims.
-			// Measured from inside `packages/lockfiles`:
-			//   vitest run                        -> the WHOLE repo, 12298/12298, exit 0
-			//   vitest run --project @effected/lockfiles -> 143/143, exit 0
-			//   vitest run --project @effected/walker    -> 75/75,  exit 0  (a DIFFERENT
-			//        package, so this is config-root anchoring, not the filter
-			//        happening to match the directory you stand in)
-			//   vitest run packages/lockfiles     -> 0/0 collected, exit 1
-			//   vitest run __test__               -> the WHOLE repo, exit 0
-			// Only POSITIONAL filters are cwd-sensitive, and not as a path: they
-			// are matched as a substring of each test file's path as rendered
-			// from the cwd. `packages/<pkg>` therefore matches from the root and
-			// matches nothing from inside that package, while `__test__` matches
-			// every project from anywhere. Prefer `--project <name>`.
+			// Vitest does NOT walk up to this config: run from inside a package it
+			// uses that directory as its root with no repo config. Measured from
+			// inside `packages/lockfiles`:
+			//   vitest run                               -> that package only, default reporter, exit 0
+			//   vitest run --project @effected/lockfiles -> "No projects matched the filter", exit 1
+			//   vitest run packages/lockfiles            -> "No test files found", exit 1
+			// From the repo root, `--project <name>` selects one project, and a
+			// POSITIONAL filter is a substring of each test file's path (`ckfiles`
+			// selects lockfiles). Run from the root; prefer `--project <name>`.
 			globalSetup: [fileURLToPath(new URL("vitest.setup.ts", import.meta.url))],
 			coverage: {
 				enabled: true,
 				provider: "v8",
-				...(enforceCoverageThresholds ? { thresholds: AgentPlugin.COVERAGE_LEVELS.basic.thresholds } : {}),
+				thresholds: AgentPlugin.COVERAGE_LEVELS.basic.thresholds,
 				exclude: ["scratchpad/**"],
 			},
 		},

@@ -1,5 +1,5 @@
-import { Context, Duration, Effect, Layer, Option, PlatformError, Schema } from "effect";
-import { ChildProcess, ChildProcessSpawner } from "effect/unstable/process";
+import { Config, Context, DateTime, Duration, Effect, Layer, Option, PlatformError, Result, Schema } from "effect";
+import { ChildProcess, ChildProcessSpawner } from "effect/process";
 import type { GitConfigScope, GitInvocation } from "./GitCommand.js";
 import { GitCommand } from "./GitCommand.js";
 import type { Collected } from "./internal/run.js";
@@ -9,18 +9,207 @@ import { runCollected } from "./internal/run.js";
 const GIT_TIMEOUT = Duration.seconds(30);
 
 /**
+ * The environment EVERY `Git` invocation is spawned with. A network-touching
+ * member adds one more key on top, resolved per call — see {@link sshEnv}.
+ *
+ * @remarks
+ * These live here, next to `classify` and `GIT_TIMEOUT`, because they exist
+ * to serve them — not on the pure `GitCommand` constructors, which carry no
+ * run-time context at all.
+ *
+ * - `LC_ALL=C` — `classify` matches untranslated stderr text (`"not a git
+ *   repository"`, `"unknown revision"`). A localized message silently
+ *   misclassifies into `GitCommandError` instead of the typed domain error.
+ * - `GIT_TERMINAL_PROMPT=0` — git's own credential prompt. Without it a
+ *   network-touching member against a credential-requiring remote blocks
+ *   until `GIT_TIMEOUT` fires.
+ * - `GIT_ASKPASS=""` — the askpass chain, which `GIT_TERMINAL_PROMPT=0` does
+ *   NOT close. Probed against git 2.55: an empty `GIT_ASKPASS` is a hard
+ *   stop, not a fall-through — it suppresses a configured `core.askPass` and
+ *   `SSH_ASKPASS` too, so this single key closes all three routes to a
+ *   blocking credential dialog.
+ * - `SSH_ASKPASS_REQUIRE="never"` — defense in depth for the ssh path. With
+ *   `BatchMode=yes` below, `ssh` never asks and never reaches an askpass
+ *   helper; this still matters for an ssh command {@link withBatchMode}
+ *   declines to touch.
+ */
+const BASE_ENV = {
+	LC_ALL: "C",
+	GIT_TERMINAL_PROMPT: "0",
+	GIT_ASKPASS: "",
+	SSH_ASKPASS_REQUIRE: "never",
+} as const;
+
+/**
+ * `ssh` reads a key passphrase and a host-key confirmation from `/dev/tty`
+ * DIRECTLY, so neither `GIT_TERMINAL_PROMPT` nor any askpass pin reaches
+ * them; `-o BatchMode=yes` is the only lever that makes `ssh` fail instead of
+ * block. Probed against OpenSSH under a real pty: with the askpass chain
+ * closed but no `BatchMode`, a first-contact host key hangs indefinitely;
+ * with `BatchMode=yes` the same call fails immediately with `"Host key
+ * verification failed."`.
+ */
+const BATCH_MODE = "-o BatchMode=yes";
+
+/**
+ * Matches an ssh command this package is willing to append an option to: the
+ * program's basename is `ssh`, mirroring git's own basename-driven variant
+ * detection.
+ */
+const OPENSSH_PROGRAM = /(?:^|[\\/])ssh(?:\.exe)?$/i;
+
+/**
+ * `ssh.variant` / `GIT_SSH_VARIANT` values under which this package is willing
+ * to treat the command as OpenSSH. `auto` means "infer from the basename",
+ * which is the inference {@link OPENSSH_PROGRAM} performs.
+ *
+ * @remarks
+ * This exists because the basename inference is OVERRIDABLE, and the override
+ * silently changes the argument grammar. Verified against git 2.55: a program
+ * literally named `ssh` with `ssh.variant=plink` set is invoked with plink's
+ * `-P` rather than OpenSSH's `-p`, and without `-o SendEnv=...`. Appending
+ * `-o BatchMode=yes` to that would break an invocation that worked before.
+ *
+ * It is an allow-list, and so **deliberately narrower than git**, which
+ * resolves any UNRECOGNIZED value to OpenSSH rather than rejecting it — also
+ * verified against git 2.55, where `ssh.variant=openssh` and an outright typo
+ * both produce the OpenSSH grammar. Two divergences follow, and both forgo
+ * the pin rather than corrupt a command, which is the direction to err in:
+ * a misspelled variant declines here where git would have accepted it, and a
+ * set-but-empty `GIT_SSH_VARIANT` — which git reads as "OpenSSH, and skip the
+ * config entirely" — is treated here as absent, so a `plink` in the config
+ * can still decline it. Widening this to a deny-list of the known non-OpenSSH
+ * variants would match git exactly today, at the cost of appending blindly to
+ * whatever variant git adds next.
+ */
+const OPENSSH_VARIANTS = new Set(["", "auto", "ssh"]);
+
+/**
+ * Whether an ssh command line already decides `BatchMode` for itself.
+ *
+ * @remarks
+ * Deliberately matches `BatchMode` only where it is an OPTION — after a `-o`,
+ * with or without intervening space or quoting, and taking either the
+ * `Key=value` or the `"Key value"` spelling `ssh -o` accepts. A bare
+ * occurrence of the word does not count: `ssh -F /tmp/BatchMode` names a
+ * config file and decides nothing, and treating it as a decision would skip
+ * the pin for a caller who never asked to be prompted.
+ *
+ * A miss in the other direction is harmless, which is why this errs toward
+ * matching less: because OpenSSH honors the first value obtained, appending
+ * after a spelling this does not recognize is inert rather than overriding —
+ * the caller's own value still wins.
+ */
+const DECIDES_BATCH_MODE = /(?:^|\s)-o\s*["']?\s*BatchMode\s*[=\s]/i;
+
+/**
+ * The program an ssh command line invokes, as git's shell would see it.
+ *
+ * @remarks
+ * `GIT_SSH_COMMAND` is interpreted by the shell, so the program may be
+ * QUOTED to carry spaces — `"/opt/my tools/ssh" -i key` is a working setup
+ * (verified against git 2.55). Splitting on whitespace alone would read that
+ * as `"/opt/my`, fail to recognize ssh, and silently skip the pin.
+ *
+ * This is quote-aware, not shell-aware: it does not expand variables, honor
+ * escapes, or handle a command built by shell operators. Anything it cannot
+ * read confidently comes back `undefined` and the caller's command is left
+ * strictly alone — the safe direction, since declining only forgoes the new
+ * protection where mangling would break a working remote.
+ */
+const sshProgram = (command: string): string | undefined => {
+	const quote = command[0];
+	if (quote === '"' || quote === "'") {
+		const closing = command.indexOf(quote, 1);
+		return closing === -1 ? undefined : command.slice(1, closing);
+	}
+	return command.split(/\s+/)[0];
+};
+
+/**
+ * Appends `-o BatchMode=yes` to an ssh command line, or declines.
+ *
+ * @remarks
+ * Declining is the important half, and it covers two cases where appending
+ * would do harm rather than good:
+ *
+ * - **The program is not OpenSSH.** `plink` (PuTTY) has no `-o KEY=VALUE`
+ *   form at all — its non-interactive switch is `-batch` — so appending two
+ *   tokens breaks a previously working setup outright instead of degrading.
+ *   The same goes for a wrapper script taking positional arguments. git
+ *   itself dispatches on the program's basename; this mirrors that, and
+ *   anything unrecognized is left strictly alone.
+ * - **The caller already decides `BatchMode`.** OpenSSH takes the FIRST value
+ *   obtained for a repeated option (`ssh_config(5)`; verified against
+ *   OpenSSH 10.3 with `ssh -G`), so an append after the caller's own
+ *   `-o BatchMode=no` is silently inert. Rather than pretend otherwise, the
+ *   caller's decision stands and no pin is applied — a caller who explicitly
+ *   asked to be prompted owns the resulting wait.
+ */
+const withBatchMode = (command: string): Option.Option<string> => {
+	const trimmed = command.trim();
+	const program = sshProgram(trimmed);
+	if (program === undefined || !OPENSSH_PROGRAM.test(program) || DECIDES_BATCH_MODE.test(trimmed)) {
+		return Option.none();
+	}
+	return Option.some(`${trimmed} ${BATCH_MODE}`);
+};
+
+/**
+ * The spawn environment for a network-touching member: {@link BASE_ENV} plus
+ * a `GIT_SSH_COMMAND` carrying `BatchMode`, when there is an ssh command
+ * worth pinning.
+ *
+ * @remarks
+ * `resolved` is the ssh COMMAND git would have used if this package pinned
+ * nothing. Resolving it first is what makes the pin additive rather than
+ * destructive: a pinned environment key wins over the merged parent
+ * environment AND over `core.sshCommand` and `GIT_SSH` in git's own
+ * precedence order, so pinning a bare `ssh` would silently discard a
+ * configured identity file and turn "prompts for a passphrase" into "cannot
+ * reach the remote at all" — a worse failure than the one being fixed, and
+ * the one this design set out to avoid.
+ *
+ * `GIT_SSH` never reaches here, deliberately. It is the third rung of that
+ * precedence order (`GIT_SSH_COMMAND` > `core.sshCommand` > `GIT_SSH` > plain
+ * `ssh`, verified against git 2.55), but it names a PROGRAM and supports no
+ * arguments — appending to it would have git invoke a program of that literal
+ * name. So when `GIT_SSH` is the deciding rung, {@link Git.layer}'s resolution
+ * declines to pin at all rather than displace it, exactly as it declines for
+ * plink. `GIT_TERMINAL_PROMPT` and `GIT_ASKPASS` still apply to those callers;
+ * only the ssh-level pin is skipped.
+ */
+const sshEnv = (resolved: string): Record<string, string> =>
+	Option.match(withBatchMode(resolved), {
+		onNone: () => ({ ...BASE_ENV }),
+		onSome: (pinned) => ({ ...BASE_ENV, GIT_SSH_COMMAND: pinned }),
+	});
+
+/**
  * git ran and failed in a way that is not one of the recognized domain cases
  * ({@link NotARepositoryError} / {@link UnknownRefError}), or the spawn itself
  * failed before git could run at all.
  *
  * @remarks
  * `exitCode` and `stderr` are populated when git actually ran. `detail`
- * carries a human-readable explanation of an absorbed spawn-level
- * `PlatformError` or a per-run timeout — the two cases where git never
- * produced an exit code at all. `kind`
- * discriminates a pre-spawn guard rejection (`"refused"`) from a genuine git
- * failure (`"failed"`) structurally, so composed retry/fallback logic never has
- * to parse the prose in `message` or `detail`.
+ * carries a human-readable explanation whenever the failure is not summed up
+ * by an exit code: an absorbed spawn-level `PlatformError`, a per-run timeout,
+ * a pre-spawn guard refusal, or output git produced that the member could not
+ * parse. `kind` discriminates a pre-spawn guard rejection (`"refused"`) from a
+ * genuine git failure (`"failed"`) structurally, so composed retry/fallback
+ * logic never has to parse the prose in `message` or `detail`.
+ *
+ * **`message` is the rendering; `detail` is the datum.** `message` composes a
+ * one-line prose from the redacted argv, the cwd, and — whenever `detail` is
+ * set — `detail` itself. A consumer forwarding the underlying reason should map
+ * `detail` through only when it is set: falling back to `message` nests one
+ * rendered message inside another
+ * (`git … in cwd: git … in cwd failed (exit N): …`). When `detail` is absent,
+ * git ran and failed — `exitCode` and `stderr` are the data to forward. Note
+ * that `detail` may be set after git ran
+ * and exited successfully (e.g. `Git.log` sets `detail: "unparseable log output: …"`
+ * with `kind: "failed"`), so routing on `detail !== undefined` rather than
+ * assuming git never started is the correct consumer boundary.
  *
  * @public
  */
@@ -50,7 +239,12 @@ export class GitCommandError extends Schema.TaggedError<GitCommandError>()("GitC
 	exitCode: Schema.optionalKey(Schema.Number),
 	/** git's stderr, captured under `LC_ALL=C`. */
 	stderr: Schema.String,
-	/** Set when git never ran: an absorbed spawn failure or a timeout. */
+	/**
+	 * A human-readable reason, set whenever an exit code does not sum up the
+	 * failure: an absorbed spawn failure, a timeout, a pre-spawn guard refusal,
+	 * or output git produced that the member could not parse. `message` renders
+	 * it verbatim when present.
+	 */
 	detail: Schema.optionalKey(Schema.String),
 }) {
 	/** Renders the invocation and its failure into a one-line message. */
@@ -237,9 +431,10 @@ type Classified =
  * the exit-1-is-false degrade, `"quiet"` enables the silent-exit-1-is-absent
  * degrade, `"noSuchRemote"` enables the no-such-remote degrade, `"push"`
  * enables the rejected-non-fast-forward row, `"merge"` enables the
- * dirty-worktree and merge-conflict rows, `"generic"` enables none of them.
+ * dirty-worktree and merge-conflict rows, `"log"` enables the unborn-HEAD
+ * degrade, `"generic"` enables none of them.
  */
-type ClassifyKind = "show" | "refExists" | "quiet" | "noSuchRemote" | "push" | "merge" | "generic";
+type ClassifyKind = "show" | "refExists" | "quiet" | "noSuchRemote" | "push" | "merge" | "log" | "generic";
 
 const NOT_A_REPOSITORY = "not a git repository";
 // Unanchored substring matching against LC_ALL=C-pinned phrases: a path or ref
@@ -271,6 +466,13 @@ const MERGE_CONFLICT_PATTERNS = ["CONFLICT (", "Automatic merge failed", "could 
 // files would be overwritten by merge`) arrives on stderr, before git touches
 // anything.
 const DIRTY_WORKTREE_PATTERN = "would be overwritten by";
+// An unborn HEAD: `git log` in a repository whose current branch carries no
+// commits exits 128 with `fatal: your current branch '<name>' does not have
+// any commits yet` (probed against git 2.54 under LC_ALL=C). A history that
+// does not exist yet is the EMPTY history, so this degrades rather than
+// failing — scoped to the `"log"` kind, because for every other member an
+// unborn HEAD is a genuine failure to report.
+const UNBORN_HEAD_PATTERN = "does not have any commits yet";
 
 const matchesAny = (stderr: string, patterns: ReadonlyArray<string>): boolean =>
 	patterns.some((pattern) => stderr.includes(pattern));
@@ -281,8 +483,7 @@ const matchesAny = (stderr: string, patterns: ReadonlyArray<string>): boolean =>
  * this before deciding its own return value.
  *
  * `args` is the invocation's REDACTED argv: it is the only argv this
- * function may persist into a `GitCommandError`, per the #86 redaction
- * policy.
+ * function may persist into a `GitCommandError`, per the redaction policy.
  */
 const classify = (
 	cwd: string,
@@ -324,6 +525,9 @@ const classify = (
 			return { _tag: "mergeConflict" };
 		}
 	}
+	if (kind === "log" && stderr.includes(UNBORN_HEAD_PATTERN)) {
+		return { _tag: "absent" };
+	}
 	if (kind === "quiet" && exitCode === 1 && stderr === "") {
 		// --quiet probes (symbolic-ref) and config --get signal "unset" as a
 		// silent exit 1; any stderr text means a real failure instead.
@@ -350,15 +554,21 @@ const classify = (
  * The argv handed to `classify` — and therefore persisted into any
  * `GitCommandError` — is the invocation's REDACTED argv, never the raw one:
  * the redaction mask the pure constructor carries is applied here, at the
- * single classification choke point (the #86 redaction policy).
+ * single classification choke point (the redaction policy).
+ *
+ * This is also the single ENVIRONMENT choke point: `env` (computed once in
+ * {@link Git.layer}) is applied here the same way `cwd` is, so every one of
+ * the service's members is spawned with the pins and nothing else in the
+ * package needs to know they exist.
  */
 const runClassified = (
 	invocation: GitInvocation,
 	cwd: string,
 	kind: ClassifyKind,
+	env: Record<string, string>,
 ): Effect.Effect<Classified, never, ChildProcessSpawner.ChildProcessSpawner> => {
 	const args = invocation.redactedArgs;
-	const command = ChildProcess.setCwd(invocation.command, cwd);
+	const command = ChildProcess.setEnv(ChildProcess.setCwd(invocation.command, cwd), env);
 	return runCollected(command).pipe(
 		Effect.map((collected) => classify(cwd, args, collected, kind)),
 		Effect.catch((platformError) => Effect.succeed(classify(cwd, args, platformError, kind))),
@@ -452,6 +662,102 @@ export class CommitInfo extends Schema.Class<CommitInfo>("CommitInfo")({
 	/** The raw commit message (`%B`), untrimmed — includes git's trailing format newline. */
 	message: Schema.String,
 }) {}
+
+/**
+ * One commit of a `git log` listing, with the paths that commit touched.
+ *
+ * @remarks
+ * Both dates are decoded from git's strict-ISO `%aI` / `%cI` into
+ * `DateTime.Utc` — the instant, comparable and orderable across commits made
+ * in different timezones. **The committer's local UTC offset is not
+ * preserved**: git records it, `DateTime.Utc` does not carry it, and encoding
+ * a `CommitLogEntry` therefore renders both dates as `Z`-suffixed UTC rather
+ * than the offset git printed. Nothing in the kit needs the offset; a consumer
+ * that does wants a different member, not a wider entry.
+ *
+ * `paths` is the commit's `--name-only` listing, **repository-root-relative
+ * regardless of the `cwd` the log ran in**, and raw (`-z` disables git's
+ * C-style path quoting, so a path containing a space, a quote or a newline
+ * arrives verbatim). It is EMPTY for a commit that touched nothing under the
+ * requested pathspec — most commonly a merge commit, whose diff git omits by
+ * default (see `Git.log`'s `firstParentDiffMerges`).
+ *
+ * @public
+ */
+export class CommitLogEntry extends Schema.Class<CommitLogEntry>("CommitLogEntry")({
+	/** The commit's full object id (`%H`). */
+	sha: Schema.String,
+	/** When the change was authored (`%aI`), as a UTC instant. */
+	authoredAt: Schema.DateTimeUtcFromString,
+	/** When the commit object was written (`%cI`), as a UTC instant. */
+	committedAt: Schema.DateTimeUtcFromString,
+	/** The author's name (`%an`). */
+	authorName: Schema.String,
+	/** The author's email address (`%ae`). */
+	authorEmail: Schema.String,
+	/** The paths this commit touched, root-relative and raw; empty when it touched none. */
+	paths: Schema.Array(Schema.String),
+}) {}
+
+/** The `\x1e` byte every `git log` record opens with (`GitCommand.log`'s `%x1e`). */
+const LOG_RECORD_SEPARATOR = "\x1e";
+
+/**
+ * Parses `GitCommand.log`'s output. Unlike this package's other parsers this
+ * one can FAIL: the two dates have to decode, and a header that does not carry
+ * its five fields cannot be answered with a plausible-looking entry.
+ *
+ * The probed byte shape per record (git 2.54, `-z`) is
+ * `\x1e<sha>\0<%aI>\0<%cI>\0<%an>\0<%ae>\0` followed, only when the commit
+ * touched something, by `\n` and one NUL-terminated path each. Splitting a
+ * record on `\0` therefore yields the five header fields, then one token per
+ * path (the FIRST of which carries git's `\n` separator ahead of the path
+ * itself), then one empty token left by the final NUL. Empty output is the
+ * empty log — a pathspec no commit touched exits 0 with nothing on stdout.
+ */
+const parseLog = (output: string): Result.Result<ReadonlyArray<CommitLogEntry>, string> => {
+	if (output === "") return Result.succeed([]);
+	if (!output.startsWith(LOG_RECORD_SEPARATOR)) {
+		return Result.fail("log output did not open with a record separator");
+	}
+	const entries: Array<CommitLogEntry> = [];
+	for (const record of output.split(LOG_RECORD_SEPARATOR).slice(1)) {
+		const tokens = record.split("\0");
+		const [sha, authoredAtIso, committedAtIso, authorName, authorEmail] = tokens;
+		if (
+			sha === undefined ||
+			authoredAtIso === undefined ||
+			committedAtIso === undefined ||
+			authorName === undefined ||
+			authorEmail === undefined
+		) {
+			return Result.fail("a log record carried fewer fields than the format declares");
+		}
+		const authoredAt = DateTime.make(authoredAtIso);
+		const committedAt = DateTime.make(committedAtIso);
+		if (Option.isNone(authoredAt) || Option.isNone(committedAt)) {
+			return Result.fail(`a log record carried an undecodable date ("${authoredAtIso}", "${committedAtIso}")`);
+		}
+		const rest = tokens.slice(5);
+		// The record's final NUL leaves one empty trailing token; dropping it is
+		// what distinguishes "no paths" from "one empty path".
+		if (rest[rest.length - 1] === "") rest.pop();
+		entries.push(
+			CommitLogEntry.make({
+				sha,
+				authoredAt: authoredAt.value,
+				committedAt: committedAt.value,
+				authorName,
+				authorEmail,
+				// Only the first path token carries the `\n` git prints between the
+				// format output and the diff, and exactly one byte of it is git's:
+				// a path may itself legally begin with a newline.
+				paths: rest.map((path, index) => (index === 0 && path.startsWith("\n") ? path.slice(1) : path)),
+			}),
+		);
+	}
+	return Result.succeed(entries);
+};
 
 /** One two-letter porcelain v1 status axis code. */
 const porcelainCode = Schema.Literals([" ", "M", "T", "A", "D", "R", "C", "U", "?", "!"]);
@@ -671,7 +977,7 @@ export class LsRemoteEntry extends Schema.Class<LsRemoteEntry>("LsRemoteEntry")(
 	 * The entries whose short name is a NEAR MISS for `ref`: not an exact
 	 * match, but ending in `ref` right behind a separator (`@`, `/`, `-`,
 	 * `_`) — the monorepo-prefixed-tag case, where a caller asks for
-	 * `4.0.0-beta.101` and the remote advertises `effect@4.0.0-beta.101`.
+	 * `4.0.0` and the remote advertises `effect@4.0.0`.
 	 *
 	 * @remarks
 	 * A pure, decode-side helper for validate-before-mutate flows: run
@@ -960,7 +1266,7 @@ const parseLsFiles = (output: string): ReadonlyArray<LsFilesEntry> =>
  *
  * `sensitive` values get the same check but a REDACTED report: a refused
  * sensitive positional (a `configSet` value) must not leak into
- * `GitCommandError.args`/`detail` any more than a spawned one may — the #86
+ * `GitCommandError.args`/`detail` any more than a spawned one may — the
  * redaction policy applies to guard rejections too.
  */
 const rejectOptionLikeRefs = (
@@ -1021,10 +1327,95 @@ const rejectNonNaturalNumber = (
 				}),
 			);
 
+/**
+ * The ssh-related environment, read once at layer construction. None of these
+ * can change under a running service, so none is re-read per call — unlike
+ * their git-config counterparts, which are repository-local.
+ */
+interface SshFromEnv {
+	/** `GIT_SSH_COMMAND` — a full command line; the first rung. */
+	readonly command: Option.Option<string>;
+	/** `GIT_SSH` — a program name with no argument support; the third rung. */
+	readonly program: Option.Option<string>;
+	/** `GIT_SSH_VARIANT` — overrides git's basename inference of the grammar. */
+	readonly variant: Option.Option<string>;
+}
+
 /** Builds the `Git.Service` shape over an already-resolved `ChildProcessSpawner`. */
-const make = (spawner: ChildProcessSpawner.ChildProcessSpawner["Service"]) => {
+const make = (spawner: ChildProcessSpawner.ChildProcessSpawner["Service"], ssh: SshFromEnv) => {
 	const runFor = (invocation: GitInvocation, cwd: string, kind: ClassifyKind) =>
-		runClassified(invocation, cwd, kind).pipe(Effect.provideService(ChildProcessSpawner.ChildProcessSpawner, spawner));
+		runClassified(invocation, cwd, kind, BASE_ENV).pipe(
+			Effect.provideService(ChildProcessSpawner.ChildProcessSpawner, spawner),
+		);
+
+	/** One `git config --get <key>` at `cwd`; unset and failure both read as `""`. */
+	const readConfig = (cwd: string, key: string) =>
+		Effect.map(runFor(GitCommand.configGet(key), cwd, "quiet"), (classified) =>
+			classified._tag === "success" ? classified.output.trim() : "",
+		);
+
+	/**
+	 * Resolves the spawn environment for a member that reaches a remote,
+	 * following git's OWN precedence order rather than a simplification of it:
+	 * `GIT_SSH_COMMAND` > `core.sshCommand` > `GIT_SSH` > plain `ssh` (each
+	 * rung verified against git 2.55).
+	 *
+	 * The config reads are why this is per-call rather than per-service:
+	 * `core.sshCommand` and `ssh.variant` are both repository-local, while one
+	 * `Git` instance serves every `cwd` a caller hands it. Each is skipped when
+	 * its environment counterpart already decides the answer, and the two run
+	 * concurrently, so the common case costs one round trip on a member about
+	 * to touch the network anyway.
+	 *
+	 * They deliberately run through `runFor` (BASE_ENV, no ssh pin): a local
+	 * config read needs no ssh, and routing them through the network path would
+	 * recurse.
+	 */
+	const resolveSshEnv = (cwd: string) =>
+		Effect.gen(function* () {
+			const [fromConfig, variantFromConfig] = yield* Effect.all(
+				[
+					Option.isSome(ssh.command) ? Effect.succeed("") : readConfig(cwd, "core.sshCommand"),
+					Option.isSome(ssh.variant) ? Effect.succeed("") : readConfig(cwd, "ssh.variant"),
+				],
+				{ concurrency: "unbounded" },
+			);
+
+			// The variant decides the argument GRAMMAR, so it is checked first: a
+			// non-OpenSSH variant means `-o BatchMode=yes` is not a thing git's ssh
+			// invocation understands, whatever the command happens to be named.
+			const variant = Option.getOrElse(ssh.variant, () => variantFromConfig)
+				.trim()
+				.toLowerCase();
+			if (!OPENSSH_VARIANTS.has(variant)) {
+				return { ...BASE_ENV };
+			}
+
+			const command = Option.getOrElse(ssh.command, () => fromConfig).trim();
+			if (command !== "") {
+				return sshEnv(command);
+			}
+			// No COMMAND anywhere, so GIT_SSH is the deciding rung if it is set. It
+			// names a program and takes no arguments, so pinning anything here would
+			// displace it rather than extend it — decline instead.
+			if (Option.isSome(ssh.program)) {
+				return { ...BASE_ENV };
+			}
+			return sshEnv("ssh");
+		});
+
+	/**
+	 * `runFor` for a member that reaches a remote. Everything else spawns with
+	 * `BASE_ENV` alone — a member that never invokes ssh has no business
+	 * pinning an ssh command, and would pay the config read for nothing.
+	 */
+	const runForNetwork = (invocation: GitInvocation, cwd: string, kind: ClassifyKind) =>
+		Effect.gen(function* () {
+			const env = yield* resolveSshEnv(cwd);
+			return yield* runClassified(invocation, cwd, kind, env).pipe(
+				Effect.provideService(ChildProcessSpawner.ChildProcessSpawner, spawner),
+			);
+		});
 
 	const show = Effect.fn("Git.show")(function* (cwd: string, ref: string, path: string) {
 		yield* Effect.annotateCurrentSpan({ cwd, ref, path });
@@ -1437,7 +1828,7 @@ const make = (spawner: ChildProcessSpawner.ChildProcessSpawner["Service"]) => {
 		const remote = options?.remote ?? "origin";
 		yield* Effect.annotateCurrentSpan({ cwd });
 		yield* rejectOptionLikeRefs(cwd, [remote]);
-		const classified = yield* runFor(GitCommand.fetchUnshallow(remote), cwd, "generic");
+		const classified = yield* runForNetwork(GitCommand.fetchUnshallow(remote), cwd, "generic");
 		switch (classified._tag) {
 			case "success":
 				return undefined;
@@ -1482,7 +1873,7 @@ const make = (spawner: ChildProcessSpawner.ChildProcessSpawner["Service"]) => {
 				}),
 			);
 		}
-		const classified = yield* runFor(
+		const classified = yield* runForNetwork(
 			GitCommand.fetch(remote, options.ref, options.depth, tag, unshallow),
 			cwd,
 			"generic",
@@ -1539,7 +1930,7 @@ const make = (spawner: ChildProcessSpawner.ChildProcessSpawner["Service"]) => {
 		const checkout = options?.checkout ?? false;
 		yield* Effect.annotateCurrentSpan({ cwd, init, checkout });
 		yield* rejectNonNaturalNumber(cwd, "a submodule update depth", options?.depth);
-		const classified = yield* runFor(
+		const classified = yield* runForNetwork(
 			GitCommand.submoduleUpdate(init, options?.depth, options?.paths ?? [], {
 				checkout,
 				remote: options?.remote ?? false,
@@ -1571,10 +1962,14 @@ const make = (spawner: ChildProcessSpawner.ChildProcessSpawner["Service"]) => {
 		options: { readonly url: string; readonly path: string; readonly depth?: number },
 	) {
 		// The url is deliberately NOT annotated: a URL can embed userinfo, and
-		// span annotations carry stable identifiers only (the #86 policy).
+		// span annotations carry stable identifiers only (the redaction policy).
 		yield* Effect.annotateCurrentSpan({ cwd, path: options.path });
 		yield* rejectNonNaturalNumber(cwd, "a submodule add depth", options.depth);
-		const classified = yield* runFor(GitCommand.submoduleAdd(options.url, options.path, options.depth), cwd, "generic");
+		const classified = yield* runForNetwork(
+			GitCommand.submoduleAdd(options.url, options.path, options.depth),
+			cwd,
+			"generic",
+		);
 		switch (classified._tag) {
 			case "success":
 				return undefined;
@@ -1623,7 +2018,7 @@ const make = (spawner: ChildProcessSpawner.ChildProcessSpawner["Service"]) => {
 		// reading it as a flag. Recorded limitation: a legitimate "-..." config
 		// value cannot be written through this method. The value rides the
 		// SENSITIVE arm: a refused config value is reported as <redacted>, never
-		// echoed into the error (the #86 redaction policy).
+		// echoed into the error (the redaction policy).
 		yield* rejectOptionLikeRefs(cwd, [key, ...(options?.file !== undefined ? [options.file] : [])], [value]);
 		const classified = yield* runFor(GitCommand.configSet(key, value, options?.file), cwd, "generic");
 		switch (classified._tag) {
@@ -1719,6 +2114,40 @@ const make = (spawner: ChildProcessSpawner.ChildProcessSpawner["Service"]) => {
 		}
 	});
 
+	const commonDir = Effect.fn("Git.commonDir")(function* (cwd: string) {
+		yield* Effect.annotateCurrentSpan({ cwd });
+		const invocation = GitCommand.commonDir();
+		const classified = yield* runFor(invocation, cwd, "generic");
+		switch (classified._tag) {
+			case "success": {
+				// Strip only git's terminating newline, never `trim`: the answer is an
+				// identity, and a directory name may end in whitespace.
+				const answer = classified.output.replace(/\r?\n$/, "");
+				// git before 2.31 does not know --path-format: rev-parse echoes the flag
+				// to stdout, answers the relative form on the next line, and exits 0.
+				if (answer.startsWith("-") || answer.includes("\n")) {
+					return yield* Effect.fail(
+						new GitCommandError({
+							kind: "failed",
+							args: invocation.redactedArgs,
+							cwd,
+							stderr: "",
+							detail: `unparseable common-dir output (--path-format needs git 2.31 or later): ${JSON.stringify(answer)}`,
+						}),
+					);
+				}
+				return answer;
+			}
+			case "notARepository":
+				return yield* Effect.fail(new NotARepositoryError({ cwd }));
+			case "failure":
+				return yield* Effect.fail(classified.error);
+			default:
+				// rev-parse --git-common-dir names no ref, so no ref-error stderr can reach here.
+				return yield* Effect.die(`Git.commonDir: unexpected classification "${classified._tag}"`);
+		}
+	});
+
 	const configGet = Effect.fn("Git.configGet")(function* (
 		cwd: string,
 		key: string,
@@ -1780,6 +2209,69 @@ const make = (spawner: ChildProcessSpawner.ChildProcessSpawner["Service"]) => {
 				return yield* Effect.fail(classified.error);
 			default:
 				return yield* Effect.die(`Git.commitInfo: unexpected classification "${classified._tag}"`);
+		}
+	});
+
+	const log = Effect.fn("Git.log")(function* (
+		cwd: string,
+		options?: {
+			readonly paths?: ReadonlyArray<string>;
+			readonly follow?: boolean;
+			readonly limit?: number;
+			readonly firstParentDiffMerges?: boolean;
+		},
+	) {
+		const paths = options?.paths ?? [];
+		const follow = options?.follow ?? false;
+		// Path VALUES are stable identifiers, but a pathspec can be long and is
+		// caller-controlled; the count is what a trace needs to correlate.
+		yield* Effect.annotateCurrentSpan({ cwd, paths: paths.length, follow });
+		yield* rejectNonNaturalNumber(cwd, "a log limit", options?.limit);
+		const invocation = GitCommand.log(paths, follow, options?.limit, options?.firstParentDiffMerges ?? false);
+		if (follow && paths.length !== 1) {
+			// git's own restriction, refused pre-spawn: `--follow` walks ONE
+			// path's history, and git's own diagnostic for the violation is an
+			// unclassifiable usage error.
+			return yield* Effect.fail(
+				new GitCommandError({
+					kind: "refused",
+					args: invocation.redactedArgs,
+					cwd,
+					stderr: "",
+					detail: `refused --follow: git follows exactly one path, received ${paths.length}`,
+				}),
+			);
+		}
+		const classified = yield* runFor(invocation, cwd, "log");
+		switch (classified._tag) {
+			case "success": {
+				const parsed = parseLog(classified.output);
+				if (Result.isFailure(parsed)) {
+					return yield* Effect.fail(
+						new GitCommandError({
+							kind: "failed",
+							args: invocation.redactedArgs,
+							cwd,
+							stderr: "",
+							detail: `unparseable log output: ${parsed.failure}`,
+						}),
+					);
+				}
+				return parsed.success;
+			}
+			case "absent":
+			case "unknownRef":
+				// An unborn HEAD — however this git spells it — has no history,
+				// which is the empty log, never a failure. `Git.log` takes no ref,
+				// so there is no ref for an UnknownRefError to name and the error
+				// is absent from this member's union by construction.
+				return [] as ReadonlyArray<CommitLogEntry>;
+			case "notARepository":
+				return yield* Effect.fail(new NotARepositoryError({ cwd }));
+			case "failure":
+				return yield* Effect.fail(classified.error);
+			default:
+				return yield* Effect.die(`Git.log: unexpected classification "${classified._tag}"`);
 		}
 	});
 
@@ -1905,7 +2397,7 @@ const make = (spawner: ChildProcessSpawner.ChildProcessSpawner["Service"]) => {
 
 	const submoduleSetUrl = Effect.fn("Git.submoduleSetUrl")(function* (cwd: string, path: string, url: string) {
 		// The url is deliberately NOT annotated: a URL can embed userinfo, and
-		// span annotations carry stable identifiers only (the #86 policy).
+		// span annotations carry stable identifiers only (the redaction policy).
 		yield* Effect.annotateCurrentSpan({ cwd, path });
 		const classified = yield* runFor(GitCommand.submoduleSetUrl(path, url), cwd, "generic");
 		switch (classified._tag) {
@@ -2023,9 +2515,11 @@ const make = (spawner: ChildProcessSpawner.ChildProcessSpawner["Service"]) => {
 		kind: ClassifyKind,
 		parse: (output: string) => A,
 		absent?: () => A,
+		/** Whether this member reaches a remote and so needs the ssh pin resolved. */
+		network = false,
 	) =>
 		Effect.gen(function* () {
-			const classified = yield* runFor(invocation, cwd, kind);
+			const classified = yield* (network ? runForNetwork : runFor)(invocation, cwd, kind);
 			switch (classified._tag) {
 				case "success":
 					return parse(classified.output);
@@ -2055,7 +2549,7 @@ const make = (spawner: ChildProcessSpawner.ChildProcessSpawner["Service"]) => {
 		},
 	) {
 		// The remote is deliberately NOT annotated: it may be a URL embedding
-		// userinfo, and span annotations carry stable identifiers only (#86).
+		// userinfo, and span annotations carry stable identifiers only.
 		yield* Effect.annotateCurrentSpan({
 			cwd,
 			heads: options?.heads ?? false,
@@ -2070,11 +2564,13 @@ const make = (spawner: ChildProcessSpawner.ChildProcessSpawner["Service"]) => {
 			"ls-remote",
 			"generic",
 			parseLsRemote,
+			undefined,
+			true,
 		);
 	});
 
 	const remoteAdd = Effect.fn("Git.remoteAdd")(function* (cwd: string, name: string, url: string) {
-		// The url is deliberately NOT annotated (#86).
+		// The url is deliberately NOT annotated.
 		yield* Effect.annotateCurrentSpan({ cwd, name });
 		yield* rejectOptionLikeRefs(cwd, [name, url]);
 		return yield* runVoid("Git.remoteAdd", GitCommand.remoteAdd(name, url), cwd, name);
@@ -2087,7 +2583,7 @@ const make = (spawner: ChildProcessSpawner.ChildProcessSpawner["Service"]) => {
 	});
 
 	const remoteSetUrl = Effect.fn("Git.remoteSetUrl")(function* (cwd: string, name: string, url: string) {
-		// The url is deliberately NOT annotated (#86).
+		// The url is deliberately NOT annotated.
 		yield* Effect.annotateCurrentSpan({ cwd, name });
 		yield* rejectOptionLikeRefs(cwd, [name, url]);
 		return yield* runVoid("Git.remoteSetUrl", GitCommand.remoteSetUrl(name, url), cwd, name);
@@ -2264,14 +2760,14 @@ const make = (spawner: ChildProcessSpawner.ChildProcessSpawner["Service"]) => {
 		},
 	) {
 		const remote = options?.remote ?? "origin";
-		// The remote is deliberately NOT annotated: it may be a URL (#86).
+		// The remote is deliberately NOT annotated: it may be a URL.
 		yield* Effect.annotateCurrentSpan({
 			cwd,
 			refspec: options?.refspec ?? "(current branch)",
 			forceWithLease: options?.forceWithLease ?? false,
 		});
 		yield* rejectOptionLikeRefs(cwd, [remote, ...(options?.refspec !== undefined ? [options.refspec] : [])]);
-		const classified = yield* runFor(
+		const classified = yield* runForNetwork(
 			GitCommand.push(
 				remote,
 				options?.refspec,
@@ -2314,14 +2810,14 @@ const make = (spawner: ChildProcessSpawner.ChildProcessSpawner["Service"]) => {
 		},
 	) {
 		const remote = options?.remote ?? "origin";
-		// The remote is deliberately NOT annotated: it may be a URL (#86).
+		// The remote is deliberately NOT annotated: it may be a URL.
 		yield* Effect.annotateCurrentSpan({
 			cwd,
 			ref: options?.ref ?? "(upstream)",
 			rebase: options?.rebase ?? false,
 		});
 		yield* rejectOptionLikeRefs(cwd, [remote, ...(options?.ref !== undefined ? [options.ref] : [])]);
-		const classified = yield* runFor(
+		const classified = yield* runForNetwork(
 			GitCommand.pull(remote, options?.ref, options?.rebase ?? false, options?.ffOnly ?? false),
 			cwd,
 			"merge",
@@ -2558,9 +3054,11 @@ const make = (spawner: ChildProcessSpawner.ChildProcessSpawner["Service"]) => {
 		defaultBranch,
 		currentBranch,
 		repoRoot,
+		commonDir,
 		configGet,
 		remoteUrl,
 		commitInfo,
+		log,
 		status,
 		lsRemote,
 		remoteAdd,
@@ -3070,8 +3568,36 @@ export interface GitShape {
 	readonly currentBranch: (
 		cwd: string,
 	) => Effect.Effect<Option.Option<string>, GitCommandError | NotARepositoryError | UnknownRefError>;
-	/** `git rev-parse --show-toplevel` — the absolute repository root path, trimmed. */
+	/**
+	 * `git rev-parse --show-toplevel` — the absolute repository root path, trimmed.
+	 *
+	 * @remarks
+	 * The path is PHYSICAL: git resolves symlinks, so it need not match the
+	 * spelling the caller reached the repository by (every macOS tmpdir:
+	 * `/var` → `/private/var`). Bound an upward walk by it with
+	 * `@effected/walker`'s `Walker.ascendWithin`, never `Walker.ascend`'s
+	 * lexical `stopAt`. For identity across worktrees, use `commonDir`.
+	 */
 	readonly repoRoot: (cwd: string) => Effect.Effect<string, GitCommandError | NotARepositoryError | UnknownRefError>;
+	/**
+	 * `git rev-parse --path-format=absolute --git-common-dir` — the absolute,
+	 * symlink-resolved directory a repository shares with all of its linked
+	 * worktrees, with git's terminating newline removed.
+	 *
+	 * @remarks
+	 * Repository identity that holds across worktrees: every checkout of one
+	 * repository — the main worktree, any subdirectory, any linked worktree,
+	 * and any path reached through a symlink — answers the same string, so two
+	 * results compare with `===`. `repoRoot` cannot serve here, because each
+	 * worktree has its own toplevel. A bare repository answers its own
+	 * directory. Only git's terminating newline is removed, so a path ending in
+	 * whitespace keeps it.
+	 *
+	 * Needs git 2.31 or later. An older git echoes the unknown
+	 * `--path-format` flag and exits 0; that answer fails as a
+	 * `GitCommandError` (`kind: "failed"`) rather than passing as an identity.
+	 */
+	readonly commonDir: (cwd: string) => Effect.Effect<string, GitCommandError | NotARepositoryError>;
 	/**
 	 * `git config [--<scope>] --get <key>` — the trimmed value, or `Option.none`
 	 * when the key is unset.
@@ -3100,6 +3626,47 @@ export interface GitShape {
 		cwd: string,
 		ref?: string,
 	) => Effect.Effect<CommitInfo, GitCommandError | NotARepositoryError | UnknownRefError>;
+	/**
+	 * `git log -z --format=... --name-only [flags] [-- pathspec]` — the commit
+	 * history reachable from `HEAD`, newest first, each entry carrying its sha,
+	 * both dates, its author identity and the paths it touched. The full argv,
+	 * flag by flag, is on `GitCommand.log`.
+	 *
+	 * @remarks
+	 * Scoped by `paths` (a git pathspec, relative to `cwd`) and, with
+	 * `follow: true`, walked ACROSS renames — git's `--follow`, which requires
+	 * exactly one path and is refused pre-spawn as a `"refused"`
+	 * `GitCommandError` otherwise. `limit` becomes `--max-count`, so
+	 * `limit: 0` is the empty listing rather than the whole history. A merge
+	 * commit contributes an entry with EMPTY `paths` unless
+	 * `firstParentDiffMerges` is set, which asks git for the first-parent diff
+	 * and so lists a merge that actually changed something (a conflict
+	 * resolution) while still hiding one TREESAME to its first parent.
+	 * **`follow: true` and merge commits do not combine**: `--follow`
+	 * linearizes the walk and drops merges outright (probed against git 2.54),
+	 * so a followed listing is not a superset of the unfollowed one — it trades
+	 * the merges away for the pre-rename history.
+	 *
+	 * An unborn `HEAD` and a pathspec no commit ever touched are both the
+	 * EMPTY listing, not a failure — which is why `UnknownRefError` is absent
+	 * from this member's error union while every other read carries it. This
+	 * is the one read whose result depends on the ORDER of history rather than
+	 * a single tree, and the one that decodes dates: see `CommitLogEntry` for
+	 * what the UTC decoding does and does not preserve.
+	 */
+	readonly log: (
+		cwd: string,
+		options?: {
+			/** A git pathspec scoping the walk; `--follow` requires exactly one entry. */
+			readonly paths?: ReadonlyArray<string>;
+			/** Follow the single path across renames (git's `--follow`). Default `false`. */
+			readonly follow?: boolean;
+			/** `--max-count`: at most this many commits. `0` is the empty listing. */
+			readonly limit?: number;
+			/** `--diff-merges=first-parent`: give merge commits a path listing. Default `false`. */
+			readonly firstParentDiffMerges?: boolean;
+		},
+	) => Effect.Effect<ReadonlyArray<CommitLogEntry>, GitCommandError | NotARepositoryError>;
 	/** `git status --porcelain -z` — the working tree's porcelain status listing. */
 	readonly status: (
 		cwd: string,
@@ -3271,9 +3838,10 @@ export interface GitShape {
 	/**
 	 * Mutating: `git commit [--all] [--allow-empty] [--amend] [--author=<author>] -m <message>`
 	 * — records a commit. The message rides argv; committer identity comes
-	 * from the caller's ENVIRONMENT (this package sets only `LC_ALL`), and
-	 * `options.author` is the explicit `--author=` override. "Nothing to
-	 * commit" fails loudly as {@link GitCommandError}.
+	 * from the caller's ENVIRONMENT (the pins this service applies are the
+	 * locale and the non-interactive set — never an identity), and
+	 * `options.author` is the explicit `--author=`
+	 * override. "Nothing to commit" fails loudly as {@link GitCommandError}.
 	 */
 	readonly commit: (
 		cwd: string,
@@ -3517,11 +4085,40 @@ const notStubbed = (method: string) => () =>
  * that — a caller running two mutating calls (or a mutating call alongside a
  * read) against one `cwd` at once owns the race.
  *
+ * **Every spawn already runs under a 30 s timeout** (this module's
+ * `GIT_TIMEOUT`): a command that has not answered in time fails as a
+ * {@link GitCommandError} with `detail` set to `"timed out after 30s"`.
+ *
+ * That ceiling is per run, not per member call. The network-touching members
+ * (`lsRemote`, `fetch`, `fetchUnshallow`, `push`, `pull`, `submoduleAdd`,
+ * `submoduleUpdate`) first resolve their ssh command with up to two concurrent
+ * local `git config` reads, each bounded separately, so their worst case is
+ * 60 s; `fetchAny`, which runs `fetch` twice, is 120 s. A consumer merely
+ * duplicating a 30 s layer buys nothing but two ceilings racing each other;
+ * one whose budget is tighter than the figures above still needs its own.
+ *
  * **Redaction policy (documented, not just convention).** Error values
  * persist only the constructor's REDACTED argv (see `GitCommandError.args`),
  * and span annotations carry stable identifiers only — `cwd`, refs, keys,
  * paths, remote names — never config values and never URLs, which can embed
- * userinfo. A new method must follow both halves before it ships.
+ * userinfo.
+ *
+ * @example
+ * ```ts
+ * import { Git } from "@effected/git";
+ * import { NodeServices } from "@effect/platform-node";
+ * import { Effect, Option } from "effect";
+ *
+ * const program = Effect.gen(function* () {
+ *   const git = yield* Git;
+ *   const root = yield* git.repoRoot(process.cwd());
+ *   const branch = yield* git.currentBranch(root); // Option.none() when detached
+ *   const changed = yield* git.changedFiles(root, { base: "origin/main", head: "HEAD" });
+ *   return { root, branch: Option.getOrNull(branch), changed };
+ * });
+ *
+ * Effect.runPromise(program.pipe(Effect.provide(Git.layer), Effect.provide(NodeServices.layer)));
+ * ```
  *
  * @public
  */
@@ -3531,7 +4128,33 @@ export class Git extends Context.Service<Git, GitShape>()("@effected/git/Git") {
 		this,
 		Effect.gen(function* () {
 			const spawner = yield* ChildProcessSpawner.ChildProcessSpawner;
-			return make(spawner);
+			// The AMBIENT ENVIRONMENT is read ONCE, here, and never again — it
+			// cannot change under a running service. The read goes through
+			// ConfigProvider (whose default is `fromEnv()`) rather than
+			// `process.env`, so a test provides a provider instead of mutating the
+			// environment and `src/` keeps its zero-`node:` boundary. A blank value
+			// is treated as absent — an exported-but-empty GIT_SSH_COMMAND is not
+			// an ssh configuration worth preserving.
+			//
+			// `core.sshCommand` is NOT read here: it is repository-local, so it
+			// belongs to a cwd rather than to the service, and is resolved per
+			// network-touching call instead.
+			// A source-level ConfigError degrades to "absent" rather than escaping:
+			// the layer's error channel is `never` by contract, and an unreadable
+			// provider is answered with the pin that cannot hang.
+			const read = (name: string) =>
+				Config.String(name).pipe(
+					Config.option,
+					Effect.catch(() => Effect.succeed(Option.none<string>())),
+					// A blank value is treated as absent — an exported-but-empty
+					// variable is not a configuration worth preserving.
+					Effect.map(Option.filter((value) => value.trim() !== "")),
+				);
+			const [command, program, variant] = yield* Effect.all(
+				[read("GIT_SSH_COMMAND"), read("GIT_SSH"), read("GIT_SSH_VARIANT")],
+				{ concurrency: "unbounded" },
+			);
+			return make(spawner, { command, program, variant });
 		}),
 	);
 
@@ -3552,7 +4175,7 @@ export class Git extends Context.Service<Git, GitShape>()("@effected/git/Git") {
 	 *
 	 * The double deliberately models **none** of the live service's semantics:
 	 * no stderr classification, no option-injection guard (an option-like ref a
-	 * stub accepts would be refused live), no `LC_ALL=C` pinning, no timeout,
+	 * stub accepts would be refused live), no environment pinning, no timeout,
 	 * and no `./`-vs-bare path resolution on `show` — a stub answers exactly
 	 * what it is told and nothing else. A suite exercising any of those wants
 	 * `Git.layer` over a mocked `ChildProcessSpawner` (or real git) instead.
@@ -3608,9 +4231,11 @@ export class Git extends Context.Service<Git, GitShape>()("@effected/git/Git") {
 		defaultBranch: notStubbed("defaultBranch"),
 		currentBranch: notStubbed("currentBranch"),
 		repoRoot: notStubbed("repoRoot"),
+		commonDir: notStubbed("commonDir"),
 		configGet: notStubbed("configGet"),
 		remoteUrl: notStubbed("remoteUrl"),
 		commitInfo: notStubbed("commitInfo"),
+		log: notStubbed("log"),
 		status: notStubbed("status"),
 		lsRemote: notStubbed("lsRemote"),
 		remoteAdd: notStubbed("remoteAdd"),

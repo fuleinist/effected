@@ -7,10 +7,10 @@
 
 Append-only, schema-validated JSONL journals as a definable Effect service. The subject is not the format — one JSON value per line is a two-sentence specification and needs no library — but the file as a live object: a journal that only ever grows, whose current state is its last valid line, whose tail may be torn mid-append, and which several processes read while one writes. Every line is an envelope (`at`, `event`, an optional `scope`, and a `data` payload validated by the schema you registered for that event), so a journal stays greppable, `jq`-able and diffable in a pull request while the reads that matter stay typed.
 
-> **Pre-release.** This package is part of the `@effected/*` kit, in pre-`1.0.0`
-> development against a single pinned Effect v4 prerelease. Packages graduate to
-> `1.0.0` once Effect `4.0.0` ships. To hold your own `effect` versions at
-> exactly the ones the kit is built and tested against, install
+> **Pre-`1.0.0`.** This package is part of the `@effected/*` kit, built on stable
+> Effect v4 (`effect` `^4.0.0`) and still in `0.x` development. Stable Effect
+> makes a kit `1.0.0` possible, not automatic. To keep your `effect` and
+> `@effect/*` versions on the line the kit is built and tested against, install
 > [`@effected/pnpm-plugin-effect`](https://www.npmjs.com/package/@effected/pnpm-plugin-effect).
 >
 > **Stability: unstable.** This package's API surface is not yet considered
@@ -41,7 +41,7 @@ Requires Node.js >=24.11.0. `effect` v4 is the only peer dependency, and the onl
 
 All `@effected/*` packages are ESM-only: the exports maps publish only `import` conditions, so `require()` — including tools that resolve in CJS mode — fails with Node's `ERR_PACKAGE_PATH_NOT_EXPORTED` rather than loading a CJS build that does not exist. Import from an ES module.
 
-`FileSystem` comes from `effect` core, not from a platform package, so a consumer provides it once at the edge (`NodeFileSystem.layer` from `@effect/platform-node` on Node). `Path` is deliberately not required — every path is an opaque string handed straight to `FileSystem`, and this package never joins, resolves or splits one.
+`FileSystem` comes from `effect` core, not from a platform package, so a consumer provides it once at the edge (`NodeFileSystem.layer` from `@effect/platform-node` on Node). The journal also needs a `JournalWatcher` — a file watch that reports when it is armed, so an append cannot land unseen while the watch is being set up; on Node that is `NodeJournalWatcher.layer` from the `@effected/jsonl/node` subpath, the only part of the package that touches `node:*`. `Path` is deliberately not required — every path is an opaque string handed straight to `FileSystem`, and this package never joins, resolves or splits one.
 
 ## Quick start
 
@@ -49,6 +49,7 @@ Declare the events a journal may contain, mint a service class for that registry
 
 ```ts
 import { Journal, JsonlEvent } from "@effected/jsonl";
+import { NodeJournalWatcher } from "@effected/jsonl/node";
 import { NodeFileSystem } from "@effect/platform-node";
 import { Effect, Option, Schema, Stream, SubscriptionRef } from "effect";
 
@@ -90,7 +91,7 @@ const program = Effect.gen(function* () {
   );
 });
 
-Effect.runPromise(program.pipe(Effect.provide(MailJournalLive), Effect.provide(NodeFileSystem.layer)));
+Effect.runPromise(program.pipe(Effect.provide(MailJournalLive), Effect.provide([NodeFileSystem.layer, NodeJournalWatcher.layer])));
 ```
 
 `events: ["mail-received"]` narrows the stream's element type to that variant, so a projection over a slice is exhaustively checkable rather than a cast. An event marked `terminal` makes the journal quiescent once it reaches the tail: further appends fail typed unless the event is marked `reopen`, and every `changes` stream ends rather than hanging — including one whose slice excludes the terminal event, and including a subscriber that attaches after the fact.

@@ -1,4 +1,4 @@
-import { Effect, JsonSchema, Result, Schema } from "effect";
+import { Effect, JsonPointer, JsonSchema, Result, Schema } from "effect";
 import type { CanonicalJsonError, CanonicalJsonOptions } from "./CanonicalJson.js";
 import { CanonicalJson } from "./CanonicalJson.js";
 import { MAX_NESTING_DEPTH } from "./internal/limits.js";
@@ -8,8 +8,7 @@ import { KeywordFamilies } from "./KeywordFamilies.js";
  * The Draft-07 meta-schema URL SchemaStore documents declare as `$schema`.
  *
  * Deliberately carries the trailing `#` fragment: the SchemaStore corpus
- * (and the extraction source's committed files) use the fragment form,
- * where core's `JsonSchema.META_SCHEMA_URI_DRAFT_07` omits it.
+ * uses the fragment form, where core's `JsonSchema.META_SCHEMA_URI_DRAFT_07` omits it.
  *
  * @public
  */
@@ -39,7 +38,10 @@ export class SchemaConversionError extends Schema.TaggedError<SchemaConversionEr
 /**
  * Indicates that a caller-supplied `includeAnnotationKey` admitted an
  * annotation key outside the declared keyword families
- * ({@link KeywordFamilies}).
+ * ({@link KeywordFamilies}), or that a
+ * {@link StoreDocumentOptions.rootAnnotations} override names a key outside
+ * the admitted set (the standard annotation keywords plus the declared
+ * families).
  *
  * Raised by {@link StoreDocument.fromSchema}. This package emits
  * SchemaStore-compatible documents only, so the declared families are the
@@ -50,7 +52,8 @@ export class SchemaConversionError extends Schema.TaggedError<SchemaConversionEr
  *
  * The predicate itself cannot be introspected, so the offending keys are
  * the ones it actually admitted while the document was being generated: a
- * key the source schema never annotates cannot appear here.
+ * key the source schema never annotates cannot appear here. Override keys,
+ * by contrast, are checked up front, before anything is generated.
  *
  * @public
  */
@@ -79,8 +82,16 @@ export interface StoreDocumentOptions {
 	readonly $id: string;
 	/**
 	 * Passed through to core's `Schema.toJsonSchemaDocument`
-	 * (`additionalProperties`, `generateDescriptions`,
+	 * (`onExcessProperty`, `generateDescriptions`,
 	 * `includeAnnotationKey`).
+	 *
+	 * `onExcessProperty` defaults to `"error"` here — every object is
+	 * emitted closed (`additionalProperties: false`) because a published
+	 * document is a contract — where core's own default is `"ignore"`
+	 * (open). Pass `{ onExcessProperty: "ignore" }` to reopen
+	 * one document's objects. Omitting `jsonSchema` altogether reproduces
+	 * byte-for-byte what the CLI writes for a target that declares none — a
+	 * consumer test may call `fromSchemaResult(schema, { $id })` and compare.
 	 *
 	 * The declared non-standard keyword families ({@link KeywordFamilies})
 	 * are **always admitted**, regardless of what a supplied
@@ -96,6 +107,39 @@ export interface StoreDocumentOptions {
 	 * `ToJsonSchemaOptions` passes through, and is best left unset.
 	 */
 	readonly jsonSchema?: Schema.ToJsonSchemaOptions;
+	/**
+	 * Annotations merged onto the emitted document's root after assembly —
+	 * the escape hatch for a generator-side annotation loss the source
+	 * schema cannot express (a filtered field, or a root whose annotations
+	 * core does not carry).
+	 *
+	 * Admitted keys are the standard JSON Schema annotation keywords
+	 * (`title`, `description`, `$comment`, `default`, `examples`,
+	 * `readOnly`, `writeOnly`, `contentMediaType`, `contentEncoding`) and
+	 * the declared keyword families
+	 * ({@link KeywordFamilies}); any other key fails the build with
+	 * {@link UndeclaredAnnotationKeyError}, so the override cannot become a
+	 * back door for assertion keywords. Override keys win over generated
+	 * ones. The override is checked before generation, so when both this
+	 * gate and the `includeAnnotationKey` gate would fire, the override's
+	 * keys are the ones reported and the predicate's are not.
+	 *
+	 * Placement follows the assembled root's shape, in three cases:
+	 *
+	 * - An inline root (a `Struct`, a primitive) takes the annotations
+	 *   directly.
+	 * - A bare local `$ref` root (the shape a `Schema.Class` root produces —
+	 *   `{ "$ref": "#/$defs/FooEncoded" }`) whose `$defs` entry has no
+	 *   other referent takes them on that entry instead: Draft-07
+	 *   validators ignore `$ref` siblings, so the root would carry them
+	 *   nowhere.
+	 * - A bare local `$ref` root whose entry is shared — a recursive class,
+	 *   or one another definition also references — is replaced by
+	 *   `{ ...annotations, allOf: [{ "$ref": ... }] }`, so the document is
+	 *   annotated without every other occurrence of the type inheriting
+	 *   the root's title.
+	 */
+	readonly rootAnnotations?: Readonly<Record<string, unknown>>;
 }
 
 // Matches a Draft-07 `#/definitions/...` `$ref` pointer prefix. Core's
@@ -104,6 +148,93 @@ export interface StoreDocumentOptions {
 // `$defs` (a Draft-07-valid alias), so refs are rewritten back to stay
 // resolvable against that pool.
 const DEFINITIONS_REF_PREFIX = /^#\/definitions(?=\/|$)/;
+
+// Standard JSON Schema annotation keywords a root override may set. The
+// assertion vocabulary is deliberately absent: an override is for annotation
+// loss, not for changing what a validator asserts.
+const STANDARD_ANNOTATION_KEYWORDS = new Set([
+	"title",
+	"description",
+	"$comment",
+	"default",
+	"examples",
+	"readOnly",
+	"writeOnly",
+	"contentMediaType",
+	"contentEncoding",
+]);
+
+// Counts the `$ref` string values equal to `ref` reachable from `node`
+// through schema positions. Declared-family values are opaque payloads
+// addressed to a language server, so the walk does not descend into them —
+// a `$ref`-shaped string inside one is not a referent. Runs after
+// `restoreDefsRefs`, so every local pointer is already in `#/$defs/...`
+// form and a raw string comparison is exact.
+const countRefs = (node: unknown, ref: string): number => {
+	if (Array.isArray(node)) {
+		let count = 0;
+		for (const item of node) {
+			count += countRefs(item, ref);
+		}
+		return count;
+	}
+	if (typeof node === "object" && node !== null) {
+		let count = 0;
+		for (const [key, value] of Object.entries(node)) {
+			if (KeywordFamilies.isDeclared(key)) {
+				continue;
+			}
+			count += key === "$ref" && value === ref ? 1 : countRefs(value, ref);
+		}
+		return count;
+	}
+	return 0;
+};
+
+// Applies `rootAnnotations` per the placement rule. Mutates the freshly
+// assembled `root`/`defs` (both are this call's own null-prototype
+// accumulators, never the caller's schema AST). Declared-family values are
+// shared by reference, matching the annotate() path.
+//
+// The `$ref` token core emits is JSON-Pointer escaped AND percent-encoded
+// (`My Foo/Bar` → `#/$defs/My%20Foo~1Bar`), so the pool name is recovered by
+// decoding the fragment, never by slicing a prefix. An `undefined` value is
+// skipped rather than written: an `undefined` key is not JSON and would
+// otherwise fail serialization later, far from the override that caused it.
+//
+// A bare-`$ref` root merges onto its `$defs` entry ONLY when the root is
+// that entry's sole referent. A recursive class (`children: Array(Node)`)
+// shares the entry with every self-reference, and a document title merged
+// onto it would title each occurrence; that root is instead replaced by
+// `{ ...annotations, allOf: [{ $ref }] }` — the Draft-07 shape that
+// annotates a root without aliasing the type. Annotations are written
+// before `allOf` so the serialized document reads title-first.
+const applyRootAnnotations = (
+	root: Record<string, unknown>,
+	defs: Record<string, unknown>,
+	annotations: Readonly<Record<string, unknown>>,
+): void => {
+	const keys = Object.keys(root);
+	const ref = keys.length === 1 && keys[0] === "$ref" ? root.$ref : undefined;
+	const path = typeof ref === "string" ? JsonPointer.parseUriFragment(ref) : undefined;
+	const pool = path !== undefined && path.length === 2 && path[0] === "$defs" ? defs[path[1]] : undefined;
+	const entry =
+		typeof pool === "object" && pool !== null && !Array.isArray(pool) ? (pool as Record<string, unknown>) : undefined;
+	const shared = entry !== undefined && typeof ref === "string" && countRefs(defs, ref) > 0;
+	if (shared) {
+		delete root.$ref;
+	}
+	const target = entry !== undefined && !shared ? entry : root;
+	for (const [key, value] of Object.entries(annotations)) {
+		if (value === undefined) {
+			continue;
+		}
+		target[key] = value;
+	}
+	if (shared) {
+		root.allOf = [{ $ref: ref }];
+	}
+};
 
 class RewriteDepthExceeded {
 	readonly _tag = "RewriteDepthExceeded";
@@ -154,6 +285,112 @@ const restoreDefsRefs = (node: unknown, depth: number): unknown => {
 	return node;
 };
 
+// Core's Draft-07 lowering renders an open-ended tuple as an `items` array
+// plus a schema-shaped `additionalItems` (2020-12 `prefixItems[i]` →
+// `items[i]`, trailing `items` → `additionalItems`). That is valid Draft-07,
+// but ajv's strictTuples rule — the gate `schemastore build`/`check` runs
+// under — accepts a tuple only when `minItems` equals the tuple length AND
+// either `additionalItems: false` or `maxItems` equals it. An open tail
+// given as `additionalItems: <schema>` fails that rule by construction, so
+// `Schema.NonEmptyArray(X)` — which always lowers to a uniform 1-tuple with
+// an open tail — could not be published through the CLI at all.
+//
+// When every tuple element is content-equal to the rest element (the
+// `NonEmptyArray` case, and any `TupleWithRest` with a uniform head), the
+// tuple form carries no information beyond `{ items: X }` plus whatever
+// `minItems` core already emitted, which strict ajv accepts. This walk
+// collapses exactly that case, after `restoreDefsRefs`, on the freshly assembled root and `$defs` (both are
+// this call's own accumulators, never the caller's schema AST). A
+// heterogeneous head keeps the tuple form — what the strict gate should do
+// with that shape is a gate-policy question, not a lowering one.
+//
+// The comparison uses `CanonicalJson.equals`, so an element and a rest
+// schema that differ only in key order still collapse, and an annotation
+// carried on the uniform elements survives on the collapsed `items` (it is
+// the rest element's own schema).
+//
+// The walk descends only through Draft-07 schema-bearing keywords. Every
+// other value — `default`, `examples`, `const`, `enum`, declared-family
+// payloads, unknown keywords — is instance data or an opaque annotation and
+// is copied by reference, so an object that merely looks like a tuple
+// schema is never rewritten. Map keywords (`properties` and kin) walk their
+// values, never the map itself, so a property named `items` is safe too.
+const SCHEMA_KEYWORDS: ReadonlySet<string> = new Set([
+	"items",
+	"additionalItems",
+	"contains",
+	"additionalProperties",
+	"propertyNames",
+	"not",
+	"if",
+	"then",
+	"else",
+]);
+const SCHEMA_ARRAY_KEYWORDS: ReadonlySet<string> = new Set(["allOf", "anyOf", "oneOf"]);
+const SCHEMA_MAP_KEYWORDS: ReadonlySet<string> = new Set([
+	"properties",
+	"patternProperties",
+	"definitions",
+	"$defs",
+	"dependencies",
+]);
+
+const isPlainObject = (value: unknown): value is Record<string, unknown> =>
+	typeof value === "object" && value !== null && !Array.isArray(value);
+
+const collapseSchemaMap = (node: unknown, depth: number): unknown => {
+	if (!isPlainObject(node)) {
+		return node;
+	}
+	// Null-prototype accumulator: the same `__proto__` hardening as
+	// `restoreDefsRefs` — the walk must stay safe on its own terms.
+	const out: Record<string, unknown> = Object.create(null);
+	for (const [key, value] of Object.entries(node)) {
+		// `dependencies` values may be property-name arrays; only a schema is walked.
+		out[key] = isPlainObject(value) ? collapseUniformTuples(value, depth + 1) : value;
+	}
+	return out;
+};
+
+const collapseUniformTuples = (node: unknown, depth: number): unknown => {
+	if (depth >= MAX_NESTING_DEPTH) {
+		throw new RewriteDepthExceeded();
+	}
+	if (!isPlainObject(node)) {
+		return node;
+	}
+	const out: Record<string, unknown> = Object.create(null);
+	for (const [key, value] of Object.entries(node)) {
+		if (SCHEMA_KEYWORDS.has(key)) {
+			out[key] = Array.isArray(value)
+				? value.map((item) => collapseUniformTuples(item, depth + 1))
+				: collapseUniformTuples(value, depth + 1);
+		} else if (SCHEMA_ARRAY_KEYWORDS.has(key) && Array.isArray(value)) {
+			out[key] = value.map((item) => collapseUniformTuples(item, depth + 1));
+		} else if (SCHEMA_MAP_KEYWORDS.has(key)) {
+			out[key] = collapseSchemaMap(value, depth + 1);
+		} else {
+			out[key] = value;
+		}
+	}
+	const tuple = out.items;
+	const rest = out.additionalItems;
+	if (
+		Array.isArray(tuple) &&
+		tuple.length > 0 &&
+		isPlainObject(rest) &&
+		tuple.every((element) => CanonicalJson.equals(element, rest))
+	) {
+		// `minItems` stays exactly as core emitted it: a Draft-07 tuple asserts
+		// no length on its own (optional elements lower `minItems` below the
+		// tuple length, or omit it), so the collapse is equivalent only if it
+		// adds no length bound either.
+		out.items = rest;
+		delete out.additionalItems;
+	}
+	return out;
+};
+
 /**
  * A SchemaStore-shaped Draft-07 JSON Schema document assembled from an
  * Effect Schema source: `$schema` (the Draft-07 meta-schema) + `$id` + the
@@ -163,9 +400,11 @@ const restoreDefsRefs = (node: unknown, depth: number): unknown => {
  * `Schema.toJsonSchemaDocument` (Draft 2020-12), core's
  * `JsonSchema.toDocumentDraft07` lowering, the `#/definitions` →
  * `#/$defs` `$ref` rewrite the lowering makes necessary — so every `$ref`
- * in a built document already resolves against the `$defs` pool — and the
- * gate that holds the document's non-standard surface to the declared
- * keyword families ({@link KeywordFamilies}). The package owns assembly and
+ * in a built document already resolves against the `$defs` pool — the
+ * uniform-tuple collapse that keeps open-ended `NonEmptyArray`-shaped
+ * arrays publishable through the strict ajv gate, and the gate that
+ * holds the document's non-standard surface to the declared keyword
+ * families ({@link KeywordFamilies}). The package owns assembly and
  * publication shape, not a JSON Schema engine.
  *
  * Annotated declared-family keys survive into the built document because
@@ -174,7 +413,12 @@ const restoreDefsRefs = (node: unknown, depth: number): unknown => {
  * (2020-12 `prefixItems[i]` → Draft-07 `items[i]`, trailing `items` →
  * `additionalItems`). This package therefore does no re-grafting of its
  * own; it only declines to rewrite `$ref`-shaped strings *inside* those
- * opaque payloads.
+ * opaque payloads. The one structural normalization it does own is the
+ * uniform-tuple collapse: when every tuple element is content-equal to the
+ * open rest schema — always true for `NonEmptyArray` — the tuple is
+ * rewritten to a single-schema `items` with core's `minItems` untouched,
+ * the shape ajv's strictTuples rule accepts; a heterogeneous head keeps the
+ * tuple form.
  *
  * @public
  */
@@ -233,6 +477,15 @@ export class StoreDocument extends Schema.Class<StoreDocument>("StoreDocument")(
 		options: StoreDocumentOptions,
 	): Result.Result<StoreDocument, SchemaConversionError | UndeclaredAnnotationKeyError> {
 		try {
+			// The override is gated up front: a bad override fails the build
+			// before anything is generated.
+			const overrideKeys = Object.keys(options.rootAnnotations ?? {});
+			const refusedOverrides = overrideKeys.filter(
+				(key) => !STANDARD_ANNOTATION_KEYWORDS.has(key) && !KeywordFamilies.isDeclared(key),
+			);
+			if (refusedOverrides.length > 0) {
+				return Result.fail(UndeclaredAnnotationKeyError.make({ $id: options.$id, keys: [...refusedOverrides].sort() }));
+			}
 			const userIncludes = options.jsonSchema?.includeAnnotationKey;
 			// A predicate cannot be introspected, so the gate is enforced by
 			// wrapping it: every key it admits outside the declared families is
@@ -240,7 +493,11 @@ export class StoreDocument extends Schema.Class<StoreDocument>("StoreDocument")(
 			// generated document — the build fails, so admitting them could only
 			// let core's own lowering throw first and bury the real cause.
 			const undeclared = new Set<string>();
+			// A published document is a contract, so objects are closed unless a
+			// caller reopens them: core's own default is "ignore" (open), and this
+			// package does not follow it.
 			const document = Schema.toJsonSchemaDocument(source, {
+				onExcessProperty: "error",
 				...options.jsonSchema,
 				includeAnnotationKey: (key) => {
 					if (KeywordFamilies.isDeclared(key)) {
@@ -256,12 +513,15 @@ export class StoreDocument extends Schema.Class<StoreDocument>("StoreDocument")(
 				return Result.fail(UndeclaredAnnotationKeyError.make({ $id: options.$id, keys: [...undeclared].sort() }));
 			}
 			const lowered = JsonSchema.toDocumentDraft07(document);
-			const root = restoreDefsRefs(lowered.schema, 0) as Record<string, unknown>;
+			const root = collapseUniformTuples(restoreDefsRefs(lowered.schema, 0), 0) as Record<string, unknown>;
 			// Null-prototype for the same `__proto__` hardening as the rewrite
 			// walk: a definition named `__proto__` must land as an own key.
 			const defs: Record<string, unknown> = Object.create(null);
 			for (const [name, definition] of Object.entries(lowered.definitions)) {
-				defs[name] = restoreDefsRefs(definition, 1);
+				defs[name] = collapseUniformTuples(restoreDefsRefs(definition, 1), 1);
+			}
+			if (options.rootAnnotations !== undefined) {
+				applyRootAnnotations(root, defs, options.rootAnnotations);
 			}
 			return Result.succeed(StoreDocument.make({ $schema: DRAFT_07_META_SCHEMA, $id: options.$id, root, defs }));
 		} catch (cause) {
@@ -285,8 +545,7 @@ export class StoreDocument extends Schema.Class<StoreDocument>("StoreDocument")(
 	/**
 	 * The flat SchemaStore publication shape: `$schema`, `$id`, the root
 	 * schema's keywords spread at the top level, then the `$defs` pool.
-	 * `$defs` is omitted when the pool is empty (a deliberate divergence
-	 * from the extraction source, which always emitted the key).
+	 * `$defs` is omitted when the pool is empty.
 	 */
 	toJson(): Record<string, unknown> {
 		return {

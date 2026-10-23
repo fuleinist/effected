@@ -1,6 +1,6 @@
 import { assert, describe, it } from "@effect/vitest";
 import { MemoryFileSystem } from "@effected/memfs";
-import { Effect, FileSystem, Layer, Option, Schema } from "effect";
+import { Effect, Layer, Option, Schema } from "effect";
 import { TestConsole } from "effect/testing";
 import { ActionEnvironment, ActionOutputs, ActionState } from "../src/index.js";
 
@@ -13,10 +13,8 @@ const Token = Schema.Struct({ value: Schema.String, expires: Schema.Number });
  * append by concatenation. `/rf` is seeded because a write needs its parent.
  */
 const runnerFiles = () => {
-	const { fileSystem, volume } = Effect.runSync(
-		MemoryFileSystem.makeInspectableWith({ "/rf": MemoryFileSystem.directory() }),
-	);
-	return { written: volume, layer: Layer.succeed(FileSystem.FileSystem, fileSystem) };
+	const handle = MemoryFileSystem.makeSync({ "/rf": MemoryFileSystem.directory() });
+	return { written: handle.volume, layer: handle.layer };
 };
 
 const live = <A, E>(
@@ -43,6 +41,49 @@ describe("ActionState", () => {
 			const body = files.written.text("/rf/state") ?? "";
 			assert.isTrue(body.startsWith("token<<"));
 			assert.include(body, '{"value":"abc","expires":1}');
+		});
+	});
+
+	it.effect("refuses a key that cannot head a block, and writes nothing", () => {
+		// The same heredoc protocol as ActionOutputs: a key carrying a line break
+		// would end its block early and corrupt every entry after it, so it is
+		// a typed `writeFailed` naming the key — never a silent corruption.
+		const { files, run } = live(
+			Effect.gen(function* () {
+				const error = yield* Effect.flip((yield* ActionState).save("to\nken", { value: "abc", expires: 1 }, Token));
+				assert.strictEqual(error.reason, "writeFailed");
+				assert.strictEqual(error.key, "to\nken");
+			}),
+		);
+		return Effect.map(run, () => {
+			assert.isUndefined(files.written.text("/rf/state"));
+		});
+	});
+
+	it.effect("refuses a key containing the runner-file separators, and writes nothing", () => {
+		// The runner reads each line up to its first `=` or `<<`, whichever comes
+		// first: a key carrying `=` parses as a key=value property before the
+		// block ever opens, and a key carrying `<<` splits at the wrong delimiter
+		// — either way every entry after it is corrupt, so both fail typed. A key
+		// ending in `<` composes a header (`to<<<DELIM`) whose first `<<` matches
+		// one character early, leaving a delimiter the terminator can never match.
+		const { files, run } = live(
+			Effect.gen(function* () {
+				const forEquals = yield* Effect.flip((yield* ActionState).save("to=ken", { value: "abc", expires: 1 }, Token));
+				assert.strictEqual(forEquals.reason, "writeFailed");
+				assert.strictEqual(forEquals.key, "to=ken");
+				const forHeredoc = yield* Effect.flip(
+					(yield* ActionState).save("to<<ken", { value: "abc", expires: 1 }, Token),
+				);
+				assert.strictEqual(forHeredoc.reason, "writeFailed");
+				assert.strictEqual(forHeredoc.key, "to<<ken");
+				const forTrailing = yield* Effect.flip((yield* ActionState).save("to<", { value: "abc", expires: 1 }, Token));
+				assert.strictEqual(forTrailing.reason, "writeFailed");
+				assert.strictEqual(forTrailing.key, "to<");
+			}),
+		);
+		return Effect.map(run, () => {
+			assert.isUndefined(files.written.text("/rf/state"));
 		});
 	});
 

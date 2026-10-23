@@ -1,6 +1,7 @@
 import { LocalExec, Run } from "@effected/commands";
 import { Context, Crypto, Effect, FileSystem, Layer, Option, Redacted as Red, Schema } from "effect";
-import { ChildProcess, ChildProcessSpawner } from "effect/unstable/process";
+import * as Hex from "effect/encoding/Hex";
+import { ChildProcess, ChildProcessSpawner } from "effect/process";
 import { IntegrityHash } from "./IntegrityHash.js";
 import { NpmExecutor } from "./NpmExecutor.js";
 import { PublishError } from "./PublishError.js";
@@ -19,13 +20,47 @@ const PROVENANCE_URL = /https:\/\/search\.sigstore\.dev\/\?logIndex=\d+/;
  * never does, and the publish goes out unauthenticated with no diagnostic. A
  * registry path is preserved (`//host/artifactory/api/npm/repo/:_authToken`).
  */
-const authKey = (registry: string, credential: RegistryCredential): string => {
+const authKey = (registry: string, kind: RegistryCredential["kind"]): string => {
 	const withoutScheme = registry.replace(/^https?:/, "");
 	const withSlash = withoutScheme.endsWith("/") ? withoutScheme : `${withoutScheme}/`;
 	// npm reads BOTH keys per registry, checking `_authToken` first and then
 	// `_auth` (npm-registry-fetch's `hasAuth`), so the credential's own kind
 	// picks the key and neither shadows the other.
-	return `${withSlash}:${credential.kind === "token" ? "_authToken" : "_auth"}`;
+	return `${withSlash}:${kind === "token" ? "_authToken" : "_auth"}`;
+};
+
+/**
+ * Replaces the first line keyed `key` with `line`, and drops later duplicates
+ * and every line keyed `stale`.
+ *
+ * @remarks
+ * `stale` is the same registry's other-scheme key. npm checks `_authToken`
+ * before `_auth`, so a token line left behind would silently win over a basic
+ * credential just written, and a basic line left behind would outlive the
+ * credential that replaced it. `replaced` is false when no line is keyed
+ * `key`, so the caller appends to `text`, whose stale lines are already gone.
+ * Lines split on `\n` only, so every untouched line (including a
+ * trailing `\r`) survives byte for byte; a replaced line keeps its `\r`.
+ */
+const replaceKey = (
+	text: string,
+	key: string,
+	stale: string,
+	line: string,
+): { readonly text: string; readonly replaced: boolean } => {
+	const out: Array<string> = [];
+	let replaced = false;
+	for (const raw of text.split("\n")) {
+		const eq = raw.indexOf("=");
+		const name = eq === -1 ? undefined : raw.slice(0, eq).trim();
+		if (name === key) {
+			if (!replaced) out.push(raw.endsWith("\r") ? `${line}\r` : line);
+			replaced = true;
+		} else if (name !== stale) {
+			out.push(raw);
+		}
+	}
+	return { text: out.join("\n"), replaced };
 };
 
 /** What `npm pack --json` reports for one tarball. */
@@ -39,8 +74,17 @@ const PackJsonEntry = Schema.Struct({
 	entryCount: Schema.optionalKey(Schema.Number),
 });
 
-/** npm emits an array, one entry per packed package. */
-const PackJson = Schema.Array(PackJsonEntry);
+/**
+ * What `npm pack --json` prints, on both supported majors: npm 11 emits an
+ * array of entries, one per packed package; npm 12 emits an object keyed by
+ * package name — the 12.0.0 breaking change that made `pack` and `publish`
+ * share one `--json` shape (`lib/commands/pack.js` hands `logTar` the
+ * tarball's `name` as the key, where 11 handed it the array index). A
+ * single-package pack is one entry either way.
+ */
+const PackJson = Schema.Union([Schema.Array(PackJsonEntry), Schema.Record(Schema.String, PackJsonEntry)]);
+
+const decodePackJson = Schema.decodeUnknownEffect(Schema.fromJsonString(PackJson));
 
 /**
  * A packed tarball and the two digests that describe it.
@@ -103,9 +147,13 @@ export interface PublishOutcome {
  * @public
  */
 export interface DryRunOutcome {
+	/** Whether the package packs. `false` is an answer, not a failure. */
 	readonly ok: boolean;
+	/** Tarball size in bytes, when npm reported it. */
 	readonly packedSize?: number | undefined;
+	/** Unpacked size in bytes, when npm reported it. */
 	readonly unpackedSize?: number | undefined;
+	/** Number of files the tarball would contain, when npm reported it. */
 	readonly fileCount?: number | undefined;
 	/** npm's output, for diagnostics. */
 	readonly output: string;
@@ -161,6 +209,24 @@ export interface PackagePublishShape {
 	 * kit's error messages, not the operating system's process table. Masking
 	 * the token in a CI log is the **caller's** job; this package takes a
 	 * `Redacted` and has no opinion about log output.
+	 *
+	 * Every call upserts, because npm reads the **first** line with a matching
+	 * key: a second line for the same registry, appended below the first, would
+	 * be silently shadowed, and a re-minted short-lived credential would never
+	 * take effect. So the first existing line whose key (the text before the
+	 * first `=`, trimmed) equals the key this call writes is replaced in place,
+	 * any later lines with that key are removed, and every other line is left
+	 * byte for byte in its original order. The same registry's other-scheme key
+	 * (`_auth` when writing a token, `_authToken` when writing a basic
+	 * credential) is removed too, because npm checks `_authToken` first and a
+	 * leftover would shadow or outlive the credential just written. With no
+	 * matching line, the new one is appended. The
+	 * registry path is part of the key, and a missing trailing slash on
+	 * `registry` is added, so `https://host/npm` and `https://host/npm/` write
+	 * the same key. A missing file
+	 * (`NotFound`) starts empty; any other read failure — an unreadable file, a
+	 * directory at the path — fails `PublishError` with kind `"auth"` and leaves
+	 * the file untouched, rather than overwriting config it could not read.
 	 */
 	readonly setupAuth: (options: {
 		readonly registry: string;
@@ -202,11 +268,6 @@ const make = Effect.fnUntraced(function* () {
 			Effect.provideService(LocalExec, local),
 		);
 
-	const hex = (bytes: Uint8Array): string =>
-		Array.from(bytes)
-			.map((byte) => byte.toString(16).padStart(2, "0"))
-			.join("");
-
 	/** Runs an npm invocation, mapping a command failure onto `kind`. */
 	const npm = (
 		args: ReadonlyArray<string>,
@@ -241,17 +302,19 @@ const make = Effect.fnUntraced(function* () {
 			),
 		);
 
+	// One decode, JSON text to entries: the union covers npm 11's array and
+	// npm 12's name-keyed object, and either failure is `output`.
 	const parsePackJson = (stdout: string, subject: string) =>
-		Effect.try({
-			try: () => JSON.parse(stdout) as unknown,
-			catch: (cause) => new PublishError({ kind: "output", subject, cause }),
-		}).pipe(
-			Effect.flatMap((parsed) =>
-				Schema.decodeUnknownEffect(PackJson)(parsed).pipe(
-					Effect.catch((cause) => Effect.fail(new PublishError({ kind: "output", subject, cause }))),
-				),
-			),
-			Effect.flatMap((entries) => {
+		decodePackJson(stdout).pipe(
+			Effect.mapError((cause) => new PublishError({ kind: "output", subject, cause })),
+			Effect.flatMap((decoded) => {
+				// Annotated on purpose: `Array.isArray`'s `arg is any[]` cannot narrow
+				// the union's `ReadonlyArray` member, so the true branch degrades to
+				// `any[]` and would turn every field read off the entry into an
+				// unchecked `any`.
+				const entries: ReadonlyArray<typeof PackJsonEntry.Type> = Array.isArray(decoded)
+					? decoded
+					: Object.values(decoded);
 				const entry = entries[0];
 				return entry === undefined
 					? Effect.fail(new PublishError({ kind: "output", subject, output: stdout }))
@@ -270,12 +333,33 @@ const make = Effect.fnUntraced(function* () {
 			// The KIND is safe to annotate and worth annotating; the value is not.
 			credential: options.credential.kind,
 		});
-		const existing = yield* fs.readFileString(options.npmrcPath).pipe(Effect.catch(() => Effect.succeed("")));
+		// Only an absent file is an empty npmrc. Any other read failure (permission
+		// denied, a directory in the way) means a file exists that we cannot read;
+		// treating it as empty would overwrite it and drop its prior config lines.
+		const existing = yield* fs
+			.readFileString(options.npmrcPath)
+			.pipe(
+				Effect.catch((cause) =>
+					cause.reason._tag === "NotFound"
+						? Effect.succeed("")
+						: Effect.fail(
+								new PublishError({ kind: "auth", registry: options.registry, subject: options.npmrcPath, cause }),
+							),
+				),
+			);
 		const secret = options.credential.kind === "token" ? options.credential.token : options.credential.encoded;
-		const line = `${authKey(options.registry, options.credential)}=${Red.value(secret)}`;
-		const separator = existing === "" || existing.endsWith("\n") ? "" : "\n";
+		const key = authKey(options.registry, options.credential.kind);
+		const line = `${key}=${Red.value(secret)}`;
+		const upserted = replaceKey(
+			existing,
+			key,
+			authKey(options.registry, options.credential.kind === "token" ? "basic" : "token"),
+			line,
+		);
+		const base = upserted.text;
+		const separator = base === "" || base.endsWith("\n") ? "" : "\n";
 		yield* fs
-			.writeFileString(options.npmrcPath, `${existing}${separator}${line}\n`)
+			.writeFileString(options.npmrcPath, upserted.replaced ? base : `${base}${separator}${line}\n`)
 			.pipe(
 				Effect.catch((cause) => Effect.fail(new PublishError({ kind: "auth", registry: options.registry, cause }))),
 			);
@@ -315,7 +399,7 @@ const make = Effect.fnUntraced(function* () {
 			name: entry.name,
 			version: entry.version,
 			...integrityField(entry.integrity),
-			sha256Hex: hex(digest),
+			sha256Hex: Hex.encode(digest),
 			...(entry.size === undefined ? {} : { packedSize: entry.size }),
 			...(entry.unpackedSize === undefined ? {} : { unpackedSize: entry.unpackedSize }),
 			...(entry.entryCount === undefined ? {} : { fileCount: entry.entryCount }),
@@ -330,9 +414,8 @@ const make = Effect.fnUntraced(function* () {
 		// Provenance is an npm-registry feature. Passing `--provenance` to GitHub
 		// Packages or a custom registry fails the publish outright, so a caller
 		// who asks for it against a non-npm target gets the publish without it
-		// rather than a failed release — the v3 behavior, kept because a release
-		// pipeline publishing to three registries should not lose two of them to
-		// one flag.
+		// rather than a failed release: a release pipeline publishing to three
+		// registries should not lose two of them to one flag.
 		const provenance = options.provenance === true && classifyRegistry(options.registry) === "npm";
 		const args = [
 			"publish",
@@ -419,23 +502,45 @@ const notStubbed = (method: string) => () =>
 	);
 
 /**
- * The npm publish workflow, run through `@effected/commands`.
+ * Packs, dry-runs and publishes npm tarballs, and writes registry auth into an
+ * npmrc, by running `npm` through `@effected/commands`.
  *
  * @remarks
  * Every invocation goes through `Run`, so a non-zero npm exit arrives as a
- * typed failure and npm's `--json` output is schema-decoded rather than cast.
- * The service deliberately does **not** own: masking (the caller's job, so no
- * Actions edge lives in a publish library), the npmrc location (caller-supplied
- * — resolving `~` needs `node:os`, which a boundary package may not import),
- * or a fused probe-then-publish (v3's `publishIdempotent`, deprecated in its
- * own source for hardcoding the wrong registry).
+ * typed {@link PublishError} and npm's `--json` output is schema-decoded rather
+ * than cast. The service deliberately does **not** own: log masking (the
+ * caller's job, so no Actions edge lives in a publish library), the npmrc
+ * location (caller-supplied — resolving `~` needs `node:os`), or a fused
+ * probe-then-publish (probe with `NpmRegistry`, then call `publishTarball`
+ * against an explicit registry).
+ *
+ * Every method's `R` is `never`: the live layer resolves its platform services
+ * once at construction.
+ *
+ * @example
+ * ```ts
+ * import { PackagePublish } from "@effected/npm";
+ * import { Effect } from "effect";
+ *
+ * const program = Effect.gen(function* () {
+ *   const publish = yield* PackagePublish;
+ *   const packed = yield* publish.pack("./packages/my-lib");
+ *   return yield* publish.publishTarball(packed.tarballPath, {
+ *     registry: "https://registry.npmjs.org",
+ *     provenance: true,
+ *   });
+ * });
+ * ```
  *
  * @public
  */
 export class PackagePublish extends Context.Service<PackagePublish, PackagePublishShape>()(
 	"@effected/npm/PackagePublish",
 ) {
-	/** Resolves its platform dependencies once at construction. */
+	/**
+	 * The live service. Requires `FileSystem`, `Crypto`, `ChildProcessSpawner`
+	 * and `LocalExec` (from `@effected/commands`), resolved once at construction.
+	 */
 	static readonly layer: Layer.Layer<
 		PackagePublish,
 		never,

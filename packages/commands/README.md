@@ -7,10 +7,10 @@
 
 Structured command running and CLI tool discovery over Effect's core `ChildProcessSpawner` contract. `Run.collect` / `text` / `lines` / `json` turn a spawned process into a typed result instead of a bag of streams to check by hand, and `ToolDiscovery` answers "is `biome` here, and which copy should I run" without a shell probe. `effect` is the only dependency of any kind.
 
-> **Pre-release.** This package is part of the `@effected/*` kit, in pre-`1.0.0`
-> development against a single pinned Effect v4 prerelease. Packages graduate to
-> `1.0.0` once Effect `4.0.0` ships. To hold your own `effect` versions at
-> exactly the ones the kit is built and tested against, install
+> **Pre-`1.0.0`.** This package is part of the `@effected/*` kit, built on stable
+> Effect v4 (`effect` `^4.0.0`) and still in `0.x` development. Stable Effect
+> makes a kit `1.0.0` possible, not automatic. To keep your `effect` and
+> `@effect/*` versions on the line the kit is built and tested against, install
 > [`@effected/pnpm-plugin-effect`](https://www.npmjs.com/package/@effected/pnpm-plugin-effect).
 >
 > **Stability: unstable.** This package's API surface is not yet considered
@@ -49,7 +49,7 @@ Run a command and get back trimmed stdout, with a non-zero exit as a typed failu
 import { Run } from "@effected/commands";
 import { NodeServices } from "@effect/platform-node";
 import { Effect } from "effect";
-import { ChildProcess } from "effect/unstable/process";
+import { ChildProcess } from "effect/process";
 
 const program = Run.text(ChildProcess.make("git", ["rev-parse", "--short", "HEAD"]));
 
@@ -79,6 +79,7 @@ Effect.runPromise(program.pipe(Effect.provide(AppLayer))).then(console.log);
 ## Features
 
 - `Run` — `collect` / `collectTee` / `text` / `lines` / `json` / `jsonLine` / `exitCode` / `succeeds` / `stream` / `detach` over a core `ChildProcess.Command`, plus the `extendEnv` combinator that adds environment variables without dropping `PATH`/`HOME`.
+- `Run.collect` is the kit's **one** spawn-and-collect primitive — spawn, drain stdout and stderr concurrently under one scope, await the exit code, and hand back all three as data (a non-zero exit is a result, not an error). Reach for it whenever you need a typed subprocess wrapper the kit does not already ship: it is what `@effected/git`'s README points a consumer at for a git command `Git` itself does not have. Hand-rolling the triple-collect gets you an unbounded-memory capture and, sooner or later, a deadlock the moment either OS pipe buffer fills.
 - `Run.jsonLine` — the framing variant for a child that speaks a JSON protocol on stdout: it decodes the last non-empty line, so the child's own logging before the payload is tolerated, and it decodes regardless of the exit code, because an envelope that carries its own `ok` field has already reported. `Run.json` remains the whole-stdout, exit-code-first form.
 - `CommandFailedError` / `CommandOutputError` — structurally routable failures (`kind: "nonZero" | "spawn" | "timeout"`, `"notJson" | "schema" | "tooLarge"`) instead of a `reason: string` to substring-match. An output error from a combinator that parsed independently of the exit code carries that code and both redacted streams, so a bad payload is diagnosable without a second run.
 - `ToolDiscovery` — resolves a tool globally or project-locally by spawning it (never a shell `command -v`), with an evidence cache so two callers with different constraints never share a stale answer.

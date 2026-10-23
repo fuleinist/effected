@@ -1,6 +1,8 @@
 import { assert, describe, it, layer } from "@effect/vitest";
-import { Cause, Effect, FileSystem, Option, Path, PlatformError, Ref } from "effect";
+import { MemoryFileSystem } from "@effected/memfs";
+import { Cause, Effect, Option, Path, PlatformError, Ref } from "effect";
 import { Walker } from "../src/Walker.js";
+import { platform } from "./fixtures.js";
 
 layer(Path.layer)("Walker.ascend", (it) => {
 	it.effect("yields each directory from start to the root, nearest first", () =>
@@ -277,26 +279,33 @@ describe("Walker.firstMatch", () => {
 	);
 });
 
-/** A FileSystem whose `exists` consults a fixed set. Core-only: no platform package. */
+/**
+ * A real memfs volume holding exactly `present` (as empty files). `findUpward`
+ * probes with `exists`, which the volume answers honestly — no stub decides
+ * what "present" means.
+ */
 const FsWith = (present: ReadonlyArray<string>) =>
-	FileSystem.layerNoop({
-		exists: (path: string) => Effect.succeed(present.includes(path)),
-	});
+	MemoryFileSystem.layerWith(Object.fromEntries(present.map((path) => [path, ""])));
 
-/** A FileSystem whose `exists` denies permission on one path and consults a set for the rest. */
+/**
+ * A volume holding `present` whose `exists` probe on `denied` fails
+ * `PermissionDenied`. Every other probe delegates to the volume.
+ */
 const FsDenying = (denied: string, present: ReadonlyArray<string>) =>
-	FileSystem.layerNoop({
-		exists: (path: string) =>
-			path === denied
-				? Effect.fail(
-						PlatformError.systemError({
-							_tag: "PermissionDenied",
-							module: "FileSystem",
-							method: "exists",
-							pathOrDescriptor: path,
-						}),
-					)
-				: Effect.succeed(present.includes(path)),
+	MemoryFileSystem.layerWith(Object.fromEntries(present.map((path) => [path, ""])), {
+		faults: {
+			exists: (path: string) =>
+				path === denied
+					? Effect.fail(
+							PlatformError.systemError({
+								_tag: "PermissionDenied",
+								module: "FileSystem",
+								method: "exists",
+								pathOrDescriptor: path,
+							}),
+						)
+					: undefined,
+		},
 	});
 
 layer(FsWith(["/a/b/.apprc", "/a/.apprc"]))("findUpward, config in both directories", (it) => {
@@ -352,8 +361,10 @@ layer(FsWith(["/a/b/config/.apprc", "/a/.apprc"]))("findUpward, near subpath vs 
 // Absorption through findUpward's OWN seam. Every other fs fixture succeeds, so a
 // findUpward that lets one failing `exists` abort the whole walk passes all of them.
 // This is the concrete failure config-file's resolvers depend on not happening: an
-// unreadable directory must not hide a config above it.
-layer(FsDenying("/a/b/.apprc", ["/a/.apprc"]))("findUpward, unreadable nearer candidate", (it) => {
+// unreadable directory must not hide a config above it. The denied candidate
+// is genuinely present, so only the fault stands between the walk and
+// `/a/b/.apprc`: disarm it and the answer moves to the nearer file.
+layer(FsDenying("/a/b/.apprc", ["/a/b/.apprc", "/a/.apprc"]))("findUpward, unreadable nearer candidate", (it) => {
 	it.effect("absorbs a denied probe and keeps ascending", () =>
 		Effect.gen(function* () {
 			const found = yield* Walker.findUpward(["/a/b", "/a"], (dir) => [`${dir}/.apprc`]);
@@ -414,6 +425,92 @@ describe("Walker.findRoot", () => {
 
 			assert.deepStrictEqual(found, Option.some("/a/b"));
 			assert.deepStrictEqual(yield* Ref.get(probed), ["/a/b/c", "/a/b"]);
+		}),
+	);
+});
+
+// `git rev-parse --show-toplevel` answers the PHYSICAL root; a start reached
+// through `/link -> /real` ascends a lexical chain that never spells it.
+const linkedRepo = platform({ "/real/repo/packages/foo/x.txt": "x" }, { symlinks: { "/link": "/real" } });
+
+layer(linkedRepo)("Walker.ascendWithin", (it) => {
+	// The control: this fixture really does make `ascend`'s lexical ceiling fail
+	// open, so the assertions below fail for the right reason.
+	it.effect("ascend's lexical stopAt misses the physical ceiling behind a symlink", () =>
+		Effect.gen(function* () {
+			const dirs = yield* Walker.ascend("/link/repo/packages/foo", { stopAt: "/real/repo" });
+			assert.strictEqual(dirs.at(-1), "/");
+		}),
+	);
+
+	it.effect("stops at the lexical ancestor whose real path is the physical ceiling", () =>
+		Effect.gen(function* () {
+			const dirs = yield* Walker.ascendWithin("/link/repo/packages/foo", Option.some("/real/repo"));
+			assert.deepStrictEqual(dirs, ["/link/repo/packages/foo", "/link/repo/packages", "/link/repo"]);
+		}),
+	);
+
+	it.effect("stops at a ceiling spelled lexically, like ascend", () =>
+		Effect.gen(function* () {
+			const dirs = yield* Walker.ascendWithin("/link/repo/packages/foo", Option.some("/link/repo/"));
+			assert.deepStrictEqual(dirs, ["/link/repo/packages/foo", "/link/repo/packages", "/link/repo"]);
+		}),
+	);
+
+	it.effect("stops at the ceiling when no symlink is involved", () =>
+		Effect.gen(function* () {
+			const dirs = yield* Walker.ascendWithin("/real/repo/packages/foo", Option.some("/real/repo"));
+			assert.deepStrictEqual(dirs, ["/real/repo/packages/foo", "/real/repo/packages", "/real/repo"]);
+		}),
+	);
+
+	it.effect("runs to the root when the ceiling names no ancestor", () =>
+		Effect.gen(function* () {
+			const dirs = yield* Walker.ascendWithin("/link/repo/packages/foo", Option.some("/elsewhere"));
+			assert.deepStrictEqual(dirs, ["/link/repo/packages/foo", "/link/repo/packages", "/link/repo", "/link", "/"]);
+		}),
+	);
+
+	it.effect("truncates a chain longer than maxDepth", () =>
+		Effect.gen(function* () {
+			const dirs = yield* Walker.ascendWithin("/link/repo/packages/foo", Option.some("/real/repo"), { maxDepth: 2 });
+			assert.deepStrictEqual(dirs, ["/link/repo/packages/foo", "/link/repo/packages"]);
+		}),
+	);
+
+	it.effect("ascends to the root, exactly as ascend does, when there is no ceiling", () =>
+		Effect.gen(function* () {
+			const dirs = yield* Walker.ascendWithin("/link/repo/packages/foo", Option.none());
+			assert.deepStrictEqual(dirs, yield* Walker.ascend("/link/repo/packages/foo"));
+			assert.strictEqual(dirs.at(-1), "/");
+		}),
+	);
+
+	it.effect("honours maxDepth when there is no ceiling", () =>
+		Effect.gen(function* () {
+			const dirs = yield* Walker.ascendWithin("/link/repo/packages/foo", Option.none(), { maxDepth: 2 });
+			assert.deepStrictEqual(dirs, ["/link/repo/packages/foo", "/link/repo/packages"]);
+		}),
+	);
+
+	it.effect("dies on a relative ceiling, like ascend", () =>
+		Effect.gen(function* () {
+			const exit = yield* Effect.exit(Walker.ascendWithin("/link/repo/packages/foo", Option.some("real/repo")));
+			assert.isTrue(exit._tag === "Failure" && Cause.hasDies(exit.cause));
+		}),
+	);
+});
+
+layer(
+	platform(
+		{ "/real/repo/packages/foo/x.txt": "x" },
+		{ symlinks: { "/link": "/real" }, unresolvable: { "/link/repo/packages": "PermissionDenied" } },
+	),
+)("Walker.ascendWithin, an ancestor that cannot be resolved", (it) => {
+	it.effect("absorbs the failed probe and still stops at the ceiling above it", () =>
+		Effect.gen(function* () {
+			const dirs = yield* Walker.ascendWithin("/link/repo/packages/foo", Option.some("/real/repo"));
+			assert.deepStrictEqual(dirs, ["/link/repo/packages/foo", "/link/repo/packages", "/link/repo"]);
 		}),
 	);
 });

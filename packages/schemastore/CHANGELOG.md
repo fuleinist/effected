@@ -1,5 +1,643 @@
 # @effected/schemastore
 
+## 0.25.0
+
+### Dependencies
+
+| Dependency | Type | Action | From | To |
+| --- | --- | --- | --- | --- |
+| @effected/semver | dependency | updated | 0.14.0 | 0.15.0 |
+
+### Maintenance
+
+- Upgrades core Effect library dependencies to v4.0.6 [#1039][#1039]
+
+### Thanks
+
+Thanks to [@spencerbeggs](https://github.com/spencerbeggs) for their contributions!
+
+[#1039]: https://github.com/spencerbeggs/effected/pull/1039
+
+## 0.24.0
+
+### Dependencies
+
+| Dependency | Type | Action | From | To |
+| --- | --- | --- | --- | --- |
+| @effected/semver | dependency | updated | 0.13.0 | 0.14.0 |
+
+### Maintenance
+
+- Upgrades core Effect library dependencies to v4.0.5 [#1019][#1019]
+
+### Thanks
+
+Thanks to [@spencerbeggs](https://github.com/spencerbeggs) for their contributions!
+
+[#1019]: https://github.com/spencerbeggs/effected/pull/1019
+
+## 0.23.0
+
+### Dependencies
+
+| Dependency | Type | Action | From | To |
+| --- | --- | --- | --- | --- |
+| @effected/semver | dependency | updated | 0.12.0 | 0.13.0 |
+
+### Maintenance
+
+- Upgrades core Effect library dependencies to v4.0.4 [#1008][#1008]
+
+### Thanks
+
+Thanks to [@spencerbeggs](https://github.com/spencerbeggs) for their contributions!
+
+[#1008]: https://github.com/spencerbeggs/effected/pull/1008
+
+## 0.22.0
+
+### Dependencies
+
+| Dependency | Type | Action | From | To |
+| --- | --- | --- | --- | --- |
+| @effected/semver | dependency | updated | 0.11.1 | 0.12.0 |
+| effect | peerDependency | updated | 4.0.2 | ^4.0.3 |
+
+- Effect 4.0.3 advance: the `effect` peer and catalog move from the exact `4.0.2` hold back to `^4.0.3`. No API change. [#1000][#1000]
+
+### Thanks
+
+Thanks to [@spencerbeggs](https://github.com/spencerbeggs) for their contributions!
+
+[#1000]: https://github.com/spencerbeggs/effected/pull/1000
+
+## 0.21.5
+
+### Bug Fixes
+
+- Republished with every `effect` and `@effect/*` version pinned exactly to `4.0.2`, both peer and dependency ranges.
+
+- On 2026-10-10, every `@effect/*` package published at `4.0.3`, but `effect@4.0.3` itself never reached npm (Effect-TS/effect#8994). The 4.0.3 packages require `effect ^4.0.3`. A caret range on any of them therefore resolves a 4.0.3 package next to `effect@4.0.2`, and the program crashes when it imports them. Exact pins keep a fresh install of any kit package on a matched set until `effect@4.0.3` is available. [#997][#997]
+
+### Dependencies
+
+| Dependency | Type | Action | From | To |
+| --- | --- | --- | --- | --- |
+| @effected/semver | dependency | updated | 0.11.0 | 0.11.1 |
+
+### Thanks
+
+Thanks to [@spencerbeggs](https://github.com/spencerbeggs) for their contributions!
+
+[#997]: https://github.com/spencerbeggs/effected/pull/997
+
+## 0.21.4
+
+### Maintenance
+
+- Version-only release to keep workspace versions consistent; no changes to this package.
+
+## 0.21.3
+
+### Maintenance
+
+- Version-only release to keep workspace versions consistent; no changes to this package.
+
+## 0.21.2
+
+### Maintenance
+
+- Version-only release to keep workspace versions consistent; no changes to this package.
+
+## 0.21.1
+
+### Maintenance
+
+- Version-only release to keep workspace versions consistent; no changes to this package.
+
+## 0.21.0
+
+### Maintenance
+
+- Released in lockstep with `@effected/schemastore-cli@0.21.0` (fixed version group).
+
+## 0.20.0
+
+### Breaking Changes
+
+#### The merged catalog blocks on a duplicate entry name
+
+- The merged catalog now refuses two slices that advertise the same catalog `name`, exactly as it already refused a duplicate `url`: `build` and `check` exit `1` with `CatalogMergeError`, and the merged file is left untouched. Two configs in one `catalogDir` that each default to the same key-derived name passed before and now fail. Give one of them a `catalog.name`.
+
+- The `conflicts` entries in the `--format json` report and on `CatalogMergeError` are now discriminated by `kind`:
+
+- `{ kind: "url", url, slices }` for a catalog URL advertised by more than one slice
+
+- `{ kind: "name", name, slices }` for an entry name advertised by more than one slice
+
+- Code that read `conflict.url` unconditionally must narrow on `kind` first.
+
+### Features
+
+#### `catalog.name` — a display name for the catalog entry
+
+- `defineConfig`'s `catalog` block takes an optional `name`, the catalog entry's display name. It defaults to the schema key, so existing configs produce identical output.
+
+- The key still names the file, the `$id` and every catalog URL. Only the entry's displayed name changes, so a versioned `<version>/<name>.json` layout with `appendVersion: false` keeps short file names while the catalog shows a descriptive name such as `reposets.config.toml`.
+
+- `defineConfig` rejects a config in which two cataloged schemas resolve to the same catalog name, whether set by `catalog.name` or defaulted from the key, and the error names both keys. Across configs, the merged catalog enforces the same rule (see Breaking Changes).
+
+- Closes #924. [#926][#926]
+
+### Thanks
+
+Thanks to [@spencerbeggs](https://github.com/spencerbeggs) for their contributions!
+
+[#926]: https://github.com/spencerbeggs/effected/pull/926
+
+## 0.19.0
+
+### Features
+
+#### Payload validation against a published document
+
+- `@effected/schemastore` gains the `InstanceValidator` contract — the question `SchemaValidator` does not answer: not "is this document valid JSON Schema", but "does this instance conform to the published document it names in `$schema`". `InstanceFinding` carries the engine's report (a JSON pointer into the instance, the keyword, the message) as values; the error channel stays reserved for a mechanism failure (`InstanceValidatorError`). Like `SchemaValidator`, the package ships the contract and its doubles only (`InstanceValidator.noop`, `InstanceValidator.layerTest`), so no application gains an engine dependency.
+
+- `@effected/schemastore-cli` ships the one real implementation, `AjvInstanceValidator.layer` — the same ajv strict-mode setup `AjvValidator` gates documents with, now shared through one internal `makeAjv`, so a document the `check` gate admits always compiles in the instance engine too and the two verdicts cannot drift.
+
+#### `schemastore validate`
+
+- New CLI command: `schemastore validate <payload.json> [--schema <path|$id>]`. The reference is the `--schema` flag or the payload's own `$schema`, resolved file-first and then against every identity a config schema derives (a target `$id`, a frozen version's `$id`/`url`, the catalog `url`) — so CI validates an action's output against the committed document with no third-party tool and no network fetch. The payload's `$schema` self-reference is the pointer naming the document: it is stripped before validating only when the resolved document does not declare `$schema` as a root property — generated documents set `additionalProperties: false`, which would otherwise reject the very self-reference that names them. A document that does declare `$schema` (the `HostedSchema` pattern, where the source struct carries `$schema: Schema.Literal(OutputSchema.$id)`, so the key is required and const-constrained) validates the payload verbatim and enforces its own constraint on the key. A non-conforming payload exits `1` with pointer-and-keyword findings; `--format json` writes one report document to stdout and moves the human lines to stderr, exactly as `build`/`check` do.
+
+- Closes #857. [#904][#904]
+
+### Thanks
+
+Thanks to [@fuleinist](https://github.com/fuleinist) for their contributions!
+
+[#904]: https://github.com/spencerbeggs/effected/pull/904
+
+## 0.18.0
+
+### Breaking Changes
+
+- The kit now builds on and peers stable `effect` `^4.0.0`, in place of an exact release-candidate pin. Move `effect` and every `@effect/*` package to the same `4.x` version in one install: Effect releases them together at one version. A package from this release cannot share an install with an `effect` release candidate. The peer is a caret range, so later `4.x` releases of Effect satisfy the kit without a kit release.
+- Kit exports are unchanged. A consumer moving to stable `effect` meets these changes in its own code:
+  - `Array`, `Chunk`, `Effect` and `Record` `partition`, their `separate` helpers and `Option.partitionMap` return `[successes, failures]`. Where both sides share a type, the reversed destructuring still compiles, so search for every call.
+  - `Schema.brand` takes one identifier and is type-only: the identifier is not stored on the AST and does not survive `SchemaRepresentation`. Compose distinct brands by applying `brand` more than once.
+  - `TestSchema`'s round-trip assertion is `verifyRoundTrip`, with Effect forms `succeedEffect`, `failEffect` and `verifyRoundTripEffect`.
+  - Effect marks some APIs `@stability unstable`: those may change in a minor Effect release. Untagged APIs follow semver.
+
+### Documentation
+
+- Every exported construct's TSDoc was reviewed against the current API. Summaries open with what the construct does, error channels and requirements are stated, examples use real imports and compile, and links resolve. Comments that described options, errors or defaults the code does not have were corrected. [#910][#910]
+
+### Dependencies
+
+| Dependency | Type | Action | From | To |
+| --- | --- | --- | --- | --- |
+| @effected/semver | dependency | updated | 0.10.1 | 0.11.0 |
+
+### Thanks
+
+Thanks to [@spencerbeggs](https://github.com/spencerbeggs) for their contributions!
+
+[#910]: https://github.com/spencerbeggs/effected/pull/910
+
+## 0.17.0
+
+### Breaking Changes
+
+- `defineConfig` now requires `name`, and `catalogPath` is removed in favour of `catalogDir`.
+
+- `name` is the simple file base name of this config's catalog slice. A config without one fails with a message explaining what to add.
+
+- Configs that share a `catalogDir` must have `name`s that differ case-insensitively.
+
+- `catalogDir` (default `<outputDir>/catalogs`) replaces `catalogPath`. Each config writes its own slice to `<catalogDir>/<name>.json`.
+
+- `catalogDir` may not equal the merged catalog's path, `outputDir`, or contain any config's output documents, because every `*.json` file in it is read as a slice.
+
+- Migration: add a `name` to each config and rename or remove `catalogPath`.
+
+```ts
+export default defineConfig({
+  name: "my-tool",
+  outputDir: "schemas",
+  // catalogDir defaults to "schemas/catalogs"; the merged catalog.json
+  // lands at "schemas/catalog.json", the same URL as before
+  schemas: {
+    // ...
+  },
+});
+```
+
+### Documentation
+
+- README describes the slice-and-merge catalog layout and the new `name` and `catalogDir` options. [#872][#872]
+
+### Thanks
+
+Thanks to [@spencerbeggs](https://github.com/spencerbeggs) for their contributions!
+
+[#872]: https://github.com/spencerbeggs/effected/pull/872
+
+## 0.16.1
+
+### Bug Fixes
+
+- `StoreDocument.fromSchema` now collapses a uniform Draft-07 tuple — every `items` element content-equal to the open `additionalItems` rest schema, which is how `Schema.NonEmptyArray` always lowers — to the equivalent `items` + `minItems` shape. The tuple form was valid Draft-07 but ajv's strictTuples rule rejects an open tail by construction, so a schema using `NonEmptyArray` could not be published through `schemastore build` or `schemastore check` at all. The collapsed form carries the same assertions (core's `minItems` is kept exactly as emitted, so optional head elements stay optional) and keeps any declared-family annotation on the uniform elements; documents for every other array shape are unchanged.
+- A heterogeneous head with an open rest (`Schema.TupleWithRest` with differing element and rest schemas) keeps the tuple form — what the strict gate should do with that shape is a gate-policy decision, not a lowering one. A closed tuple (pinned by `maxItems`/`minItems` at the tuple length, no `additionalItems`) already passed the gate and is untouched. [#863][#863]
+
+### Thanks
+
+Thanks to [@fuleinist](https://github.com/fuleinist) for their contributions!
+
+[#863]: https://github.com/spencerbeggs/effected/pull/863
+
+## 0.16.0
+
+### Breaking Changes
+
+- The kit now builds on and peers `effect` `4.0.0-rc.118`, pinned exactly. Consumers must move `effect` and every `@effect/*` package to `4.0.0-rc.118` in the same install. Effect removed the `effect/unstable/*` export paths in this release, so an `@effected` package built on rc.118 cannot share an install with `effect` rc.117.
+
+- Moving the pin also closes a fresh-install failure on rc.117. `@effect/platform-node@4.0.0-rc.117` depends on `@effect/platform-node-shared` with a caret, so an install without a lockfile paired the rc.118 shared package with `effect` rc.117 and failed at startup with `ERR_MODULE_NOT_FOUND`.
+
+- Consumers moving to this release: effect removed the `effect/unstable/*` export paths (imports become `effect/<module>`), moved `Arbitrary` to `effect`, split `effect/Encoding` into `effect/encoding/Base64`, `Base64Url` and `Hex`, and renamed the `Schema` range and string checks (`isLengthBetween` → `isBetweenLength`, `isStartsWith` → `isStartingWith`, and so on). Kit exports are otherwise unchanged; the kit's own imports moved onto the new paths. [#864][#864]
+
+### Dependencies
+
+| Dependency | Type | Action | From | To |
+| --- | --- | --- | --- | --- |
+| @effected/semver | dependency | updated | 0.9.0 | 0.10.0 |
+
+### Thanks
+
+Thanks to [@spencerbeggs](https://github.com/spencerbeggs) for their contributions!
+
+[#864]: https://github.com/spencerbeggs/effected/pull/864
+
+## 0.15.2
+
+### Maintenance
+
+- Version-only release to keep workspace versions consistent; no changes to this package.
+
+## 0.15.1
+
+### Documentation
+
+- The `StoreDocumentOptions.jsonSchema` API docs now state current behaviour without Effect version history: a published document's objects are closed (`onExcessProperty: "error"`) where core's own default is `"ignore"`, and `{ onExcessProperty: "ignore" }` reopens them. [#821][#821]
+
+### Thanks
+
+Thanks to [@spencerbeggs](https://github.com/spencerbeggs) for their contributions!
+
+[#821]: https://github.com/spencerbeggs/effected/pull/821
+
+## 0.15.0
+
+### Features
+
+- Upgrades core Effect to `rc-117` [#812][#812]
+
+### Dependencies
+
+| Dependency | Type | Action | From | To |
+| --- | --- | --- | --- | --- |
+| @effected/semver | dependency | updated | 0.8.0 | 0.9.0 |
+
+### Thanks
+
+Thanks to [@spencerbeggs](https://github.com/spencerbeggs) for their contributions!
+
+[#812]: https://github.com/spencerbeggs/effected/pull/812
+
+## 0.14.0
+
+### Breaking Changes
+
+#### The whole kit tracks Effect `4.0.0-rc.116`
+
+- Every package's `effect` peer moves from `4.0.0-rc.115` to `4.0.0-rc.116`. The kit uses exact prerelease pins rather than a caret, so a consumer must move with it. No `@effected` API changes shape on this advance; the kit itself needed one edit (`Stream.scan` now takes a lazy initial state, met once in `@effected/jsonl`'s `Journal.projection`). A consumer that upgrades meets the rc.116 renames on its own code:
+
+- `SchemaTransformation.make` is `makeTransformation`, and `Transformation#compose` is the dual standalone `SchemaTransformation.composeTransformation`.
+
+- `SchemaGetter.Getter` is a tagged union exposing only `pipe`: `new SchemaGetter.Getter`, `onSome` and `onNone` are gone in favour of `SchemaGetter.map` / `compose` / `run` and `transformEffect` / `transformOptionalEffect`.
+
+- `Stream.scan` and `Stream.scanEffect` take `() => initial`; `Stream.partition` returns `[passes, fails]`; `Stream.mapBoth` takes `onElement` / `onError`.
+
+- `Effect.orElseSucceed` passes the error to its fallback and `Effect.isEffect` narrows to `Effect<unknown, unknown, unknown>`.
+
+- `ByteSize.Input` string literals are checked at compile time; parse external strings with `ByteSize.fromString`.
+
+- Arbitrary shrinking changed, so property-test replay tokens recorded at rc.115 no longer reproduce.
+
+### Documentation
+
+#### The Claude Code and Copilot plugins teach the rc.116 surface
+
+- The `effect-v4-schema` transformation reference composes transformations with `SchemaTransformation.composeTransformation` and describes the `Getter` surface rc.116 left behind; the source-lookup and testing skills report rc.116 as the kit's pin and the two-copy lockfile shape the bridge now produces (`rc.115` for the toolchain, `rc.116` for the kit); the session-start briefing reports rc.116.
+
+### Dependencies
+
+| Dependency | Type | Action | From | To |
+| --- | --- | --- | --- | --- |
+| @effected/semver | dependency | updated | 0.7.1 | 0.8.0 |
+| @effect/platform-node | devDependency | updated | 4.0.0-rc.115 | 4.0.0-rc.116 |
+| @effect/vitest | devDependency | updated | 4.0.0-rc.115 | 4.0.0-rc.116 |
+| effect | devDependency | updated | 4.0.0-rc.115 | 4.0.0-rc.116 |
+| effect | peerDependency | updated | 4.0.0-rc.115 | 4.0.0-rc.116 |
+
+### Maintenance
+
+#### The rc.115 `packageExtensions` bridge is retired
+
+- The toolchain (`@savvy-web/tsdown-plugins`, `rolldown-pnpm-config`, `@vitest-agent/*`) has republished declaring `effect` and its `@effected/*` inputs as regular dependencies, so the workspace no longer needs the `packageExtensions` block that pinned them by hand. Its ten keys named versions no longer installed and the lockfile diff on removal was the checksum line alone. Nothing published changes; this is the workspace's own install shape. [#792][#792]
+
+### Thanks
+
+Thanks to [@spencerbeggs](https://github.com/spencerbeggs) for their contributions!
+
+[#792]: https://github.com/spencerbeggs/effected/pull/792
+
+## 0.13.1
+
+### Bug Fixes
+
+- Fixes closure issues in all packages.
+
+### Dependencies
+
+| Dependency | Type | Action | From | To |
+| --- | --- | --- | --- | --- |
+| @effected/semver | dependency | updated | 0.7.0 | 0.7.1 |
+
+### Thanks
+
+Thanks to [@spencerbeggs](https://github.com/spencerbeggs) for their contributions!
+
+## 0.13.0
+
+### Maintenance
+
+- Released in lockstep with `@effected/schemastore-cli@0.13.0` (fixed version group).
+
+## 0.12.0
+
+### Breaking Changes
+
+- `StoreDocument.fromSchema` now generates every object with `onExcessProperty: "error"` by default, emitting `additionalProperties: false` throughout. Previously it followed core's open default. A published document that was generated open now reads as a contract change on the next build; pass `jsonSchema: { onExcessProperty: "ignore" }` on that target to keep the prior shape.
+
+- `defineConfig`'s input is now decoded with `Schema.Struct`: an unknown key is rejected by name instead of silently ignored (a typo like `versons` now fails), every issue on an entry is reported at once, and rejection messages read as `defineConfig: schema "<name>" Expected string at ["baseUrl"]` rather than the previous phrasing.
+
+- `SchemaValidator.layer` — the shipped ajv engine — and the `ajv` / `ajv-formats` dependencies have moved to `@effected/schemastore-cli` as `AjvValidator.layer`. This package now ships only the `SchemaValidator` contract and its doubles (`noop`, `makeTest`, `layerTest`), so an application that imports it at runtime (to read a `HostedSchema`, say) no longer installs or bundles an engine; its only runtime dependency is `@effected/semver`. The `schemastore` command composes the engine for you. A program that provided `SchemaValidator.layer` to `SchemaPipeline` itself provides `AjvValidator.layer` from `@effected/schemastore-cli` instead. [#746][#746]
+
+### Features
+
+#### HostedSchema
+
+- New `HostedSchema` derives an application's `$schema` URL and `defineConfig`'s `$id` from one value, so the URL your code emits and the `$id` the CLI writes can never disagree.
+
+```ts
+import { HostedSchema } from "@effected/schemastore";
+
+export const OutputSchema = HostedSchema.github({
+  repo: "savvy-web/silk-release-action",
+  path: "schemas",
+  name: "silk-release-action.output",
+  versions: ["5.2"],
+});
+
+OutputSchema.$id; // the current document's $id
+OutputSchema.url; // its catalog URL
+```
+
+- Three constructors cover every hosting shape: `HostedSchema.github({ repo, branch?, path?, name, versions?, current?, layout? })`, `HostedSchema.schemastore({ name, versions?, current? })` for documents published to SchemaStore itself, and `HostedSchema.custom({ baseUrl, name, versions?, current?, layout? })` for any other `https://` directory. Each validates the identity and throws a descriptive `Error` when it does not resolve — an unversioned `current`, a duplicate version label, or a `name` that is not a simple file base name.
+
+- `defineConfig`'s schema entries accept an optional `hosted` field carrying one of these values; when set, it owns `baseUrl`, `versions`, `current`, `layout` and `appendVersion` for that entry, and spelling those keys beside `hosted` is rejected.
+
+- `appendVersion` (default `true`, on every constructor and as a hand-spelled entry field) decides whether a versioned file carries SchemaStore's `-<version>` suffix. With `false` the version directory names the file alone — `schemas/6.0/output.json` with `$id` to match — which reads better when the repository already names the tool; it requires the `"versioned"` layout, since under `"flat"` every version would share one file name. `SchemaVersioning.fileName` / `schemaUrl` / `catalogUrls` and `CatalogEntry.assemble` take the same option.
+
+- `SCHEMASTORE_ID_BASE` and `SCHEMASTORE_CATALOG_BASE` now live in this module (still re-exported from the package root, so no import changes).
+
+### Thanks
+
+Thanks to [@spencerbeggs](https://github.com/spencerbeggs) for their contributions!
+
+[#746]: https://github.com/spencerbeggs/effected/pull/746
+
+## 0.11.0
+
+### Breaking Changes
+
+#### `defineConfig` schemas are now keyed, and every URL is derived
+
+- `SchemastoreConfigInput.schemas` is now a record keyed by file base name instead of an array — the key IS the schema's `name`, and every derived path and URL (`$id`, the write path, the catalog `url`) comes from that name plus `outputDir`, `baseUrl` and `layout`. Nothing is spelled out by hand anymore, so a document's identity can never disagree with where it's written.
+
+```ts
+import { defineConfig } from "@effected/schemastore";
+
+export default defineConfig({
+  outputDir: "schemas",
+  schemas: {
+    "my-schema": {
+      schema: MySchema,
+      baseUrl: "schemastore",
+      catalog: {
+        description: "My schema",
+        fileMatch: ["my-schema.json"],
+      },
+    },
+  },
+});
+```
+
+- `baseUrl: "schemastore"` expands to `json.schemastore.org` for `$id` and `www.schemastore.org` for the catalog `url`, and forces the flat layout. Any other `baseUrl` must be an `https://` URL, used as one base for both, defaulting to the `"versioned"` layout (`schemas/<version>/<name>-<version>.json`).
+
+- Versioning moves from a separate `CatalogConfig`/`CatalogTarget` shape onto each schema entry: `versions` lists every label a schema advertises, and `current` (default: the newest) is the one generated now — every other label becomes a frozen file the CLI verifies but never regenerates. `CatalogConfig` and `CatalogTarget` are removed; a catalog entry is now declared per schema via `catalog: { description, fileMatch }` and assembled from the same derived identity.
+
+- Top-level `drift`/`onDrift` defaults live on the config, with a per-entry `drift` override; both flow to the CLI's drift table unchanged in meaning.
+
+- New exports support this: `SCHEMASTORE_ID_BASE`, `SCHEMASTORE_CATALOG_BASE`, `CatalogInput`, `SchemaEntryInput`, `FrozenVersion`, `ResolvedSchema`, and `SchemaLayout`. `SchemaVersioning.fileName`/`schemaUrl`/`catalogUrls` and `CatalogEntry.assemble` accept the new `layout` and `current` parameters (existing calls are unaffected — both default to the previous behavior).
+
+- There is no migration shim: every repository consuming this package's previous config shape must rewrite its `schemastore.config.ts` to the keyed form above. [#740][#740]
+
+### Thanks
+
+Thanks to [@spencerbeggs](https://github.com/spencerbeggs) for their contributions!
+
+[#740]: https://github.com/spencerbeggs/effected/pull/740
+
+## 0.10.0
+
+### Features
+
+- `StoreDocument.fromSchema` accepts a `rootAnnotations` option (also forwarded through `SchemaTarget`'s builders): annotations merged onto the emitted document's root after assembly, for a generator-side annotation loss the source schema cannot express.
+
+```ts
+StoreDocument.fromSchema(schema, {
+	$id: "https://example.com/foo.json",
+	rootAnnotations: { title: "Foo", description: "…" },
+});
+```
+
+- Admitted keys are the standard JSON Schema annotation keywords (`title`, `description`, `$comment`, `default`, `examples`, `readOnly`, `writeOnly`, `contentMediaType`, `contentEncoding`) plus the declared keyword families — any other key fails the build with `UndeclaredAnnotationKeyError`, checked up front before anything is generated. When the assembled root is a bare local `$ref` (the shape a `Schema.Class` root produces), the annotations are merged onto the `$defs` entry it names instead, since Draft-07 validators ignore `$ref` siblings. When that entry is shared with other references (a recursive class, for instance), the root is instead rewritten to `{ ...annotations, allOf: [{ $ref }] }` so the document is annotated without every occurrence of the type inheriting its title.
+
+- `CanonicalJson.equals(left, right)` is now exported: content equality under the serializer's own semantics (object key order ignored, array order preserved, total against cyclic or hostile-depth input). It is the same comparison `DocumentDiff`'s leaf checks and a catalog write-if-changed decision already make, exposed for a consumer that writes its own JSON artifact and wants to decide "unchanged" by the same rule.
+
+### Bug Fixes
+
+- `defineConfig` throws a clear "invalid catalog: expected an array of catalog entries" error when a config's `catalog` field is not an array, instead of failing later with an opaque `.map is not a function` — and its per-entry error label no longer stringifies a non-object entry as `"undefined"`. [#730][#730]
+
+* `DocumentLint.checkRef` decodes local `$ref` pointers the way ajv does — split on `/`, then percent-decode and pointer-unescape each token — so a percent-encoded pointer (core emits `encodeURI(escapeToken(name))`, e.g. `#/$defs/My%20Foo~1BarEncoded` for the class identifier `My Foo/BarEncoded`) resolves against the literal `$defs` key instead of linting as `UnresolvedRef`. Pointer-escaped (`~1`/`~0`) names and subpath refs resolve exactly as before, and a `$ref` that is not a well-formed URI fragment (a raw space, non-ASCII, `#`) resolves as the engine resolves it; only malformed percent-encoding, which ajv also refuses, warns. A `#/definitions/...` pointer stays a warning.
+
+### Other
+
+- The duplicate pointer-segment escapers in `DocumentLint` and `CanonicalJson` are folded onto `JsonPointer.escapeToken` (identical semantics; lint/error `path` strings unchanged). [#734][#734]
+
+### Thanks
+
+Thanks to [@fuleinist](https://github.com/fuleinist) and [@spencerbeggs](https://github.com/spencerbeggs) for their contributions!
+
+[#730]: https://github.com/spencerbeggs/effected/pull/730
+
+[#734]: https://github.com/spencerbeggs/effected/pull/734
+
+## 0.9.1
+
+### Maintenance
+
+- Version-only release to keep workspace versions consistent; no changes to this package.
+
+## 0.9.0
+
+### Breaking Changes
+
+- `SchemaTarget.published` is a **required** field on the public `SchemaTarget` interface. Every target built through `SchemaTarget.make` already carries it, but code that constructs a `SchemaTarget` object literal (rather than via `make`) must now add `published: false` (or `true`) to typecheck.
+
+- `SchemaVersioning.next(version, "contract")` now suggests a **minor** bump instead of a major one, preserving the label's component count (`1` → `2`, `1.2` → `1.3`, `1.2.0` → `1.3.0`). `DocumentDiff` cannot tell an added optional property from a removed required one, so the suggestion's job is to be strictly greater and conspicuous; bump major by hand when you know a change is breaking. Callers that asserted on the old major suggestion need to update their expectations. [#721][#721]
+
+### Features
+
+#### Widened version grammar
+
+- `SchemaVersion` now accepts `major`, `major.minor` and `major.minor.patch` labels (optional prerelease; `+build` metadata is still rejected). Each label round-trips verbatim into its file name and URL, and missing components read as `0` for ordering, so `1`, `1.0` and `1.0.0` compare equal. `SchemaTarget.make` also accepts a plain string `version` and parses it, so a config file no longer needs `SchemaVersioning.parseResult` to build a versioned target.
+
+#### `SchemaTarget.published`
+
+- A new `published` flag on every target marks whether anyone depends on its label yet. `SchemaTarget.make` accepts it as an optional input and fills it in (default `false`). It is the lifecycle switch the drift policy reads; the pipeline's own `contractChanges: "block-versioned"` guard is unchanged.
+
+#### `DriftPolicy`
+
+- A pure classifier over a target's `published` flag and `WriteChange`: `classify({ published, change }, policy)` answers `"write"` or `"drift"` under `"semantic"` (a contract change is drift), `"strict"` (annotation changes too) or `"allow"` (nothing is held). `DriftPolicy.defaults` is `{ policy: "semantic", onDrift: "error" }`.
+
+#### `defineConfig`
+
+- The `schemastore.config.ts` contract for the new `@effected/schemastore-cli` companion. It validates the schema targets, decodes the `catalog` and `drift` blocks, derives each catalog entry's `versions` map from every versioned schema of its name through `CatalogEntry.assemble`, rejects two spellings of one version under one name, rejects an output `path` declared twice across schemas and catalog entries (compared after a lexical normalisation of `./`, `..` and trailing slashes; the CLI's loader re-checks on the resolved absolute paths), and brands the result so `isSchemastoreConfig` recognises a loaded module's default export.
+
+#### `CatalogEntry.assemble` duplicate-version guard
+
+- `CatalogEntry.assemble` now throws an `Error` naming both spellings when two `versions` labels compare equal under `SchemaVersioning.Order` (`1.2` and `1.2.0`): each would otherwise mint its own `versions` key and URL for one document. `defineConfig` already refused this; the library entry point now does too.
+
+### Thanks
+
+Thanks to [@spencerbeggs](https://github.com/spencerbeggs) for their contributions!
+
+[#721]: https://github.com/spencerbeggs/effected/pull/721
+
+## 0.8.0
+
+### Features
+
+- `SchemaTarget` gained an optional `jsonSchema` field, forwarded through `SchemaPipeline.run` and `SchemaPipeline.check` to `StoreDocument.fromSchema`. It carries `Schema.ToJsonSchemaOptions` per target, so a document's generation contract is self-describing regardless of core's own default.
+
+- This closes a regression: since `effect` 4.0.0-rc.113, `Schema.toJsonSchemaDocument` emits open objects by default. A previously published closed-object document could no longer be regenerated unchanged — every struct flipped `additionalProperties: false` to `true`, which the pipeline classified as a contract change and refused to rewrite a pinned version in place.
+
+```ts
+const target = SchemaTarget.make({
+	schema: MySchema,
+	$id: "https://example.com/schemas/my-schema.json",
+	path: "schemas/my-schema.json",
+	jsonSchema: { onExcessProperty: "error" },
+});
+```
+
+- Passing `onExcessProperty: "error"` on the target reproduces the closed document deterministically. [#690][#690]
+
+### Thanks
+
+Thanks to [@spencerbeggs](https://github.com/spencerbeggs) for their contributions!
+
+[#690]: https://github.com/spencerbeggs/effected/pull/690
+
+## 0.7.0
+
+### Breaking Changes
+
+#### The whole kit tracks Effect `4.0.0-rc.115`
+
+- Every package's `effect` peer moves from `4.0.0-rc.112` to `4.0.0-rc.115`. The kit uses exact prerelease pins rather than a caret, so a consumer must move with it. This advance is the first whose Effect changes are not source-compatible with the previous pin, so a consumer that upgrades meets the same renames the kit did:
+
+- `SchemaTransformation.transformOrFail` and `SchemaGetter.transformOrFail` are `transformEffect`.
+
+- The `Config` constructors are PascalCase (`Config.String`, `Config.Redacted`, `Config.Int`, `Config.Boolean`, …) and `Config.mapOrFail` is `Config.mapEffect`.
+
+- `FileSystem.Size` and `FileSystem.SizeInput` are gone in favour of the `ByteSize` module: `File.Info.size` is a `ByteSize`, `File.seek` takes a `bigint`, `read`/`write` return a `number`.
+
+- The fast-check bridge (`effect/testing/FastCheck`, `Schema.toArbitrary`, the `fastCheck` property-test option) is removed in favour of `effect/unstable/arbitrary/Arbitrary`; `it.effect.prop` takes `arbitrary: { runs, size, seed, … }`.
+
+#### `@effected/schemastore` documents are open unless told otherwise
+
+- `Schema.ToJsonSchemaOptions.additionalProperties` became `onExcessProperty: "ignore" | "error"` upstream, and its default now mirrors the decoder's: generated object schemas carry `additionalProperties: true` unless `jsonSchema: { onExcessProperty: "error" }` is passed. `StoreDocument.fromSchema` passes the option through unchanged, so a document that was closed by default at rc.112 is open by default now. Pass `onExcessProperty: "error"` to keep a closed document; a generator that silently disagreed with the decoder it is paired with would be the worse default.
+
+#### `@effected/memfs` seeks before the start of a file fail
+
+- `File.seek` gained a `PlatformError` channel upstream, and memfs now matches Node: a seek whose resulting position would be negative fails with `BadArgument` ("Cannot seek before the start of the file") and leaves the cursor unchanged, where it previously stored the negative position and failed on the next read. No memfs-declared type changes; the `File`/`File.Info` shape changes are Effect's own, reaching consumers through the peer.
+
+### Documentation
+
+#### A `Schema.Class` root is annotated on the `Struct` it wraps
+
+- [Effect-TS/effect#8084](https://github.com/Effect-TS/effect/issues/8084), which the rc.112 notes carried as an open limitation, was closed upstream as by design: annotations passed as `Schema.Class`'s second argument sit on the class node, while the `$defs` entry is generated from the encoded fields `Struct`. Annotate that `Struct` — `Schema.Class<X>("X")(Schema.Struct({ … }).annotate({ title, description, "x-taplo": … }))` — and every key reaches the document. `@effected/schemastore`'s design doc and context files now state the rule instead of the limitation.
+
+#### The Claude Code and Copilot plugins teach the rc.115 surface
+
+- The `effect-v4-schema`, `effect-v4-testing` and `effect-v4-module-index` skills describe the native `Arbitrary` module in place of the fast-check bridge, including the migration traps met on this advance: the `size` clamp (default 10) that silently shrinks a property's string and array domains, the `-0` the generator's near-zero bias emits for an unbounded `Schema.Int` or any `Schema.Number`, which JSON and YAML cannot round-trip, and the absence of `oneof`/`constantFrom`/`array` combinators. `ByteSize` has a module-index row, the `Config` and CLI constructors are shown in their PascalCase spellings, and the session-start briefing reports rc.115 as the kit's pin. [#686][#686]
+
+### Dependencies
+
+| Dependency | Type | Action | From | To |
+| --- | --- | --- | --- | --- |
+| @effected/semver | dependency | updated | 0.6.0 | 0.7.0 |
+| @effect/platform-node | devDependency | updated | 4.0.0-rc.112 | 4.0.0-rc.115 |
+| @effect/tsgo | devDependency | updated | 0.41.0 | 0.45.0 |
+| @effect/vitest | devDependency | updated | 4.0.0-rc.112 | 4.0.0-rc.115 |
+| effect | devDependency | updated | 4.0.0-rc.112 | 4.0.0-rc.115 |
+| effect | peerDependency | updated | 4.0.0-rc.112 | 4.0.0-rc.115 |
+
+### Thanks
+
+Thanks to [@spencerbeggs](https://github.com/spencerbeggs) for their contributions!
+
+[#686]: https://github.com/spencerbeggs/effected/pull/686
+
+## 0.6.1
+
+### Bug Fixes
+
+- `SchemaValidator.layer` now registers the standard `ajv-formats` vocabulary (`date-time`, `date`, `time`, `duration`, `uri`, `uri-reference`, `uri-template`, `url`, `email`, `hostname`, `ipv4`, `ipv6`, `regex`, `uuid`, `json-pointer`, `relative-json-pointer`, and more) on every per-call ajv instance. Previously ajv knew no formats, so under the package's default `strict: true` gate any document using `format` was rejected as an unknown format — a consumer could not express "this string is an ISO-8601 instant" and had to fall back to a `pattern` plus a runtime filter the document itself could not carry. Closes effected#657.
+- `ajv-formats@^3.0.1` is now a direct dependency.
+- An unknown format string is still a strict-mode rejection — registering the standard set is not a license for arbitrary format names.
+- The plugin is applied with `keywords: false`, so its `formatMaximum` / `formatMinimum` (and exclusive) keywords are not registered — `DocumentLint` still answers those as unknown keywords, keeping the engine verdict and the lint verdict from drifting apart.
+- No behavior change for documents that never use `format`; meta-schema (`validateSchema`) verdicts are unaffected. [#678][#678]
+
+### Thanks
+
+Thanks to [@fuleinist](https://github.com/fuleinist) for their contributions!
+
+[#678]: https://github.com/spencerbeggs/effected/pull/678
+
 ## 0.6.0
 
 ### Breaking Changes

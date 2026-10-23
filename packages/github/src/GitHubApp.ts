@@ -1,10 +1,26 @@
+import { Jwt, JwtKey } from "@effected/jwt";
 import type { Scope } from "effect";
-import { Clock, Context, DateTime, Duration, Effect, Layer, Option, Redacted, Ref, Schema, Stream } from "effect";
-import githubAppJwt from "universal-github-app-jwt";
+import {
+	Cause,
+	Clock,
+	Context,
+	DateTime,
+	Deferred,
+	Duration,
+	Effect,
+	Layer,
+	Option,
+	Redacted,
+	Ref,
+	Schema,
+	Semaphore,
+	Stream,
+} from "effect";
 import type { GitHubClientShape } from "./GitHubClient.js";
 import { GitHubClient, makeClientShape } from "./GitHubClient.js";
 import { GitHubError } from "./GitHubError.js";
 import { GitHubGraphQLError } from "./GraphQL.js";
+import { InstallationTokenStore } from "./InstallationTokenStore.js";
 import { numericId } from "./internal/ids.js";
 import type { RetryPolicy } from "./Resilience.js";
 
@@ -53,12 +69,13 @@ export interface AppCredentials {
 	 * The app's private key, in PEM.
 	 *
 	 * @remarks
-	 * PKCS#1 (`-----BEGIN RSA PRIVATE KEY-----`, which is what github.com hands
-	 * you) is converted to PKCS#8 automatically **on Node**. On a runtime without
-	 * `node:crypto` a PKCS#1 key fails with an explicit `kind: "jwt"` error, and
-	 * the fix is to convert the key once with
-	 * `openssl pkcs8 -topk8 -inform PEM -outform PEM -nocrypt`. This constraint is
-	 * inherited from the JWT signer and is identical to `@octokit/auth-app`'s.
+	 * Both PKCS#1 (`-----BEGIN RSA PRIVATE KEY-----`, which is what github.com
+	 * hands you) and PKCS#8 (`-----BEGIN PRIVATE KEY-----`) are accepted on every
+	 * runtime with WebCrypto, Node and workerd alike: a PKCS#1 key is wrapped to
+	 * PKCS#8 in-process, so no conversion step is needed. Newlines may also
+	 * arrive escaped as the two characters backslash and `n`, the one-line form
+	 * an environment variable carries. The key must be RSA of at least 2048
+	 * bits; anything else fails with a `kind: "jwt"` error.
 	 */
 	readonly privateKey: Redacted.Redacted<string>;
 }
@@ -81,6 +98,52 @@ export interface TokenRequest extends AppCredentials {
 	 * failure names them.
 	 */
 	readonly owner?: string | undefined;
+}
+
+/**
+ * What to fetch a cached installation token for.
+ *
+ * @public
+ */
+export interface CachedTokenRequest extends TokenRequest {
+	/**
+	 * The installation. Required here: discovering it on every request would
+	 * cost a JWT mint and a paginated walk, which defeats the cache.
+	 */
+	readonly installationId: number;
+	/**
+	 * How long before its expiry a stored token stops being served. Defaults to
+	 * five minutes; must be finite and not negative.
+	 *
+	 * @remarks
+	 * A served token has at least `margin` left to live unless GitHub issued it
+	 * with less than that, in which case it is returned once and not stored.
+	 * GitHub issues installation tokens for an hour, so a margin of an hour or
+	 * more guarantees that case: every call mints and nothing is cached.
+	 */
+	readonly margin?: Duration.Input | undefined;
+}
+
+/**
+ * An installation token from {@link GitHubApp.cachedToken}, and where it came
+ * from.
+ *
+ * @public
+ */
+export interface CachedToken {
+	/** The token. */
+	readonly token: InstallationToken;
+	/**
+	 * `"cached"` when it was read from the store, `"minted"` when GitHub
+	 * issued it to this call just now, `"joined"` when this call missed the
+	 * store but another call in the same process was already minting for the
+	 * installation and this one took that token instead of minting its own.
+	 *
+	 * @remarks
+	 * A `"joined"` token is as fresh as a `"minted"` one; the label exists so
+	 * a caller counting mints against GitHub can tell the two apart.
+	 */
+	readonly source: "cached" | "minted" | "joined";
 }
 
 /**
@@ -116,12 +179,11 @@ export class InstallationToken extends Schema.Class<InstallationToken>("Installa
 	 * Whether this token is spent, `skew` before its stated expiry.
 	 *
 	 * @remarks
-	 * Modelled **and enforced**. The package this replaces persisted `expiresAt`
-	 * and read it nowhere, so a long `main` phase that outlived the hour simply
-	 * started answering 401 with no explanation.
+	 * `skew` defaults to one minute, so a token is treated as spent slightly early
+	 * rather than answering 401 mid-request.
 	 */
 	isExpired(nowMillis: number, skew: Duration.Duration = DEFAULT_SKEW): boolean {
-		return DateTime.toEpochMillis(this.expiresAt) - Duration.toMillis(skew) <= nowMillis;
+		return isSpent(DateTime.toEpochMillis(this.expiresAt), nowMillis, skew);
 	}
 
 	/** The committer identity a commit made with this token should carry. */
@@ -138,14 +200,18 @@ export class InstallationToken extends Schema.Class<InstallationToken>("Installa
 /** Re-mint a minute before GitHub would start refusing the token. */
 const DEFAULT_SKEW = Duration.seconds(60);
 
+/** Whether a credential expiring at `expiresAtMillis` should be replaced at `nowMillis`. */
+const isSpent = (expiresAtMillis: number, nowMillis: number, skew: Duration.Duration = DEFAULT_SKEW): boolean =>
+	expiresAtMillis - Duration.toMillis(skew) <= nowMillis;
+
 /**
  * Who a bot commits as.
  *
  * @remarks
- * A **pure class**, not a service member. The package this replaces put
- * `botIdentity(source?)` on the `GitHubApp` service shape as a plain synchronous
- * method, which makes it required in every `Layer.mock` and silently degrades
- * every partial double to a full implementation.
+ * A **pure class**, not a `GitHubApp` service member: a synchronous method on
+ * the service shape would be required in every `Layer.mock` and would silently
+ * degrade every partial double to a full implementation. Get one from
+ * `InstallationToken.botIdentity` or `AppIdentity.botIdentity`.
  *
  * @public
  */
@@ -214,15 +280,89 @@ export class AppIdentity extends Schema.Class<AppIdentity>("AppIdentity")({
 }
 
 /**
+ * An app's bot user: the account its installation tokens act as.
+ *
+ * @remarks
+ * `id` is what to compare against an actor id on an event, such as
+ * `workflow_run.triggering_actor.id`: a login can be renamed, an id cannot.
+ *
+ * @public
+ */
+export class BotUser extends Schema.Class<BotUser>("BotUser")({
+	/** The bot user's numeric id. */
+	id: Schema.Int,
+	/** The bot user's login, `<slug>[bot]`. */
+	login: Schema.String,
+}) {}
+
+/**
+ * What {@link GitHubAppShape.botUser} looks up.
+ *
+ * @public
+ */
+export interface BotUserRequest {
+	/** The app's slug; the bot user is `<slug>[bot]`. */
+	readonly slug: string;
+	/**
+	 * An installation token to authenticate the lookup with. Without one the
+	 * lookup runs unauthenticated, at GitHub's 60-requests-per-hour-per-IP
+	 * limit: `GET /users/{username}` rejects an App JWT.
+	 */
+	readonly installationToken?: Redacted.Redacted<string> | undefined;
+}
+
+/** `suspended_at` as GitHub sends it: an ISO string, or `null` while active. */
+const SuspendedAt = Schema.OptionFromNullOr(Schema.DateTimeUtcFromString);
+
+/**
+ * One optional field read leniently: `{ [key]: decoded }` when the value
+ * decodes, `{}` otherwise. An absent key reads as `undefined`, which none of
+ * the schemas this is called with accepts, so absence and an unreadable value
+ * alike omit the field rather than failing the installation.
+ */
+const readField = <K extends string, S extends Schema.Top & { readonly DecodingServices: never }>(
+	key: K,
+	schema: S,
+	value: unknown,
+): { readonly [P in K]?: S["Type"] } => {
+	const decoded = Schema.decodeUnknownOption(schema)(value);
+	return Option.isSome(decoded) ? ({ [key]: decoded.value } as { readonly [P in K]?: S["Type"] }) : {};
+};
+
+/**
  * One installation of the app.
+ *
+ * @remarks
+ * Every field but `id` is filled only when GitHub's response carries it and
+ * it reads cleanly; an unreadable field is omitted rather than failing the
+ * listing. A test double built with `Installation.make({ id })` stays valid.
+ * An enterprise account carries `accountId` and `accountType` without a
+ * login `account`. Encodable:
+ * the dates encode to ISO strings and `suspendedAt` to an ISO string or
+ * `null`, the same shape GitHub sends.
  *
  * @public
  */
 export class Installation extends Schema.Class<Installation>("Installation")({
 	/** The installation id, which is what a token is minted against. */
 	id: Schema.Int,
-	/** The account the app is installed on, when GitHub reported one. */
+	/** The account the app is installed on (its login), when GitHub reported one. */
 	account: Schema.optionalKey(Schema.String),
+	/** The account kind, e.g. "Organization" or "User"; open-ended, because GitHub adds kinds. */
+	accountType: Schema.optionalKey(Schema.String),
+	/**
+	 * The account's numeric id.
+	 *
+	 * @remarks
+	 * Not paired with `account`: an enterprise installation carries
+	 * `accountId` (and may carry `accountType`) but has no login, so `account`
+	 * is absent.
+	 */
+	accountId: Schema.optionalKey(Schema.Int),
+	/** When the installation was suspended; `Option.none()` when it is active. */
+	suspendedAt: Schema.optionalKey(SuspendedAt),
+	/** When GitHub last changed the installation. */
+	updatedAt: Schema.optionalKey(Schema.DateTimeUtcFromString),
 }) {}
 
 /**
@@ -257,10 +397,29 @@ export interface GitHubAppOptions {
  * already — `@effected/workspaces` ships `localExecLayer`, which builds
  * `@effected/commands`' service, for the same reason.
  *
- * The JWT signer is `universal-github-app-jwt` — zero dependencies, and
- * `@octokit/auth-app`'s own JWT dependency. Taking it directly rather than
- * taking `auth-app` leaves behind roughly half a megabyte of OAuth app, user and
- * device-flow machinery that this package never calls.
+ * The JWT signer is `@effected/jwt` — WebCrypto RS256 with no runtime
+ * dependencies, so App auth runs on any runtime that has `crypto.subtle`.
+ *
+ * @example
+ * ```ts
+ * import { GitHubApp, GitHubClient } from "@effected/github";
+ * import { Effect, Redacted } from "effect";
+ *
+ * const program = Effect.gen(function* () {
+ *   const client = yield* GitHubClient;
+ *   const accessible = yield* client.request("GET /installation/repositories", { per_page: 1 });
+ *   return accessible.total_count;
+ * });
+ *
+ * // Mints an installation token on build, re-mints before expiry, revokes on release.
+ * const layer = GitHubApp.clientLayer({
+ *   appId: "12345",
+ *   privateKey: Redacted.make("-----BEGIN PRIVATE KEY-----\n..."),
+ *   owner: "my-org",
+ * });
+ *
+ * Effect.runPromise(Effect.provide(program, layer));
+ * ```
  *
  * @public
  */
@@ -286,11 +445,12 @@ export class GitHubApp extends Context.Service<GitHubApp, GitHubAppShape>()("@ef
 	 * The token's lifetime is the layer's scope: it is minted on build and
 	 * **revoked on release**, best-effort, so a workflow does not leave live
 	 * credentials behind. It is also **re-minted automatically** a minute before
-	 * it expires, which the package this replaces did not do — it persisted
-	 * `expiresAt` and read it nowhere, so a `main` phase outliving the hour
-	 * started answering 401 with nothing explaining why.
+	 * it expires, so a long-running program does not start answering 401 when
+	 * the hour ends.
 	 *
-	 * A failure to obtain credentials surfaces to the caller as a
+	 * Building the layer mints the first token, so a misconfigured app fails
+	 * construction with `GitHubAppError`. After that, a failure to obtain
+	 * credentials surfaces to the caller as a
 	 * `GitHubError { kind: "unauthorized" }` carrying the `GitHubAppError` as its
 	 * cause: from a request's point of view, "could not authenticate" is an
 	 * authorization failure, and widening every method's error channel to say so
@@ -302,17 +462,186 @@ export class GitHubApp extends Context.Service<GitHubApp, GitHubAppShape>()("@ef
 	): Layer.Layer<GitHubClient, GitHubAppError> =>
 		Layer.effect(
 			GitHubClient,
-			Effect.flatMap(GitHubApp, (app) => makeRotatingClient(app, request, options)),
+			Effect.flatMap(GitHubApp, (app) =>
+				makeRotatingClient(
+					Effect.map(app.token(request), (minted) => ({
+						token: minted.token,
+						expiresAtMillis: DateTime.toEpochMillis(minted.expiresAt),
+					})),
+					app.revoke,
+					options,
+					"GitHubApp.clientLayer",
+				),
+			),
 		).pipe(Layer.provide(GitHubApp.layerWith(options)));
 
+	/**
+	 * A {@link GitHubClient} authenticated as the app itself, with an App JWT.
+	 *
+	 * @remarks
+	 * An App JWT authenticates only the app-level routes: `/app` and everything
+	 * under `/app/*` (the app's installations and their token mint, its webhook
+	 * configuration and deliveries), plus the three installation lookups that
+	 * require a JWT: `GET /repos/{owner}/{repo}/installation`,
+	 * `GET /orgs/{org}/installation` and `GET /users/{username}/installation`.
+	 * Installation-scoped routes (a repository's contents, issues, pulls and the
+	 * rest) answer 401 to it; reach those through {@link GitHubApp.clientLayer}
+	 * with an installation token instead.
+	 *
+	 * The motivating use is a webhook redelivery sweep, which lists recent
+	 * deliveries with `GET /app/hook/deliveries` and redelivers a failed one
+	 * with `POST /app/hook/deliveries/{delivery_id}/attempts`.
+	 *
+	 * The JWT is signed locally, never fetched, so building the layer makes no
+	 * request; a key that will not sign fails construction with
+	 * `GitHubAppError { kind: "jwt" }`. A JWT lives nine minutes and is
+	 * re-signed a minute before it expires, so a long-running sweep keeps
+	 * authenticating; calls in between reuse it. It cannot be revoked, so
+	 * release does nothing. A later signing failure surfaces to the caller as
+	 * `GitHubError { kind: "unauthorized" }` carrying the `GitHubAppError` as
+	 * its cause, as with {@link GitHubApp.clientLayer}.
+	 *
+	 * @example
+	 * ```ts
+	 * import { GitHubApp, GitHubClient } from "@effected/github";
+	 * import { Effect, Redacted } from "effect";
+	 *
+	 * const sweep = Effect.gen(function* () {
+	 *   const client = yield* GitHubClient;
+	 *   const deliveries = yield* client.request("GET /app/hook/deliveries", { per_page: 100 });
+	 *   for (const delivery of deliveries) {
+	 *     if (delivery.status_code >= 400) {
+	 *       yield* client.request("POST /app/hook/deliveries/{delivery_id}/attempts", {
+	 *         // octokit types a delivery id as number | bigint; the route takes a number.
+	 *         delivery_id: Number(delivery.id),
+	 *       });
+	 *     }
+	 *   }
+	 * });
+	 *
+	 * const layer = GitHubApp.appClientLayer({
+	 *   appId: "12345",
+	 *   privateKey: Redacted.make("-----BEGIN RSA PRIVATE KEY-----\n..."),
+	 * });
+	 *
+	 * Effect.runPromise(Effect.provide(sweep, layer));
+	 * ```
+	 */
+	static readonly appClientLayer = (
+		credentials: AppCredentials,
+		options: GitHubAppOptions = {},
+	): Layer.Layer<GitHubClient, GitHubAppError> =>
+		Layer.effect(
+			GitHubClient,
+			makeRotatingClient(mintJwt(credentials), () => Effect.void, options, "GitHubApp.appClientLayer"),
+		);
+
+	/**
+	 * An installation token, reused from an {@link InstallationTokenStore}
+	 * while it has `margin` (five minutes by default) left to live.
+	 *
+	 * @remarks
+	 * For a program that authenticates per request scope (a Worker handling a
+	 * webhook, say) and would otherwise mint a fresh token every time. The store
+	 * is keyed by installation id. A stored value that will not decode, or a
+	 * token within `margin` of expiry, is a miss: the token is minted with
+	 * {@link GitHubAppShape.token} and written back with a TTL of its expiry
+	 * minus `margin`. A token minted with less than `margin` to live is returned
+	 * but not stored.
+	 *
+	 * The store never fails this call: a `get` that fails or dies is a miss and
+	 * a `set` that fails or dies is ignored. Only interruption propagates.
+	 *
+	 * **A cached token is never revoked**: another scope or isolate may be using
+	 * it. It expires on its own, within the hour.
+	 *
+	 * Within one process, concurrent misses for one installation are
+	 * **single-flight**: the first caller mints and the others wait for that
+	 * mint and return the same token with `source: "joined"`, so a batch that
+	 * fans out over one installation on a cold store costs one mint, not one
+	 * per fiber. The in-flight record lives with the `GitHubApp` service and is
+	 * released when the mint settles, however it settles: a failed mint fails
+	 * every waiter with the same `GitHubAppError`, and the next call mints
+	 * again. Interrupting the leader does not strand the waiters: the mint runs
+	 * in its own fiber and completes for them. Across isolates, two misses
+	 * still both mint and the later write wins. That is expected: the store may
+	 * span isolates, so the kit cannot lock it, and an extra token costs one
+	 * call and expires on its own.
+	 *
+	 * The encoded value written to the store contains the raw token, so
+	 * encrypting it at rest is the store's job.
+	 */
+	static readonly cachedToken = (
+		request: CachedTokenRequest,
+	): Effect.Effect<CachedToken, GitHubAppError, GitHubApp | InstallationTokenStore> =>
+		Effect.flatMap(GitHubApp, (app) => app.cachedToken(request));
+
+	/**
+	 * A {@link GitHubClient} authenticated with {@link GitHubApp.cachedToken}.
+	 *
+	 * @remarks
+	 * Built per request scope: provide it where the request is handled, over a
+	 * `GitHubApp` and an `InstallationTokenStore` provided once at the edge.
+	 * Unlike {@link GitHubApp.clientLayer} it **never revokes** the token, not
+	 * even on release, because the token is shared through the store, and it
+	 * does not rotate, so set `margin` longer than the scope's work can take;
+	 * the token is good for at least `margin` unless GitHub issued it with less
+	 * (see {@link CachedTokenRequest.margin}).
+	 *
+	 * `options` configures this client's transport only, not the mint: the
+	 * token is minted by whichever `GitHubApp` the edge provides. On GitHub
+	 * Enterprise, build that with the same API root, for example
+	 * `GitHubApp.layerWith({ baseUrl })`, or the mint goes to github.com.
+	 *
+	 * @example
+	 * ```ts
+	 * import { GitHubApp, GitHubClient, InstallationTokenStore } from "@effected/github";
+	 * import { Effect, Layer, Redacted } from "effect";
+	 *
+	 * const handle = (installationId: number) =>
+	 *   Effect.flatMap(GitHubClient, (client) =>
+	 *     client.request("GET /repos/{owner}/{repo}", { owner: "acme", repo: "widgets" }),
+	 *   ).pipe(
+	 *     Effect.provide(
+	 *       GitHubApp.cachedClientLayer({
+	 *         appId: "12345",
+	 *         privateKey: Redacted.make("-----BEGIN RSA PRIVATE KEY-----\n..."),
+	 *         installationId,
+	 *       }),
+	 *     ),
+	 *   );
+	 *
+	 * // Once, at the edge. On GitHub Enterprise, use GitHubApp.layerWith({ baseUrl }).
+	 * const Live = Layer.mergeAll(GitHubApp.layer, InstallationTokenStore.layerMemory);
+	 *
+	 * Effect.runPromise(Effect.provide(handle(42), Live));
+	 * ```
+	 */
+	static readonly cachedClientLayer = (
+		request: CachedTokenRequest,
+		options: GitHubAppOptions = {},
+	): Layer.Layer<GitHubClient, GitHubAppError, GitHubApp | InstallationTokenStore> =>
+		Layer.unwrap(
+			Effect.map(GitHubApp.cachedToken(request), (cached) =>
+				GitHubClient.layerFromToken({ ...options, token: cached.token.token }),
+			),
+		);
+
 	/** An in-memory double; unstubbed members die naming themselves. */
-	static readonly makeTest = (overrides: Partial<GitHubAppShape> = {}): GitHubAppShape => ({
-		token: overrides.token ?? (() => unstubbed("token")),
-		scopedToken: overrides.scopedToken ?? (() => unstubbed("scopedToken")),
-		revoke: overrides.revoke ?? (() => unstubbed("revoke")),
-		identity: overrides.identity ?? (() => unstubbed("identity")),
-		installations: overrides.installations ?? (() => unstubbed("installations")),
-	});
+	static readonly makeTest = (overrides: Partial<GitHubAppShape> = {}): GitHubAppShape => {
+		const token = overrides.token ?? (() => unstubbed("token"));
+		return {
+			token,
+			scopedToken: overrides.scopedToken ?? (() => unstubbed("scopedToken")),
+			revoke: overrides.revoke ?? (() => unstubbed("revoke")),
+			identity: overrides.identity ?? (() => unstubbed("identity")),
+			botUser: overrides.botUser ?? (() => unstubbed("botUser")),
+			installations: overrides.installations ?? (() => unstubbed("installations")),
+			// The real caching over the double's `token`, so a test that stubs
+			// `token` exercises the store and the single-flight path for real.
+			cachedToken: overrides.cachedToken ?? makeCachedToken(token),
+		};
+	};
 
 	/** {@link GitHubApp.makeTest} behind a `Layer`. */
 	static readonly layerTest = (overrides: Partial<GitHubAppShape> = {}): Layer.Layer<GitHubApp> =>
@@ -334,22 +663,19 @@ export interface GitHubAppShape {
 	 * Mint an installation token.
 	 *
 	 * @remarks
-	 * Used by `@effected/github-actions`' token bridge in a workflow's `pre`
-	 * phase. Touches: nothing else on this shape.
+	 * `installationId` is used when given; otherwise the installation is
+	 * discovered from `owner`, or from the app's only installation.
 	 */
 	readonly token: (request: TokenRequest) => Effect.Effect<InstallationToken, GitHubAppError>;
 	/**
-	 * Mint a token that is revoked when the scope closes.
+	 * Mint a token that is revoked, best-effort, when the scope closes.
 	 *
 	 * @remarks
-	 * Touches: `token`, `revoke`.
+	 * Mints through `token` and releases through `revoke`.
 	 */
 	readonly scopedToken: (request: TokenRequest) => Effect.Effect<InstallationToken, GitHubAppError, Scope.Scope>;
 	/**
 	 * Revoke a token now.
-	 *
-	 * @remarks
-	 * Used by the token bridge's `post` phase. Touches: nothing else.
 	 */
 	readonly revoke: (token: Redacted.Redacted<string>) => Effect.Effect<void, GitHubAppError>;
 	/**
@@ -358,38 +684,163 @@ export interface GitHubAppShape {
 	 * @remarks
 	 * Supply `installationToken` when you have one: `GET /users/{slug}[bot]`
 	 * rejects an app JWT, so without it the lookup runs unauthenticated at
-	 * GitHub's 60-requests-per-hour-per-IP limit. Touches: nothing else.
+	 * GitHub's 60-requests-per-hour-per-IP limit.
 	 */
 	readonly identity: (
 		request: AppCredentials & { readonly installationToken?: Redacted.Redacted<string> | undefined },
 	) => Effect.Effect<AppIdentity, GitHubAppError>;
 	/**
-	 * Every installation of the app.
+	 * The app's bot user, `GET /users/{slug}[bot]`.
 	 *
 	 * @remarks
-	 * Touches: nothing else.
+	 * Unlike {@link GitHubAppShape.identity}, which treats the bot user as
+	 * optional enrichment and omits it when the lookup fails, this fails with
+	 * `kind: "identity"` — for a caller that authorizes on the bot's id, a
+	 * missing id is an error, not a degraded answer. Get the slug from
+	 * `identity` or from `AuthenticatedApp.get`.
 	 */
+	readonly botUser: (request: BotUserRequest) => Effect.Effect<BotUser, GitHubAppError>;
+	/** Every installation of the app. */
 	readonly installations: (credentials: AppCredentials) => Effect.Effect<ReadonlyArray<Installation>, GitHubAppError>;
+	/**
+	 * An installation token, reused from the {@link InstallationTokenStore}
+	 * while it has `margin` left to live; {@link GitHubApp.cachedToken} is this
+	 * member on the provided service.
+	 *
+	 * @remarks
+	 * A member rather than a free function because the in-process
+	 * single-flight record for concurrent misses lives with the service: it is
+	 * created with the layer and shared by every call through it.
+	 * {@link GitHubApp.makeTest} builds it over the double's `token`, so a test
+	 * that stubs `token` gets the real caching and single-flight behaviour.
+	 */
+	readonly cachedToken: (
+		request: CachedTokenRequest,
+	) => Effect.Effect<CachedToken, GitHubAppError, InstallationTokenStore>;
 }
+
+/** The cached-token margin when a request names none. */
+const DEFAULT_CACHE_MARGIN = Duration.minutes(5);
+
+/** `InstallationToken` as the JSON string an {@link InstallationTokenStore} holds. */
+const StoredToken = Schema.fromJsonString(InstallationToken);
+
+/** A store call that can never fail its caller: failures and defects become `fallback`; interruption propagates. */
+const swallowStore = <A>(effect: Effect.Effect<A>, fallback: A): Effect.Effect<A> =>
+	Effect.catchCause(effect, (cause) =>
+		Cause.hasInterruptsOnly(cause) ? Effect.failCause(cause) : Effect.succeed(fallback),
+	);
+
+/**
+ * The caching read over `token`, with one in-flight mint per installation.
+ *
+ * @remarks
+ * The map is the single-flight record. A key is present exactly while a mint
+ * for that installation is running in this process; the first miss creates it
+ * and forks the mint, later misses await the same `Deferred`, and the mint's
+ * exit finalizer deletes the key before completing the `Deferred` with
+ * whatever exit the mint produced, so a failed mint fails every waiter with the
+ * same error and never pins the key. The mint is forked detached from the
+ * leader, so the leader being interrupted does not interrupt the mint the
+ * waiters depend on; the leader itself just stops waiting. The key is the
+ * installation id alone because that is also the store's key: a `TokenRequest`
+ * cannot narrow a token, so two requests for one installation ask for the same
+ * token.
+ */
+const makeCachedToken = (token: GitHubAppShape["token"]): GitHubAppShape["cachedToken"] => {
+	const inFlight = new Map<number, Deferred.Deferred<InstallationToken, GitHubAppError>>();
+	return Effect.fn("GitHubApp.cachedToken")(function* (request: CachedTokenRequest) {
+		// `Duration.fromInput(NaN)` is zero, not `None`, so a raw non-finite
+		// number is refused before the conversion; an infinite input converts to
+		// an infinite duration and is refused after it.
+		const input = request.margin ?? DEFAULT_CACHE_MARGIN;
+		const margin =
+			typeof input === "number" && !Number.isFinite(input)
+				? Option.none<Duration.Duration>()
+				: Option.filter(
+						Duration.fromInput(input),
+						(duration) => Duration.isFinite(duration) && !Duration.isNegative(duration),
+					);
+		if (Option.isNone(margin)) {
+			return yield* GitHubAppError.of("token", "the cache margin must be a finite, non-negative duration");
+		}
+		const store = yield* InstallationTokenStore;
+
+		const stored = yield* swallowStore(store.get(request.installationId), Option.none<string>());
+		if (Option.isSome(stored)) {
+			const decoded = yield* Effect.option(Schema.decodeUnknownEffect(StoredToken)(stored.value));
+			const now = yield* Clock.currentTimeMillis;
+			if (
+				Option.isSome(decoded) &&
+				decoded.value.installationId === request.installationId &&
+				!decoded.value.isExpired(now, margin.value)
+			) {
+				return { token: decoded.value, source: "cached" } satisfies CachedToken;
+			}
+		}
+
+		// A miss. Nothing yields between the lookup and the insert below, so two
+		// fibers cannot both find the key absent.
+		const joined = inFlight.get(request.installationId);
+		if (joined !== undefined) {
+			return { token: yield* Deferred.await(joined), source: "joined" } satisfies CachedToken;
+		}
+		const deferred = Deferred.makeUnsafe<InstallationToken, GitHubAppError>();
+		const mint = Effect.gen(function* () {
+			const minted = yield* token(request);
+			const now = yield* Clock.currentTimeMillis;
+			const ttlMillis = DateTime.toEpochMillis(minted.expiresAt) - Duration.toMillis(margin.value) - now;
+			// A token that will not outlive the margin is served once but never stored:
+			// a zero or negative TTL means nothing a store can honour.
+			if (ttlMillis > 0) {
+				const encoded = yield* Effect.option(Schema.encodeUnknownEffect(StoredToken)(minted));
+				if (Option.isSome(encoded)) {
+					yield* swallowStore(store.set(request.installationId, encoded.value, Duration.millis(ttlMillis)), undefined);
+				}
+			}
+			return minted;
+		}).pipe(
+			Effect.onExit((exit) =>
+				Effect.andThen(
+					Effect.sync(() => inFlight.delete(request.installationId)),
+					Deferred.done(deferred, exit),
+				),
+			),
+		);
+		// Registering the key and forking the mint happen in one uninterruptible step:
+		// once the key is in the map, the mint's onExit is guaranteed to run and clear
+		// it. An interrupt landing between the two would otherwise leave a key that
+		// nothing completes, and every later miss for the installation would hang.
+		yield* Effect.uninterruptible(
+			Effect.suspend(() => {
+				inFlight.set(request.installationId, deferred);
+				return Effect.forkDetach(mint);
+			}),
+		);
+		return { token: yield* Deferred.await(deferred), source: "minted" } satisfies CachedToken;
+	});
+};
 
 const unstubbed = (member: string): never => {
 	throw new Error(`GitHubApp.makeTest: ${member}() was called but not stubbed — pass an override.`);
 };
 
-/** Mint an app JWT. The only cryptography in this package, and it is a leaf call. */
-const mintJwt = (credentials: AppCredentials): Effect.Effect<Redacted.Redacted<string>, GitHubAppError> =>
-	Effect.tryPromise({
-		try: () => githubAppJwt({ id: credentials.appId, privateKey: Redacted.value(credentials.privateKey) }),
-		catch: (error) =>
-			GitHubAppError.of("jwt", error instanceof Error ? error.message : "could not sign the app JWT", error),
-	}).pipe(Effect.map((result) => Redacted.make(result.token)));
+/** Mint an app JWT: iat 60 s in the past (clock drift), exp 9 minutes after now (GitHub caps at 10). */
+const mintJwt = (credentials: AppCredentials): Effect.Effect<RotatingCredential, GitHubAppError> =>
+	Effect.gen(function* () {
+		const key = yield* JwtKey.fromPkcs8Pem(credentials.privateKey, { alg: "RS256" });
+		const now = Math.floor((yield* Clock.currentTimeMillis) / 1000);
+		const exp = now + 9 * 60;
+		const token = yield* Jwt.sign({ iat: now - 60, exp, iss: credentials.appId }, key);
+		return { token: Redacted.make(token), expiresAtMillis: exp * 1000 };
+	}).pipe(Effect.catchTag("JwtError", (error) => Effect.fail(GitHubAppError.of("jwt", error.detail, error))));
 
 /** A client speaking as the app itself. */
 const asApp = (
 	credentials: AppCredentials,
 	options: GitHubAppOptions,
 ): Effect.Effect<GitHubClientShape, GitHubAppError> =>
-	Effect.flatMap(mintJwt(credentials), (jwt) => makeClientShape({ ...options, token: jwt }));
+	Effect.flatMap(mintJwt(credentials), ({ token }) => makeClientShape({ ...options, token }));
 
 /** A client speaking as a holder of `token`, or as nobody when there is none. */
 const asBearer = (
@@ -405,14 +856,17 @@ function makeApp(options: GitHubAppOptions): Effect.Effect<GitHubAppShape> {
 		const installations = Effect.fn("GitHubApp.installations")(function* (credentials: AppCredentials) {
 			const client = yield* asApp(credentials, options);
 			const raw = yield* client.paginate("GET /app/installations", {}).pipe(Effect.catch(appFailure("installation")));
-			return raw.map((entry) =>
-				Installation.make({
+			return raw.map((entry) => {
+				const account: Record<string, unknown> | undefined = entry.account ?? undefined;
+				return Installation.make({
 					id: numericId(entry.id),
-					...(entry.account !== null && entry.account !== undefined && "login" in entry.account
-						? { account: entry.account.login }
-						: {}),
-				}),
-			);
+					...(account !== undefined && typeof account.login === "string" ? { account: account.login } : {}),
+					...readField("accountType", Schema.String, account?.type),
+					...readField("accountId", Schema.Int, typeof account?.id === "bigint" ? numericId(account.id) : account?.id),
+					...readField("suspendedAt", SuspendedAt, entry.suspended_at),
+					...readField("updatedAt", Schema.DateTimeUtcFromString, entry.updated_at),
+				});
+			});
 		});
 
 		const resolveInstallationId = (request: TokenRequest): Effect.Effect<number, GitHubAppError> =>
@@ -491,7 +945,25 @@ function makeApp(options: GitHubAppOptions): Effect.Effect<GitHubAppShape> {
 			});
 		});
 
-		return { token, scopedToken, revoke, identity, installations };
+		const botUser = Effect.fn("GitHubApp.botUser")(function* (request: BotUserRequest) {
+			yield* Effect.annotateCurrentSpan({ slug: request.slug });
+			const client = yield* asBearer(request.installationToken, options);
+			const user = yield* client
+				.request("GET /users/{username}", { username: `${request.slug}[bot]` })
+				.pipe(Effect.catch(appFailure("identity")));
+			// A body that is not an object goes to the decoder as it is, so it fails
+			// identity-kind rather than throwing while `id` is read.
+			const raw: unknown = user;
+			return yield* Schema.decodeUnknownEffect(BotUser)(
+				typeof raw === "object" && raw !== null ? { id: numericId(user.id), login: user.login } : raw,
+			).pipe(
+				Effect.catchTag("SchemaError", (error) =>
+					Effect.fail(GitHubAppError.of("identity", "GitHub returned an unexpected bot user", error)),
+				),
+			);
+		});
+
+		return { token, scopedToken, revoke, identity, botUser, installations, cachedToken: makeCachedToken(token) };
 	});
 }
 
@@ -505,32 +977,42 @@ const normalizePermissions = (raw: unknown): Record<string, string> => {
 	return out;
 };
 
+/** A credential a rotating client holds: the bearer value and when it stops working. */
+interface RotatingCredential {
+	readonly token: Redacted.Redacted<string>;
+	readonly expiresAtMillis: number;
+}
+
 /**
- * A client shape that re-mints its installation token before it expires.
+ * A client shape that re-mints its credential before it expires.
  *
  * @remarks
  * The rotation is invisible to a caller: each member resolves the current
  * client first, and "current" means "minted, and not within a minute of
- * expiry". Rotating revokes the token it replaces, so at most one live token
- * exists at a time and the scope's release revokes the last of them.
+ * expiry" (the same skew as {@link InstallationToken.isExpired}). Rotating
+ * releases the credential it replaces, so at most one live credential exists
+ * at a time and the scope's release releases the last of them. An
+ * installation token is released by revoking it; an App JWT has nothing to
+ * release.
  */
 const makeRotatingClient = (
-	app: GitHubAppShape,
-	request: TokenRequest,
+	mint: Effect.Effect<RotatingCredential, GitHubAppError>,
+	release: (token: Redacted.Redacted<string>) => Effect.Effect<void, GitHubAppError>,
 	options: GitHubAppOptions,
+	operation: string,
 ): Effect.Effect<GitHubClientShape, GitHubAppError, Scope.Scope> =>
 	Effect.gen(function* () {
-		const held = yield* Ref.make(Option.none<{ token: InstallationToken; client: GitHubClientShape }>());
+		const held = yield* Ref.make(Option.none<{ credential: RotatingCredential; client: GitHubClientShape }>());
 
 		const revokeHeld = Effect.flatMap(Ref.get(held), (current) =>
-			Option.isSome(current) ? Effect.ignore(app.revoke(current.value.token.token)) : Effect.void,
+			Option.isSome(current) ? Effect.ignore(release(current.value.credential.token)) : Effect.void,
 		);
 
 		const rotate = Effect.gen(function* () {
 			yield* revokeHeld;
-			const minted = yield* app.token(request);
+			const minted = yield* mint;
 			const client = yield* makeClientShape({ ...options, token: minted.token });
-			yield* Ref.set(held, Option.some({ token: minted, client }));
+			yield* Ref.set(held, Option.some({ credential: minted, client }));
 			return client;
 		});
 
@@ -540,13 +1022,29 @@ const makeRotatingClient = (
 		yield* rotate;
 		yield* Effect.addFinalizer(() => revokeHeld);
 
-		/** The live client, re-minting first if the held token is spent. */
-		const fresh: Effect.Effect<GitHubClientShape, GitHubAppError> = Effect.gen(function* () {
+		const live: Effect.Effect<Option.Option<GitHubClientShape>> = Effect.gen(function* () {
 			const now = yield* Clock.currentTimeMillis;
 			const state = yield* Ref.get(held);
-			if (Option.isSome(state) && !state.value.token.isExpired(now)) return state.value.client;
-			return yield* rotate;
+			return Option.isSome(state) && !isSpent(state.value.credential.expiresAtMillis, now)
+				? Option.some(state.value.client)
+				: Option.none();
 		});
+
+		// One rotation at a time. Without the lock, N fibers that find the
+		// credential spent together each mint, overwriting (and so leaking) all
+		// but the last replacement, and one fiber's release can revoke the token
+		// another has just installed and is using. A fiber that waited re-checks
+		// after acquiring, so the first rotation serves every waiter.
+		const lock = yield* Semaphore.make(1);
+
+		/** The live client, re-minting first if the held credential is spent. */
+		const fresh: Effect.Effect<GitHubClientShape, GitHubAppError> = Effect.flatMap(live, (current) =>
+			Option.isSome(current)
+				? Effect.succeed(current.value)
+				: lock.withPermit(
+						Effect.flatMap(live, (rechecked) => (Option.isSome(rechecked) ? Effect.succeed(rechecked.value) : rotate)),
+					),
+		);
 
 		// A credential failure is reported in the channel the caller is already
 		// handling: "could not authenticate" IS an authorization failure from a
@@ -558,7 +1056,7 @@ const makeRotatingClient = (
 				Effect.fail(
 					new GitHubError({
 						kind: "unauthorized",
-						operation: "GitHubApp.clientLayer",
+						operation,
 						reason: error.reason,
 						cause: error,
 					}),
@@ -571,7 +1069,7 @@ const makeRotatingClient = (
 				Effect.fail(
 					new GitHubGraphQLError({
 						kind: "unauthorized",
-						operation: "GitHubApp.clientLayer",
+						operation,
 						reason: error.reason,
 						errors: [],
 						cause: error,

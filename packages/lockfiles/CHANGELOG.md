@@ -1,5 +1,409 @@
 # @effected/lockfiles
 
+## 0.19.1
+
+### Dependencies
+
+| Dependency | Type | Action | From | To |
+| --- | --- | --- | --- | --- |
+| @effected/npm | dependency | updated | 0.24.0 | 0.25.0 |
+
+## 0.19.0
+
+### Dependencies
+
+| Dependency | Type | Action | From | To |
+| --- | --- | --- | --- | --- |
+| @effected/jsonc | dependency | updated | 0.18.0 | 0.19.0 |
+| @effected/npm | dependency | updated | 0.23.0 | 0.24.0 |
+| @effected/semver | dependency | updated | 0.14.0 | 0.15.0 |
+| @effected/yaml | dependency | updated | 0.22.0 | 0.23.0 |
+
+### Maintenance
+
+- Upgrades core Effect library dependencies to v4.0.6 [#1039][#1039]
+
+### Thanks
+
+Thanks to [@spencerbeggs](https://github.com/spencerbeggs) for their contributions!
+
+[#1039]: https://github.com/spencerbeggs/effected/pull/1039
+
+## 0.18.0
+
+### Dependencies
+
+| Dependency | Type | Action | From | To |
+| --- | --- | --- | --- | --- |
+| @effected/jsonc | dependency | updated | 0.17.0 | 0.18.0 |
+| @effected/npm | dependency | updated | 0.22.0 | 0.23.0 |
+| @effected/semver | dependency | updated | 0.13.0 | 0.14.0 |
+| @effected/yaml | dependency | updated | 0.21.0 | 0.22.0 |
+
+### Maintenance
+
+- Upgrades core Effect library dependencies to v4.0.5 [#1019][#1019]
+
+### Thanks
+
+Thanks to [@spencerbeggs](https://github.com/spencerbeggs) for their contributions!
+
+[#1019]: https://github.com/spencerbeggs/effected/pull/1019
+
+## 0.17.0
+
+### Dependencies
+
+| Dependency | Type | Action | From | To |
+| --- | --- | --- | --- | --- |
+| @effected/jsonc | dependency | updated | 0.16.0 | 0.17.0 |
+| @effected/npm | dependency | updated | 0.21.0 | 0.22.0 |
+| @effected/semver | dependency | updated | 0.12.0 | 0.13.0 |
+| @effected/yaml | dependency | updated | 0.20.0 | 0.21.0 |
+
+### Maintenance
+
+- Upgrades core Effect library dependencies to v4.0.4 [#1008][#1008]
+
+### Thanks
+
+Thanks to [@spencerbeggs](https://github.com/spencerbeggs) for their contributions!
+
+[#1008]: https://github.com/spencerbeggs/effected/pull/1008
+
+## 0.16.0
+
+### Dependencies
+
+| Dependency | Type | Action | From | To |
+| --- | --- | --- | --- | --- |
+| @effected/jsonc | dependency | updated | 0.15.2 | 0.16.0 |
+| @effected/npm | dependency | updated | 0.20.1 | 0.21.0 |
+| @effected/semver | dependency | updated | 0.11.1 | 0.12.0 |
+| @effected/yaml | dependency | updated | 0.19.2 | 0.20.0 |
+| effect | peerDependency | updated | 4.0.2 | ^4.0.3 |
+
+- Effect 4.0.3 advance: the `effect` peer and catalog move from the exact `4.0.2` hold back to `^4.0.3`. No API change. [#1000][#1000]
+
+### Thanks
+
+Thanks to [@spencerbeggs](https://github.com/spencerbeggs) for their contributions!
+
+[#1000]: https://github.com/spencerbeggs/effected/pull/1000
+
+## 0.15.1
+
+### Bug Fixes
+
+- Republished with every `effect` and `@effect/*` version pinned exactly to `4.0.2`, both peer and dependency ranges.
+
+- On 2026-10-10, every `@effect/*` package published at `4.0.3`, but `effect@4.0.3` itself never reached npm (Effect-TS/effect#8994). The 4.0.3 packages require `effect ^4.0.3`. A caret range on any of them therefore resolves a 4.0.3 package next to `effect@4.0.2`, and the program crashes when it imports them. Exact pins keep a fresh install of any kit package on a matched set until `effect@4.0.3` is available. [#997][#997]
+
+### Dependencies
+
+| Dependency | Type | Action | From | To |
+| --- | --- | --- | --- | --- |
+| @effected/jsonc | dependency | updated | 0.15.1 | 0.15.2 |
+| @effected/npm | dependency | updated | 0.20.0 | 0.20.1 |
+| @effected/semver | dependency | updated | 0.11.0 | 0.11.1 |
+| @effected/yaml | dependency | updated | 0.19.1 | 0.19.2 |
+
+### Thanks
+
+Thanks to [@spencerbeggs](https://github.com/spencerbeggs) for their contributions!
+
+[#997]: https://github.com/spencerbeggs/effected/pull/997
+
+## 0.15.0
+
+### Breaking Changes
+
+- The kit now builds on and peers stable `effect` `^4.0.0`, in place of an exact release-candidate pin. Move `effect` and every `@effect/*` package to the same `4.x` version in one install: Effect releases them together at one version. A package from this release cannot share an install with an `effect` release candidate. The peer is a caret range, so later `4.x` releases of Effect satisfy the kit without a kit release.
+- Kit exports are unchanged. A consumer moving to stable `effect` meets these changes in its own code:
+  - `Array`, `Chunk`, `Effect` and `Record` `partition`, their `separate` helpers and `Option.partitionMap` return `[successes, failures]`. Where both sides share a type, the reversed destructuring still compiles, so search for every call.
+  - `Schema.brand` takes one identifier and is type-only: the identifier is not stored on the AST and does not survive `SchemaRepresentation`. Compose distinct brands by applying `brand` more than once.
+  - `TestSchema`'s round-trip assertion is `verifyRoundTrip`, with Effect forms `succeedEffect`, `failEffect` and `verifyRoundTripEffect`.
+  - Effect marks some APIs `@stability unstable`: those may change in a minor Effect release. Untagged APIs follow semver.
+
+### Documentation
+
+- Every exported construct's TSDoc was reviewed against the current API. Summaries open with what the construct does, error channels and requirements are stated, examples use real imports and compile, and links resolve. Comments that described options, errors or defaults the code does not have were corrected. [#910][#910]
+
+### Dependencies
+
+| Dependency | Type | Action | From | To |
+| --- | --- | --- | --- | --- |
+| @effected/jsonc | dependency | updated | 0.14.0 | 0.15.0 |
+| @effected/npm | dependency | updated | 0.19.1 | 0.20.0 |
+| @effected/semver | dependency | updated | 0.10.1 | 0.11.0 |
+| @effected/yaml | dependency | updated | 0.18.0 | 0.19.0 |
+
+### Thanks
+
+Thanks to [@spencerbeggs](https://github.com/spencerbeggs) for their contributions!
+
+[#910]: https://github.com/spencerbeggs/effected/pull/910
+
+## 0.14.0
+
+### Breaking Changes
+
+- The kit now builds on and peers `effect` `4.0.0-rc.118`, pinned exactly. Consumers must move `effect` and every `@effect/*` package to `4.0.0-rc.118` in the same install. Effect removed the `effect/unstable/*` export paths in this release, so an `@effected` package built on rc.118 cannot share an install with `effect` rc.117.
+
+- Moving the pin also closes a fresh-install failure on rc.117. `@effect/platform-node@4.0.0-rc.117` depends on `@effect/platform-node-shared` with a caret, so an install without a lockfile paired the rc.118 shared package with `effect` rc.117 and failed at startup with `ERR_MODULE_NOT_FOUND`.
+
+- Consumers moving to this release: effect removed the `effect/unstable/*` export paths (imports become `effect/<module>`), moved `Arbitrary` to `effect`, split `effect/Encoding` into `effect/encoding/Base64`, `Base64Url` and `Hex`, and renamed the `Schema` range and string checks (`isLengthBetween` → `isBetweenLength`, `isStartsWith` → `isStartingWith`, and so on). Kit exports are otherwise unchanged; the kit's own imports moved onto the new paths. [#864][#864]
+
+### Dependencies
+
+| Dependency | Type | Action | From | To |
+| --- | --- | --- | --- | --- |
+| @effected/jsonc | dependency | updated | 0.13.0 | 0.14.0 |
+| @effected/npm | dependency | updated | 0.18.0 | 0.19.0 |
+| @effected/semver | dependency | updated | 0.9.0 | 0.10.0 |
+| @effected/yaml | dependency | updated | 0.17.0 | 0.18.0 |
+
+### Thanks
+
+Thanks to [@spencerbeggs](https://github.com/spencerbeggs) for their contributions!
+
+[#864]: https://github.com/spencerbeggs/effected/pull/864
+
+## 0.13.0
+
+### Breaking Changes
+
+- `Lockfile.parse` now fails a pnpm YAML stream of more than two documents with `LockfileFramingError` and reason `"unexpectedDocuments"`, where it previously read the last document regardless of how many preceded it. This is the same framing rule `PnpmEnvLockfile` already enforced — both readers now share one document splitter, so a malformed or unexpectedly multi-document pnpm lockfile is rejected consistently everywhere it's parsed. [#859][#859]
+
+### Features
+
+- `Lockfile.parse` takes a new `configOnly` option for pnpm lockfiles. Pass `configOnly: true` when the workspace root has no `package.json`, and a stream holding only the env preamble and an empty main document reads as an empty lockfile, with `lockfileVersion` taken from the preamble. pnpm 11 and 12 write that stream for a workspace that declares only `configDependencies`. Closes #845.
+
+```ts
+const lockfile = yield* Lockfile.parse(content, { format: "pnpm", configOnly: true });
+```
+
+- Without the option, that stream still fails with `LockfileFramingError` and reason `"noLockfileDocument"`. pnpm writes the same bytes when a first install fails after its config dependencies are installed, so only the caller can tell the two apart. The option changes nothing else, and non-pnpm formats ignore it.
+
+### Bug Fixes
+
+- pnpm peer suffixes are now split off `file:` resolutions as they are off registry versions. pnpm suffixes a `file:` directory or tarball whenever the package declares peers (`lib@file:vendor/lib(react@18.3.1)`), and such an instance previously parsed as name `lib@file:vendor/lib(react` at version `18.3.1)`, with its `packages:` entry re-emitted as a second, orphan instance. It now parses as `lib` at `file:vendor/lib`, one instance, with its peer declarations joined. Importer dependency versions split the same way into `version` and `peerSuffix`.
+- The suffix is the trailing run of balanced parenthesized groups, as pnpm itself reads it, so a nested chain splits whole and a parenthesis followed by more path stays in the path. A `link:` resolution, which pnpm never suffixes, is left whole.
+- A `name@version` key is split at the first `@` after a scoped name's own, so an `@` inside the version part (`file:../@scope/lib`) no longer moves the boundary. This applies to pnpm and bun. [#811][#811]
+
+### Dependencies
+
+| Dependency | Type | Action | From | To |
+| --- | --- | --- | --- | --- |
+| @effected/npm | dependency | updated | 0.17.0 | 0.18.0 |
+
+### Thanks
+
+Thanks to [@fuleinist](https://github.com/fuleinist) and [@spencerbeggs](https://github.com/spencerbeggs) for their contributions!
+
+[#811]: https://github.com/spencerbeggs/effected/pull/811
+
+[#859]: https://github.com/spencerbeggs/effected/pull/859
+
+## 0.12.0
+
+### Features
+
+#### Read the package manager pinned in pnpm-lock.yaml
+
+- `PnpmEnvLockfile.packageManager(content)` reads the pnpm version a `pnpm-lock.yaml` pins, and the integrity pnpm recorded for it. It reads from the env preamble, the first of the two YAML documents pnpm 11 and 12 write when a workspace declares `devEngines.packageManager` or `configDependencies`. Like `Lockfile.parse`, it takes the text and performs no IO.
+
+- It succeeds with `Option.some` of a `PackageManagerLock`, which carries:
+
+- `specifier` verbatim, including any `+sha512.<hex>` suffix.
+
+- `version`, the exact version pnpm resolved.
+
+- `integrity`, the SRI of `pnpm@<version>`.
+
+- `nativeIntegrity`, the SRI of each native package keyed by bare name (`"@pnpm/exe.linux-x64"`). pnpm 12 records one per platform. For pnpm 11 it is empty.
+
+- A lockfile that records no package manager returns `Option.none()`. That covers a single-document lockfile and a preamble with no `pnpm` package-manager dependency. A lockfile that records a version it cannot back fails with `LockfileParseError` at `stage: "validation"` instead. That happens when the `pnpm@<version>` entry, its snapshot or its SRI integrity is missing, or when a native lacks its integrity. A stream of more than two documents fails with `LockfileFramingError`.
+
+#### Read the config dependencies recorded in pnpm-lock.yaml
+
+- `PnpmEnvLockfile.configDependencies(content)` reads the config dependencies a `pnpm-lock.yaml` env preamble records, as a `ReadonlyMap` keyed by name. Each value is a `ConfigDependencyLock` carrying `specifier`, `version` and the SRI `integrity`. A workspace that writes `configDependencies` as bare versions keeps their integrity only here (#842).
+
+- A lockfile that records none returns an empty map. It fails the same way `packageManager` does: an entry with no `packages` entry, no integrity, a non-SRI integrity or an empty version fails with `LockfileParseError` at `stage: "validation"`. An entry is never silently dropped. [#843][#843]
+
+### Dependencies
+
+| Dependency | Type | Action | From | To |
+| --- | --- | --- | --- | --- |
+| @effected/npm | dependency | updated | 0.16.0 | 0.17.0 |
+
+### Thanks
+
+Thanks to [@spencerbeggs](https://github.com/spencerbeggs) for their contributions!
+
+[#843]: https://github.com/spencerbeggs/effected/pull/843
+
+## 0.11.0
+
+### Features
+
+- Upgrades core Effect to `rc-117` [#812][#812]
+
+### Dependencies
+
+| Dependency | Type | Action | From | To |
+| --- | --- | --- | --- | --- |
+| @effected/jsonc | dependency | updated | 0.12.0 | 0.13.0 |
+| @effected/npm | dependency | updated | 0.15.0 | 0.16.0 |
+| @effected/semver | dependency | updated | 0.8.0 | 0.9.0 |
+| @effected/yaml | dependency | updated | 0.16.0 | 0.17.0 |
+
+### Thanks
+
+Thanks to [@spencerbeggs](https://github.com/spencerbeggs) for their contributions!
+
+[#812]: https://github.com/spencerbeggs/effected/pull/812
+
+## 0.10.0
+
+### Breaking Changes
+
+#### The whole kit tracks Effect `4.0.0-rc.116`
+
+- Every package's `effect` peer moves from `4.0.0-rc.115` to `4.0.0-rc.116`. The kit uses exact prerelease pins rather than a caret, so a consumer must move with it. No `@effected` API changes shape on this advance; the kit itself needed one edit (`Stream.scan` now takes a lazy initial state, met once in `@effected/jsonl`'s `Journal.projection`). A consumer that upgrades meets the rc.116 renames on its own code:
+
+- `SchemaTransformation.make` is `makeTransformation`, and `Transformation#compose` is the dual standalone `SchemaTransformation.composeTransformation`.
+
+- `SchemaGetter.Getter` is a tagged union exposing only `pipe`: `new SchemaGetter.Getter`, `onSome` and `onNone` are gone in favour of `SchemaGetter.map` / `compose` / `run` and `transformEffect` / `transformOptionalEffect`.
+
+- `Stream.scan` and `Stream.scanEffect` take `() => initial`; `Stream.partition` returns `[passes, fails]`; `Stream.mapBoth` takes `onElement` / `onError`.
+
+- `Effect.orElseSucceed` passes the error to its fallback and `Effect.isEffect` narrows to `Effect<unknown, unknown, unknown>`.
+
+- `ByteSize.Input` string literals are checked at compile time; parse external strings with `ByteSize.fromString`.
+
+- Arbitrary shrinking changed, so property-test replay tokens recorded at rc.115 no longer reproduce.
+
+### Documentation
+
+#### The Claude Code and Copilot plugins teach the rc.116 surface
+
+- The `effect-v4-schema` transformation reference composes transformations with `SchemaTransformation.composeTransformation` and describes the `Getter` surface rc.116 left behind; the source-lookup and testing skills report rc.116 as the kit's pin and the two-copy lockfile shape the bridge now produces (`rc.115` for the toolchain, `rc.116` for the kit); the session-start briefing reports rc.116.
+
+### Dependencies
+
+| Dependency | Type | Action | From | To |
+| --- | --- | --- | --- | --- |
+| @effected/jsonc | dependency | updated | 0.11.1 | 0.12.0 |
+| @effected/npm | dependency | updated | 0.14.2 | 0.15.0 |
+| @effected/semver | dependency | updated | 0.7.1 | 0.8.0 |
+| @effected/yaml | dependency | updated | 0.15.2 | 0.16.0 |
+| @effect/platform-node | devDependency | updated | 4.0.0-rc.115 | 4.0.0-rc.116 |
+| @effect/vitest | devDependency | updated | 4.0.0-rc.115 | 4.0.0-rc.116 |
+| effect | devDependency | updated | 4.0.0-rc.115 | 4.0.0-rc.116 |
+| effect | peerDependency | updated | 4.0.0-rc.115 | 4.0.0-rc.116 |
+
+### Maintenance
+
+#### The rc.115 `packageExtensions` bridge is retired
+
+- The toolchain (`@savvy-web/tsdown-plugins`, `rolldown-pnpm-config`, `@vitest-agent/*`) has republished declaring `effect` and its `@effected/*` inputs as regular dependencies, so the workspace no longer needs the `packageExtensions` block that pinned them by hand. Its ten keys named versions no longer installed and the lockfile diff on removal was the checksum line alone. Nothing published changes; this is the workspace's own install shape. [#792][#792]
+
+### Thanks
+
+Thanks to [@spencerbeggs](https://github.com/spencerbeggs) for their contributions!
+
+[#792]: https://github.com/spencerbeggs/effected/pull/792
+
+## 0.9.1
+
+### Bug Fixes
+
+- Fixes closure issues in all packages.
+
+### Dependencies
+
+| Dependency | Type | Action | From | To |
+| --- | --- | --- | --- | --- |
+| @effected/jsonc | dependency | updated | 0.11.0 | 0.11.1 |
+| @effected/npm | dependency | updated | 0.14.0 | 0.14.1 |
+| @effected/semver | dependency | updated | 0.7.0 | 0.7.1 |
+| @effected/yaml | dependency | updated | 0.15.1 | 0.15.2 |
+
+### Thanks
+
+Thanks to [@spencerbeggs](https://github.com/spencerbeggs) for their contributions!
+
+## 0.9.0
+
+### Breaking Changes
+
+#### The whole kit tracks Effect `4.0.0-rc.115`
+
+- Every package's `effect` peer moves from `4.0.0-rc.112` to `4.0.0-rc.115`. The kit uses exact prerelease pins rather than a caret, so a consumer must move with it. This advance is the first whose Effect changes are not source-compatible with the previous pin, so a consumer that upgrades meets the same renames the kit did:
+
+- `SchemaTransformation.transformOrFail` and `SchemaGetter.transformOrFail` are `transformEffect`.
+
+- The `Config` constructors are PascalCase (`Config.String`, `Config.Redacted`, `Config.Int`, `Config.Boolean`, …) and `Config.mapOrFail` is `Config.mapEffect`.
+
+- `FileSystem.Size` and `FileSystem.SizeInput` are gone in favour of the `ByteSize` module: `File.Info.size` is a `ByteSize`, `File.seek` takes a `bigint`, `read`/`write` return a `number`.
+
+- The fast-check bridge (`effect/testing/FastCheck`, `Schema.toArbitrary`, the `fastCheck` property-test option) is removed in favour of `effect/unstable/arbitrary/Arbitrary`; `it.effect.prop` takes `arbitrary: { runs, size, seed, … }`.
+
+#### `@effected/schemastore` documents are open unless told otherwise
+
+- `Schema.ToJsonSchemaOptions.additionalProperties` became `onExcessProperty: "ignore" | "error"` upstream, and its default now mirrors the decoder's: generated object schemas carry `additionalProperties: true` unless `jsonSchema: { onExcessProperty: "error" }` is passed. `StoreDocument.fromSchema` passes the option through unchanged, so a document that was closed by default at rc.112 is open by default now. Pass `onExcessProperty: "error"` to keep a closed document; a generator that silently disagreed with the decoder it is paired with would be the worse default.
+
+#### `@effected/memfs` seeks before the start of a file fail
+
+- `File.seek` gained a `PlatformError` channel upstream, and memfs now matches Node: a seek whose resulting position would be negative fails with `BadArgument` ("Cannot seek before the start of the file") and leaves the cursor unchanged, where it previously stored the negative position and failed on the next read. No memfs-declared type changes; the `File`/`File.Info` shape changes are Effect's own, reaching consumers through the peer.
+
+### Documentation
+
+#### A `Schema.Class` root is annotated on the `Struct` it wraps
+
+- [Effect-TS/effect#8084](https://github.com/Effect-TS/effect/issues/8084), which the rc.112 notes carried as an open limitation, was closed upstream as by design: annotations passed as `Schema.Class`'s second argument sit on the class node, while the `$defs` entry is generated from the encoded fields `Struct`. Annotate that `Struct` — `Schema.Class<X>("X")(Schema.Struct({ … }).annotate({ title, description, "x-taplo": … }))` — and every key reaches the document. `@effected/schemastore`'s design doc and context files now state the rule instead of the limitation.
+
+#### The Claude Code and Copilot plugins teach the rc.115 surface
+
+- The `effect-v4-schema`, `effect-v4-testing` and `effect-v4-module-index` skills describe the native `Arbitrary` module in place of the fast-check bridge, including the migration traps met on this advance: the `size` clamp (default 10) that silently shrinks a property's string and array domains, the `-0` the generator's near-zero bias emits for an unbounded `Schema.Int` or any `Schema.Number`, which JSON and YAML cannot round-trip, and the absence of `oneof`/`constantFrom`/`array` combinators. `ByteSize` has a module-index row, the `Config` and CLI constructors are shown in their PascalCase spellings, and the session-start briefing reports rc.115 as the kit's pin. [#686][#686]
+
+### Dependencies
+
+| Dependency | Type | Action | From | To |
+| --- | --- | --- | --- | --- |
+| @effected/jsonc | dependency | updated | 0.10.0 | 0.11.0 |
+| @effected/npm | dependency | updated | 0.13.0 | 0.14.0 |
+| @effected/semver | dependency | updated | 0.6.0 | 0.7.0 |
+| @effected/yaml | dependency | updated | 0.14.0 | 0.15.0 |
+| @effect/platform-node | devDependency | updated | 4.0.0-rc.112 | 4.0.0-rc.115 |
+| @effect/tsgo | devDependency | updated | 0.41.0 | 0.45.0 |
+| @effect/vitest | devDependency | updated | 4.0.0-rc.112 | 4.0.0-rc.115 |
+| effect | devDependency | updated | 4.0.0-rc.112 | 4.0.0-rc.115 |
+| effect | peerDependency | updated | 4.0.0-rc.112 | 4.0.0-rc.115 |
+
+### Thanks
+
+Thanks to [@spencerbeggs](https://github.com/spencerbeggs) for their contributions!
+
+[#686]: https://github.com/spencerbeggs/effected/pull/686
+
+## 0.8.2
+
+### Dependencies
+
+| Dependency | Type | Action | From | To |
+| --- | --- | --- | --- | --- |
+| @effected/jsonc | dependency | updated | 0.9.0 | 0.10.0 |
+
+## 0.8.1
+
+### Dependencies
+
+| Dependency | Type | Action | From | To |
+| --- | --- | --- | --- | --- |
+| @effected/yaml | dependency | updated | 0.13.0 | 0.14.0 |
+
 ## 0.8.0
 
 ### Breaking Changes
@@ -279,7 +683,8 @@ Thanks to [@spencerbeggs](https://github.com/spencerbeggs) for their contributio
 
 - `filenamesFor(format)` returns every filename a format is genuinely written
   under, primary name first — npm's `npm-shrinkwrap.json` alternate and bun's
-  older binary `bun.lockb` variant, in addition to the conventional name.&#10;`filenameFor` now delegates to it, so the conventional-name behavior is
+  older binary `bun.lockb` variant, in addition to the conventional name.
+  `filenameFor` now delegates to it, so the conventional-name behavior is
   unchanged.
 
 ````ts

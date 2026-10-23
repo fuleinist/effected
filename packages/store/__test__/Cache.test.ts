@@ -4,11 +4,11 @@ import { join } from "node:path";
 import { DatabaseSync } from "node:sqlite";
 import * as SqliteClient from "@effect/sql-sqlite-node/SqliteClient";
 import { afterAll, assert, describe, it, layer } from "@effect/vitest";
-import { Cause, Duration, Effect, Exit, Layer, Option, PubSub, Ref, Schema } from "effect";
+import { Cause, Context, Duration, Effect, Exit, Layer, Option, PubSub, Ref, Schema } from "effect";
+import * as SqlClient from "effect/sql/SqlClient";
+import * as SqlError from "effect/sql/SqlError";
 import { TestClock } from "effect/testing";
-import * as SqlClient from "effect/unstable/sql/SqlClient";
-import * as SqlError from "effect/unstable/sql/SqlError";
-import type { CacheEvent } from "../src/index.js";
+import type { CacheEvent, CacheShape } from "../src/index.js";
 import { Cache, CacheError, Uint8ArrayFromUtf8 } from "../src/index.js";
 
 const bytes = (text: string): Uint8Array => new TextEncoder().encode(text);
@@ -529,12 +529,11 @@ describe("Cache", () => {
 });
 
 describe("Cache.degrading", () => {
-	// The case the combinator exists for, and the one a failure-only catch
-	// misses: SqliteClient reports a filename whose parent directory does not
-	// exist as a DEFECT, not a typed failure.
+	// The common construction failure: a filename whose parent directory does
+	// not exist, which layerSqlite reports as a typed CacheError setup failure.
 	const unopenable = Cache.layerSqlite({ filename: join(tmpdir(), "effected-store-no-such-dir-xyz", "cache.db") });
 
-	it.effect("substitutes a working cache when construction fails as a defect", () =>
+	it.effect("substitutes a working cache when construction fails", () =>
 		Effect.gen(function* () {
 			const cache = yield* Cache;
 			assert.isTrue(cache.degraded);
@@ -604,4 +603,49 @@ describe("Cache.degrading", () => {
 			),
 		),
 	);
+
+	it.effect("degrades on a defect, which a failure-only catch would miss", () =>
+		Effect.gen(function* () {
+			const cache = yield* Cache;
+			assert.isTrue(cache.degraded);
+		}).pipe(Effect.provide(Cache.degrading(Layer.effect(Cache, Effect.die(new Error("boom")))))),
+	);
+});
+
+describe("Cache.layerSqliteAs", () => {
+	class TarballCache extends Context.Service<TarballCache, CacheShape>()("cache-test/TarballCache") {}
+
+	it.effect("provides the consumer's key, keeps the inner Cache out, and sits beside a primary Cache", () =>
+		Effect.gen(function* () {
+			const bytes = new TextEncoder().encode("v");
+			const leaked = yield* Effect.gen(function* () {
+				const primary = yield* Cache;
+				const tarballs = yield* TarballCache;
+				yield* tarballs.set({ key: "only-keyed", value: bytes });
+				assert.isTrue(Option.isNone(yield* primary.get("only-keyed")));
+				assert.isTrue(Option.isSome(yield* tarballs.get("only-keyed")));
+				return yield* Effect.serviceOption(Cache);
+			}).pipe(
+				Effect.provide(Layer.mergeAll(Cache.layerTest(), Cache.layerSqliteAs(TarballCache, { filename: ":memory:" }))),
+			);
+			// The primary was provided, so Cache IS present here; the leak check is
+			// the keyed layer alone, below.
+			assert.isTrue(Option.isSome(leaked));
+			const alone = yield* Effect.serviceOption(Cache).pipe(
+				Effect.provide(Cache.layerSqliteAs(TarballCache, { filename: ":memory:" })),
+			);
+			assert.isTrue(Option.isNone(alone));
+		}),
+	);
+
+	it("rejects a key whose shape is incompatible or adds members, and outputs only the key", () => {
+		class Wider extends Context.Service<Wider, CacheShape & { readonly extra: string }>()("cache-test/Wider") {}
+		const live = Cache.layerSqliteAs(TarballCache, { filename: ":memory:" });
+		// @ts-expect-error the inner Cache is provided internally, never output
+		const withCache: Layer.Layer<Cache | TarballCache, unknown, unknown> = live;
+		// @ts-expect-error a key over a wider shape would be handed a value missing `extra`
+		const wider = () => Cache.layerSqliteAs(Wider, { filename: ":memory:" });
+		assert.isDefined(withCache);
+		assert.isFunction(wider);
+	});
 });

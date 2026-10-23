@@ -5,16 +5,9 @@
 // deny-by-default and an empty tree (savvy-web-systems round-1 request).
 
 import { assert, describe, it } from "@effect/vitest";
-import { Effect, Fiber, FileSystem, Layer, PlatformError, Sink, Stream } from "effect";
+import { Cause, Effect, Exit, Fiber, FileSystem, Layer, PlatformError, Sink, Stream } from "effect";
 import { MemoryFileSystem } from "../src/index.js";
-
-const denied = (method: string, path: string) =>
-	PlatformError.systemError({
-		_tag: "PermissionDenied",
-		module: "FileSystem",
-		method,
-		pathOrDescriptor: path,
-	});
+import { denied } from "./helpers.js";
 
 // The downstream lockdown shape: a real tree the walk must recurse into.
 const tree = {
@@ -46,8 +39,10 @@ describe("MemoryFileSystem.layerFaulty", () => {
 			assert.strictEqual((yield* fs.stat("/repos/blocked")).type, "Directory");
 		}).pipe(
 			Effect.provide(
-				MemoryFileSystem.layerFaultyWith(tree, {
-					chmod: (path, mode) => (mode === 0o555 || mode === 0o444 ? Effect.fail(denied("chmod", path)) : undefined),
+				MemoryFileSystem.layerWith(tree, {
+					faults: {
+						chmod: (path, mode) => (mode === 0o555 || mode === 0o444 ? Effect.fail(denied("chmod", path)) : undefined),
+					},
 				}),
 			),
 		),
@@ -93,9 +88,11 @@ describe("MemoryFileSystem.layerFaulty", () => {
 			assert.strictEqual(yield* fs.readFileString("/repos/blocked/src/b.ts"), "export {}\n");
 		}).pipe(
 			Effect.provide(
-				MemoryFileSystem.layerFaultyWith(tree, {
-					readFileString: (path) =>
-						path === "/repos/blocked/src/a.ts" ? Effect.fail(denied("readFileString", path)) : undefined,
+				MemoryFileSystem.layerWith(tree, {
+					faults: {
+						readFileString: (path) =>
+							path === "/repos/blocked/src/a.ts" ? Effect.fail(denied("readFileString", path)) : undefined,
+					},
 				}),
 			),
 		),
@@ -170,6 +167,19 @@ describe("MemoryFileSystem.layerFaulty", () => {
 			}),
 	);
 
+	it.effect("lstat is interceptable — a handler faults it while stat still delegates", () =>
+		Effect.gen(function* () {
+			const fs = yield* FileSystem.FileSystem;
+			const error = yield* Effect.flip(fs.lstat("/repos/blocked/src/a.ts"));
+			assert.strictEqual(error.reason._tag, "PermissionDenied");
+			assert.strictEqual((yield* fs.stat("/repos/blocked/src/a.ts")).type, "File");
+		}).pipe(
+			Effect.provide(
+				MemoryFileSystem.layerWith(tree, { faults: { lstat: (path) => Effect.fail(denied("lstat", path)) } }),
+			),
+		),
+	);
+
 	it.effect("watch is interceptable — a handler can replace or delegate the event stream", () =>
 		Effect.gen(function* () {
 			const base = yield* MemoryFileSystem.makeWith({ "/watched/real.txt": "x" });
@@ -231,9 +241,9 @@ describe("MemoryFileSystem.failTimes", () => {
 			assert.strictEqual(yield* fs.readFileString("/config.json"), "{}");
 		}).pipe(
 			Effect.provide(
-				MemoryFileSystem.layerFaultyWith(
+				MemoryFileSystem.layerWith(
 					{ "/config.json": "{}" },
-					{ readFileString: MemoryFileSystem.failTimes(2, busy) },
+					{ faults: { readFileString: MemoryFileSystem.failTimes(2, busy) } },
 				),
 			),
 		),
@@ -241,9 +251,9 @@ describe("MemoryFileSystem.failTimes", () => {
 
 	it.effect("re-arms its counter on each layer build — one bound layer const, two provides", () =>
 		Effect.gen(function* () {
-			const Flaky = MemoryFileSystem.layerFaultyWith(
+			const Flaky = MemoryFileSystem.layerWith(
 				{ "/config.json": "{}" },
-				{ readFileString: MemoryFileSystem.failTimes(1, busy) },
+				{ faults: { readFileString: MemoryFileSystem.failTimes(1, busy) } },
 			);
 			const probe = Effect.gen(function* () {
 				const fs = yield* FileSystem.FileSystem;
@@ -271,9 +281,9 @@ describe("MemoryFileSystem.failTimes", () => {
 			assert.strictEqual(value, "{}");
 		}).pipe(
 			Effect.provide(
-				MemoryFileSystem.layerFaultyWith(
+				MemoryFileSystem.layerWith(
 					{ "/config.json": "{}" },
-					{ readFileString: MemoryFileSystem.failTimes(2, busy) },
+					{ faults: { readFileString: MemoryFileSystem.failTimes(2, busy) } },
 				),
 			),
 		),
@@ -307,6 +317,99 @@ describe("MemoryFileSystem.failTimes", () => {
 				readFileString: MemoryFileSystem.failTimes(0, busy),
 			});
 			assert.strictEqual(yield* faulty.readFileString("/config.json"), "{}");
+		}),
+	);
+});
+
+describe("MemoryFileSystem.die", () => {
+	const unstubbed = new Error("makeDirectory is not stubbed");
+
+	// The whole point: a defect is not a failure, so the defensive `Effect.catch`
+	// a caller writes around a read cannot absorb it. A typed fault would pass
+	// through that catch, and a test written with one would pass while the real
+	// code path dies.
+	it.effect("fails the member as a defect that Effect.catch cannot absorb", () =>
+		Effect.gen(function* () {
+			const fs = yield* FileSystem.FileSystem;
+			const exit = yield* Effect.exit(
+				fs.makeDirectory("/new", { recursive: true }).pipe(Effect.catch(() => Effect.void)),
+			);
+			assert.isTrue(Exit.isFailure(exit));
+			if (Exit.isFailure(exit)) {
+				assert.isTrue(Cause.hasDies(exit.cause));
+				assert.isFalse(Cause.hasFails(exit.cause));
+				assert.strictEqual(Cause.squash(exit.cause), unstubbed);
+			}
+		}).pipe(
+			Effect.provide(MemoryFileSystem.layerWith({}, { faults: { makeDirectory: MemoryFileSystem.die(unstubbed) } })),
+		),
+	);
+
+	it.effect("dies with exactly the defect it was given, and leaves other members delegating", () =>
+		Effect.gen(function* () {
+			const defect = new Error("readDirectory is not stubbed");
+			const base = yield* MemoryFileSystem.makeWith(tree);
+			const fs = MemoryFileSystem.makeFaulty(base, { readDirectory: MemoryFileSystem.die(defect) });
+			const exit = yield* Effect.exit(fs.readDirectory("/repos/blocked/src"));
+			assert.isTrue(Exit.isFailure(exit) && Cause.squash(exit.cause) === defect);
+			assert.strictEqual(yield* fs.readFileString("/repos/blocked/src/a.ts"), "export {}\n");
+		}),
+	);
+});
+
+describe("MemoryFileSystem fault factories", () => {
+	// The case-insensitive-volume workaround effected#874 describes, as the
+	// one-liner the factory form makes it: rewrite the argument, delegate to the
+	// UNFAULTED base.
+	it.effect("hands the factory the wrapped volume, so a handler can rewrite arguments and delegate", () =>
+		Effect.gen(function* () {
+			const fs = yield* FileSystem.FileSystem;
+			assert.strictEqual((yield* fs.stat("/Docs.json")).type, "File");
+			assert.strictEqual(yield* fs.readFileString("/DOCS.JSON"), "{}");
+		}).pipe(
+			Effect.provide(
+				MemoryFileSystem.layerWith(
+					{ "/docs.json": "{}" },
+					{
+						faults: (base) => ({
+							stat: (path) => base.stat(path.toLowerCase()),
+							readFileString: (path, encoding) => base.readFileString(path.toLowerCase(), encoding),
+						}),
+					},
+				),
+			),
+		),
+	);
+
+	it.effect("the base the factory receives is unfaulted, so delegating to it cannot recurse", () =>
+		Effect.gen(function* () {
+			const base = yield* MemoryFileSystem.makeWith({ "/a.txt": "a" });
+			const fs = MemoryFileSystem.makeFaulty(base, (inner) => ({
+				readFileString: (path, encoding) =>
+					path === "/alias.txt"
+						? inner.readFileString("/a.txt", encoding)
+						: Effect.fail(denied("readFileString", path)),
+			}));
+			assert.strictEqual(yield* fs.readFileString("/alias.txt"), "a");
+			assert.strictEqual((yield* Effect.flip(fs.readFileString("/a.txt"))).reason._tag, "PermissionDenied");
+		}),
+	);
+
+	it.effect("calls the factory once per build, so faults it creates are armed per build", () =>
+		Effect.gen(function* () {
+			let calls = 0;
+			const flaky = MemoryFileSystem.layerFaulty(() => {
+				calls += 1;
+				return { readFileString: MemoryFileSystem.failTimes(1, denied("readFileString", "/config.json")) };
+			}).pipe(Layer.provide(MemoryFileSystem.layerWith({ "/config.json": "{}" })));
+			const readTwice = Effect.gen(function* () {
+				const fs = yield* FileSystem.FileSystem;
+				yield* Effect.flip(fs.readFileString("/config.json"));
+				return yield* fs.readFileString("/config.json");
+			});
+			assert.strictEqual(yield* readTwice.pipe(Effect.provide(flaky)), "{}");
+			assert.strictEqual(yield* readTwice.pipe(Effect.provide(flaky)), "{}");
+			assert.strictEqual(calls, 2);
 		}),
 	);
 });

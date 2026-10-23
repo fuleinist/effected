@@ -1,4 +1,4 @@
-import { Schema } from "effect";
+import { JsonPointer, Schema } from "effect";
 import { MAX_NESTING_DEPTH } from "./internal/limits.js";
 import { KeywordFamilies } from "./KeywordFamilies.js";
 import type { StoreDocument } from "./StoreDocument.js";
@@ -75,10 +75,6 @@ const DRAFT_07_KEYWORDS = new Set([
 
 const URL_LINE = /^https?:\/\/\S+$/;
 
-const escapePointerSegment = (segment: string): string => segment.replace(/~/g, "~0").replace(/\//g, "~1");
-
-const unescapePointerSegment = (segment: string): string => segment.replace(/~1/g, "/").replace(/~0/g, "~");
-
 interface LintContext {
 	readonly defs: Readonly<Record<string, unknown>>;
 	readonly findings: Array<DocumentLintFinding>;
@@ -87,6 +83,32 @@ interface LintContext {
 const isSchemaObject = (node: unknown): node is Record<string, unknown> =>
 	typeof node === "object" && node !== null && !Array.isArray(node);
 
+// The pointer a local `$ref` names, decoded exactly the way ajv resolves
+// it: split on `/`, then percent-decode and pointer-unescape each token.
+// That covers every token core emits (`encodeURI(escapeToken(name))`, e.g.
+// `My%20Foo~1BarEncoded` for the class identifier `My Foo/BarEncoded`) and
+// the unencoded shapes a hand-assembled or read-back document may carry
+// (a raw space, non-ASCII, `#`, `|`, `{}`), refusing only malformed
+// percent-encoding — which ajv refuses too. `JsonPointer.parseUriFragment`
+// is deliberately not used here: it rejects those unencoded shapes, and it
+// percent-decodes before splitting, so `a%2Fb` tokenizes as two segments
+// where the engine sees one.
+const localPointer = (ref: string): ReadonlyArray<string> | undefined => {
+	if (!ref.startsWith("#/")) {
+		return undefined;
+	}
+	try {
+		return ref
+			.slice(2)
+			.split("/")
+			.map((token) => JsonPointer.unescapeToken(decodeURIComponent(token)));
+	} catch {
+		return undefined;
+	}
+};
+
+// Subpath refs (`#/$defs/Thing/properties/inner`) resolve on their first
+// pool segment.
 const checkRef = (value: unknown, path: string, context: LintContext): void => {
 	if (typeof value !== "string") {
 		return;
@@ -94,8 +116,13 @@ const checkRef = (value: unknown, path: string, context: LintContext): void => {
 	if (value === "#") {
 		return;
 	}
-	const match = /^#\/\$defs\/([^/]+)/.exec(value);
-	if (match !== null && Object.hasOwn(context.defs, unescapePointerSegment(match[1] as string))) {
+	const pointer = localPointer(value);
+	if (
+		pointer !== undefined &&
+		pointer.length >= 2 &&
+		pointer[0] === "$defs" &&
+		Object.hasOwn(context.defs, pointer[1])
+	) {
 		return;
 	}
 	context.findings.push(
@@ -106,6 +133,28 @@ const checkRef = (value: unknown, path: string, context: LintContext): void => {
 			message: `$ref "${value}" does not resolve against the document's $defs pool`,
 		}),
 	);
+};
+
+// The node whose `description` is the document's: the root, or — when the
+// root is exactly a bare local `$ref` into the pool (the `Schema.Class`
+// shape) — the `$defs` entry it names, because that is where assembly
+// places a root annotation (`StoreDocumentOptions.rootAnnotations`). The
+// `$ref` token is decoded the same way `checkRef` resolves it, so a
+// pointer-escaped, percent-encoded or unencoded name resolves.
+const describedNode = (
+	document: StoreDocument,
+): { readonly node: Readonly<Record<string, unknown>>; readonly path: string } | undefined => {
+	const keys = Object.keys(document.root);
+	if (keys.length !== 1 || keys[0] !== "$ref" || typeof document.root.$ref !== "string") {
+		return { node: document.root, path: "" };
+	}
+	const pointer = localPointer(document.root.$ref);
+	if (pointer === undefined || pointer.length !== 2 || pointer[0] !== "$defs") {
+		return { node: document.root, path: "" };
+	}
+	const name = pointer[1] as string;
+	const entry = Object.hasOwn(document.defs, name) ? document.defs[name] : undefined;
+	return isSchemaObject(entry) ? { node: entry, path: `/$defs/${JsonPointer.escapeToken(name)}` } : undefined;
 };
 
 // Walks one schema node, keyword-position aware: descends only into
@@ -129,7 +178,7 @@ const lintSchema = (node: unknown, path: string, depth: number, context: LintCon
 		return;
 	}
 	for (const [key, value] of Object.entries(node)) {
-		const keyPath = `${path}/${escapePointerSegment(key)}`;
+		const keyPath = `${path}/${JsonPointer.escapeToken(key)}`;
 		if (!DRAFT_07_KEYWORDS.has(key) && !KeywordFamilies.isDeclared(key)) {
 			context.findings.push(
 				DocumentLintFinding.make({
@@ -151,7 +200,7 @@ const lintSchema = (node: unknown, path: string, depth: number, context: LintCon
 			case "definitions": {
 				if (isSchemaObject(value)) {
 					for (const [name, subschema] of Object.entries(value)) {
-						lintSchema(subschema, `${keyPath}/${escapePointerSegment(name)}`, depth + 1, context);
+						lintSchema(subschema, `${keyPath}/${JsonPointer.escapeToken(name)}`, depth + 1, context);
 					}
 				}
 				break;
@@ -161,7 +210,7 @@ const lintSchema = (node: unknown, path: string, depth: number, context: LintCon
 				if (isSchemaObject(value)) {
 					for (const [name, dependency] of Object.entries(value)) {
 						if (!Array.isArray(dependency)) {
-							lintSchema(dependency, `${keyPath}/${escapePointerSegment(name)}`, depth + 1, context);
+							lintSchema(dependency, `${keyPath}/${JsonPointer.escapeToken(name)}`, depth + 1, context);
 						}
 					}
 				}
@@ -217,10 +266,18 @@ const lintSchema = (node: unknown, path: string, depth: number, context: LintCon
  *   non-standard families ({@link KeywordFamilies}: `x-taplo*`, `x-tombi-*`,
  *   `x-intellij-*`, `x-ai-*` and the vscode set), which ajv strict mode would reject.
  * - `DescriptionWithoutUrl` — advisory: SchemaStore's description
- *   convention ends the root description with a docs URL line.
+ *   convention ends the root description with a docs URL line. Read from
+ *   the root, or from the `$defs` entry a bare local `$ref` root names —
+ *   where assembly places a root annotation.
  *
- * Tractable because the input is bounded `toJsonSchemaDocument` output;
- * this is not a general JSON Schema validator.
+ * Tractable because the input is the bounded {@link StoreDocument} shape,
+ * not because assembly built it: the warning checks earn their keep on a
+ * document the pipeline did not build — hand-assembled through
+ * `StoreDocument.draft07`, or read back off disk. A local `$defs` pointer
+ * is decoded the way ajv decodes it, so no `$ref` into the pool that the
+ * engine gate resolves is reported `UnresolvedRef`; a `#/definitions/...`
+ * pointer stays a warning on purpose, since the pool lives under `$defs`.
+ * This is not a general JSON Schema validator.
  *
  * @public
  */
@@ -235,9 +292,10 @@ export class DocumentLint {
 		const context: LintContext = { defs: document.defs, findings: [] };
 		lintSchema(document.root, "", 0, context);
 		for (const [name, definition] of Object.entries(document.defs)) {
-			lintSchema(definition, `/$defs/${escapePointerSegment(name)}`, 1, context);
+			lintSchema(definition, `/$defs/${JsonPointer.escapeToken(name)}`, 1, context);
 		}
-		const description = document.root.description;
+		const described = describedNode(document);
+		const description = described?.node.description;
 		if (typeof description === "string") {
 			const lines = description.split("\n");
 			const last = lines[lines.length - 1] ?? "";
@@ -246,7 +304,7 @@ export class DocumentLint {
 					DocumentLintFinding.make({
 						check: "DescriptionWithoutUrl",
 						severity: "advisory",
-						path: "/description",
+						path: `${described?.path ?? ""}/description`,
 						message:
 							"SchemaStore's description convention ends with a documentation URL on its own line (<description>\\n<docs-url>)",
 					}),

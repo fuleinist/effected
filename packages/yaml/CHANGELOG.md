@@ -1,5 +1,279 @@
 # @effected/yaml
 
+## 0.23.0
+
+### Maintenance
+
+- Upgrades core Effect library dependencies to v4.0.6 [#1039][#1039]
+
+### Thanks
+
+Thanks to [@spencerbeggs](https://github.com/spencerbeggs) for their contributions!
+
+[#1039]: https://github.com/spencerbeggs/effected/pull/1039
+
+## 0.22.0
+
+### Maintenance
+
+- Upgrades core Effect library dependencies to v4.0.5 [#1019][#1019]
+
+### Thanks
+
+Thanks to [@spencerbeggs](https://github.com/spencerbeggs) for their contributions!
+
+[#1019]: https://github.com/spencerbeggs/effected/pull/1019
+
+## 0.21.0
+
+### Maintenance
+
+- Upgrades core Effect library dependencies to v4.0.4 [#1008][#1008]
+
+### Thanks
+
+Thanks to [@spencerbeggs](https://github.com/spencerbeggs) for their contributions!
+
+[#1008]: https://github.com/spencerbeggs/effected/pull/1008
+
+## 0.20.0
+
+### Dependencies
+
+| Dependency | Type | Action | From | To |
+| --- | --- | --- | --- | --- |
+| effect | peerDependency | updated | 4.0.2 | ^4.0.3 |
+
+- Effect 4.0.3 advance: the `effect` peer and catalog move from the exact `4.0.2` hold back to `^4.0.3`. No API change. [#1000][#1000]
+
+### Thanks
+
+Thanks to [@spencerbeggs](https://github.com/spencerbeggs) for their contributions!
+
+[#1000]: https://github.com/spencerbeggs/effected/pull/1000
+
+## 0.19.2
+
+### Bug Fixes
+
+- Republished with every `effect` and `@effect/*` version pinned exactly to `4.0.2`, both peer and dependency ranges.
+
+- On 2026-10-10, every `@effect/*` package published at `4.0.3`, but `effect@4.0.3` itself never reached npm (Effect-TS/effect#8994). The 4.0.3 packages require `effect ^4.0.3`. A caret range on any of them therefore resolves a 4.0.3 package next to `effect@4.0.2`, and the program crashes when it imports them. Exact pins keep a fresh install of any kit package on a matched set until `effect@4.0.3` is available. [#997][#997]
+
+### Thanks
+
+Thanks to [@spencerbeggs](https://github.com/spencerbeggs) for their contributions!
+
+[#997]: https://github.com/spencerbeggs/effected/pull/997
+
+## 0.19.1
+
+### Bug Fixes
+
+- `YamlParseError.message` now renders each diagnostic's position 1-based (`line + 1:character + 1`), so a CLI printing the message shows the line and column a person counts in their editor. The structured `YamlDiagnostic` `line`/`character` fields are unchanged and remain 0-based per LSP convention.
+- `YamlStyleConflictError.message` renders each candidate's first-seen position 1-based the same way; the structured `StyleVoteTally` fields remain 0-based. [#944][#944]
+
+### Thanks
+
+Thanks to [@spencerbeggs](https://github.com/spencerbeggs) for their contributions!
+
+[#944]: https://github.com/spencerbeggs/effected/pull/944
+
+## 0.19.0
+
+### Breaking Changes
+
+- The kit now builds on and peers stable `effect` `^4.0.0`, in place of an exact release-candidate pin. Move `effect` and every `@effect/*` package to the same `4.x` version in one install: Effect releases them together at one version. A package from this release cannot share an install with an `effect` release candidate. The peer is a caret range, so later `4.x` releases of Effect satisfy the kit without a kit release.
+- Kit exports are unchanged. A consumer moving to stable `effect` meets these changes in its own code:
+  - `Array`, `Chunk`, `Effect` and `Record` `partition`, their `separate` helpers and `Option.partitionMap` return `[successes, failures]`. Where both sides share a type, the reversed destructuring still compiles, so search for every call.
+  - `Schema.brand` takes one identifier and is type-only: the identifier is not stored on the AST and does not survive `SchemaRepresentation`. Compose distinct brands by applying `brand` more than once.
+  - `TestSchema`'s round-trip assertion is `verifyRoundTrip`, with Effect forms `succeedEffect`, `failEffect` and `verifyRoundTripEffect`.
+  - Effect marks some APIs `@stability unstable`: those may change in a minor Effect release. Untagged APIs follow semver.
+
+### Documentation
+
+- Every exported construct's TSDoc was reviewed against the current API. Summaries open with what the construct does, error channels and requirements are stated, examples use real imports and compile, and links resolve. Comments that described options, errors or defaults the code does not have were corrected. [#910][#910]
+
+### Thanks
+
+Thanks to [@spencerbeggs](https://github.com/spencerbeggs) for their contributions!
+
+[#910]: https://github.com/spencerbeggs/effected/pull/910
+
+## 0.18.0
+
+### Breaking Changes
+
+- The kit now builds on and peers `effect` `4.0.0-rc.118`, pinned exactly. Consumers must move `effect` and every `@effect/*` package to `4.0.0-rc.118` in the same install. Effect removed the `effect/unstable/*` export paths in this release, so an `@effected` package built on rc.118 cannot share an install with `effect` rc.117.
+
+- Moving the pin also closes a fresh-install failure on rc.117. `@effect/platform-node@4.0.0-rc.117` depends on `@effect/platform-node-shared` with a caret, so an install without a lockfile paired the rc.118 shared package with `effect` rc.117 and failed at startup with `ERR_MODULE_NOT_FOUND`.
+
+- Consumers moving to this release: effect removed the `effect/unstable/*` export paths (imports become `effect/<module>`), moved `Arbitrary` to `effect`, split `effect/Encoding` into `effect/encoding/Base64`, `Base64Url` and `Hex`, and renamed the `Schema` range and string checks (`isLengthBetween` → `isBetweenLength`, `isStartsWith` → `isStartingWith`, and so on). Kit exports are otherwise unchanged; the kit's own imports moved onto the new paths. [#864][#864]
+
+### Thanks
+
+Thanks to [@spencerbeggs](https://github.com/spencerbeggs) for their contributions!
+
+[#864]: https://github.com/spencerbeggs/effected/pull/864
+
+## 0.17.0
+
+### Features
+
+- Upgrades core Effect to `rc-117` [#812][#812]
+
+### Thanks
+
+Thanks to [@spencerbeggs](https://github.com/spencerbeggs) for their contributions!
+
+[#812]: https://github.com/spencerbeggs/effected/pull/812
+
+## 0.16.0
+
+### Breaking Changes
+
+#### The whole kit tracks Effect `4.0.0-rc.116`
+
+- Every package's `effect` peer moves from `4.0.0-rc.115` to `4.0.0-rc.116`. The kit uses exact prerelease pins rather than a caret, so a consumer must move with it. No `@effected` API changes shape on this advance; the kit itself needed one edit (`Stream.scan` now takes a lazy initial state, met once in `@effected/jsonl`'s `Journal.projection`). A consumer that upgrades meets the rc.116 renames on its own code:
+
+- `SchemaTransformation.make` is `makeTransformation`, and `Transformation#compose` is the dual standalone `SchemaTransformation.composeTransformation`.
+
+- `SchemaGetter.Getter` is a tagged union exposing only `pipe`: `new SchemaGetter.Getter`, `onSome` and `onNone` are gone in favour of `SchemaGetter.map` / `compose` / `run` and `transformEffect` / `transformOptionalEffect`.
+
+- `Stream.scan` and `Stream.scanEffect` take `() => initial`; `Stream.partition` returns `[passes, fails]`; `Stream.mapBoth` takes `onElement` / `onError`.
+
+- `Effect.orElseSucceed` passes the error to its fallback and `Effect.isEffect` narrows to `Effect<unknown, unknown, unknown>`.
+
+- `ByteSize.Input` string literals are checked at compile time; parse external strings with `ByteSize.fromString`.
+
+- Arbitrary shrinking changed, so property-test replay tokens recorded at rc.115 no longer reproduce.
+
+### Documentation
+
+#### The Claude Code and Copilot plugins teach the rc.116 surface
+
+- The `effect-v4-schema` transformation reference composes transformations with `SchemaTransformation.composeTransformation` and describes the `Getter` surface rc.116 left behind; the source-lookup and testing skills report rc.116 as the kit's pin and the two-copy lockfile shape the bridge now produces (`rc.115` for the toolchain, `rc.116` for the kit); the session-start briefing reports rc.116.
+
+### Dependencies
+
+| Dependency | Type | Action | From | To |
+| --- | --- | --- | --- | --- |
+| @effect/platform-node | devDependency | updated | 4.0.0-rc.115 | 4.0.0-rc.116 |
+| @effect/vitest | devDependency | updated | 4.0.0-rc.115 | 4.0.0-rc.116 |
+| effect | devDependency | updated | 4.0.0-rc.115 | 4.0.0-rc.116 |
+| effect | peerDependency | updated | 4.0.0-rc.115 | 4.0.0-rc.116 |
+
+### Maintenance
+
+#### The rc.115 `packageExtensions` bridge is retired
+
+- The toolchain (`@savvy-web/tsdown-plugins`, `rolldown-pnpm-config`, `@vitest-agent/*`) has republished declaring `effect` and its `@effected/*` inputs as regular dependencies, so the workspace no longer needs the `packageExtensions` block that pinned them by hand. Its ten keys named versions no longer installed and the lockfile diff on removal was the checksum line alone. Nothing published changes; this is the workspace's own install shape. [#792][#792]
+
+### Thanks
+
+Thanks to [@spencerbeggs](https://github.com/spencerbeggs) for their contributions!
+
+[#792]: https://github.com/spencerbeggs/effected/pull/792
+
+## 0.15.2
+
+### Bug Fixes
+
+- Fixes closure issues in all packages.
+
+### Thanks
+
+Thanks to [@spencerbeggs](https://github.com/spencerbeggs) for their contributions!
+
+## 0.15.1
+
+### Bug Fixes
+
+- A leading byte-order mark no longer drops the first node of a document. The lexer counted the BOM as a column, so the first line lexed one column deeper than every line after it and the composer opened a second collection at that indent: `Yaml.parse("﻿a: 'x'\nb: 1\n")` returned `{ b: 1 }`, a BOM-prefixed sequence returned only its last item, and a BOM followed by a comment failed with `UnexpectedToken`. The BOM now occupies no column in the lexer and in the composer's column helpers (so a BOM-prefixed root mapping's terminal own-line comment survives too); node offsets stay indices into the original text, so `YamlFormat.modify` finds the first key and splices it in place. `YamlFormat.format` and the whole-document `modify` pipeline re-attach the source's leading BOM on re-emit instead of producing a delete-at-offset-0 edit; `YamlDocument.stringify` and `Yaml.stringify` still emit no BOM. Closes effected#694.
+- A plain scalar rendered inside a flow collection is now quoted whenever it contains a flow indicator (`,`, `[`, `]`, `{`, `}`), per the flow-plain rules of YAML 1.2 §7.3.3. Previously `requiresQuoting` applied block-context rules everywhere, so `Yaml.stringify` with `defaultCollectionStyle: "flow"`, `YamlDocument.stringify` on a flow-styled node, and `YamlFormat.modify` into a flow collection could all emit `[p, q, y]` for the value `"p, q"` (three items on re-parse) or `{b: p}, c: y}` (unparseable). Block context is unchanged. The region-confined modify fast path renders and round-trip-probes under the target's own context, so it stays regional for flow parents. Closes effected#695. [#697][#697]
+
+* `YamlFormat.modify` now takes a region-confined fast path when the target resolves to an existing single-line scalar: only that scalar's source span is spliced, preserving the original quote style, trailing same-line comments, and CRLF line endings everywhere else in the document. Previously every modify re-serialised the whole document, dropping the replaced node's comment and quote style and normalising line endings throughout. Closes effected#659.
+* The whole-document pipeline remains the path for removals, insertions, `null` values, object values, block or multi-line scalars, tagged or anchored targets, and any explicit stringify option (`defaultScalarStyle`, `forceDefaultStyles`, `sortKeys`, `indent`, `indentSequences`, `finalNewline`); those results are byte-identical to prior behavior (line endings normalised to LF).
+* An `Object.is` round-trip probe re-composes the spliced document before the edit is returned; any mismatch falls back to the whole-document pipeline, so the fast path can never change the resolved value. [#682][#682]
+
+### Thanks
+
+Thanks to [@fuleinist](https://github.com/fuleinist) and [@spencerbeggs](https://github.com/spencerbeggs) for their contributions!
+
+[#682]: https://github.com/spencerbeggs/effected/pull/682
+
+[#697]: https://github.com/spencerbeggs/effected/pull/697
+
+## 0.15.0
+
+### Breaking Changes
+
+#### The whole kit tracks Effect `4.0.0-rc.115`
+
+- Every package's `effect` peer moves from `4.0.0-rc.112` to `4.0.0-rc.115`. The kit uses exact prerelease pins rather than a caret, so a consumer must move with it. This advance is the first whose Effect changes are not source-compatible with the previous pin, so a consumer that upgrades meets the same renames the kit did:
+
+- `SchemaTransformation.transformOrFail` and `SchemaGetter.transformOrFail` are `transformEffect`.
+
+- The `Config` constructors are PascalCase (`Config.String`, `Config.Redacted`, `Config.Int`, `Config.Boolean`, …) and `Config.mapOrFail` is `Config.mapEffect`.
+
+- `FileSystem.Size` and `FileSystem.SizeInput` are gone in favour of the `ByteSize` module: `File.Info.size` is a `ByteSize`, `File.seek` takes a `bigint`, `read`/`write` return a `number`.
+
+- The fast-check bridge (`effect/testing/FastCheck`, `Schema.toArbitrary`, the `fastCheck` property-test option) is removed in favour of `effect/unstable/arbitrary/Arbitrary`; `it.effect.prop` takes `arbitrary: { runs, size, seed, … }`.
+
+#### `@effected/schemastore` documents are open unless told otherwise
+
+- `Schema.ToJsonSchemaOptions.additionalProperties` became `onExcessProperty: "ignore" | "error"` upstream, and its default now mirrors the decoder's: generated object schemas carry `additionalProperties: true` unless `jsonSchema: { onExcessProperty: "error" }` is passed. `StoreDocument.fromSchema` passes the option through unchanged, so a document that was closed by default at rc.112 is open by default now. Pass `onExcessProperty: "error"` to keep a closed document; a generator that silently disagreed with the decoder it is paired with would be the worse default.
+
+#### `@effected/memfs` seeks before the start of a file fail
+
+- `File.seek` gained a `PlatformError` channel upstream, and memfs now matches Node: a seek whose resulting position would be negative fails with `BadArgument` ("Cannot seek before the start of the file") and leaves the cursor unchanged, where it previously stored the negative position and failed on the next read. No memfs-declared type changes; the `File`/`File.Info` shape changes are Effect's own, reaching consumers through the peer.
+
+### Documentation
+
+#### A `Schema.Class` root is annotated on the `Struct` it wraps
+
+- [Effect-TS/effect#8084](https://github.com/Effect-TS/effect/issues/8084), which the rc.112 notes carried as an open limitation, was closed upstream as by design: annotations passed as `Schema.Class`'s second argument sit on the class node, while the `$defs` entry is generated from the encoded fields `Struct`. Annotate that `Struct` — `Schema.Class<X>("X")(Schema.Struct({ … }).annotate({ title, description, "x-taplo": … }))` — and every key reaches the document. `@effected/schemastore`'s design doc and context files now state the rule instead of the limitation.
+
+#### The Claude Code and Copilot plugins teach the rc.115 surface
+
+- The `effect-v4-schema`, `effect-v4-testing` and `effect-v4-module-index` skills describe the native `Arbitrary` module in place of the fast-check bridge, including the migration traps met on this advance: the `size` clamp (default 10) that silently shrinks a property's string and array domains, the `-0` the generator's near-zero bias emits for an unbounded `Schema.Int` or any `Schema.Number`, which JSON and YAML cannot round-trip, and the absence of `oneof`/`constantFrom`/`array` combinators. `ByteSize` has a module-index row, the `Config` and CLI constructors are shown in their PascalCase spellings, and the session-start briefing reports rc.115 as the kit's pin. [#686][#686]
+
+### Dependencies
+
+| Dependency | Type | Action | From | To |
+| --- | --- | --- | --- | --- |
+| @effect/platform-node | devDependency | updated | 4.0.0-rc.112 | 4.0.0-rc.115 |
+| @effect/tsgo | devDependency | updated | 0.41.0 | 0.45.0 |
+| @effect/vitest | devDependency | updated | 4.0.0-rc.112 | 4.0.0-rc.115 |
+| effect | devDependency | updated | 4.0.0-rc.112 | 4.0.0-rc.115 |
+| effect | peerDependency | updated | 4.0.0-rc.112 | 4.0.0-rc.115 |
+
+### Thanks
+
+Thanks to [@spencerbeggs](https://github.com/spencerbeggs) for their contributions!
+
+[#686]: https://github.com/spencerbeggs/effected/pull/686
+
+## 0.14.0
+
+### Bug Fixes
+
+#### `YamlFormat.modify` recursively lowers object and array values
+
+- `modify` used to lower only scalar-compatible values into AST nodes; a mapping or sequence value fell through to the node stringifier's `String(value)` fallback and silently corrupted the document with the literal text `[object Object]`. `modify` now lowers a whole object graph the same way `Yaml.stringify` does — an array becomes a block sequence and any other non-null object a block mapping over its own enumerable string keys — so the two agree on what a given JavaScript value means (#642).
+
+- A replacement value with no finite rendering fails typed instead of hanging or overflowing the stack: a circular reference raises `YamlModifyErrorCode.CircularReference`, and a graph nested more than 256 levels deep raises `NestingDepthExceeded`. `YamlModifyErrorCode` gains these two members.
+
+#### Block-collection spans no longer swallow a disowned trailing comment
+
+- A block map or sequence's reported `offset`/`length` used to run past a floating comment at a shallower indent that the comment model had already reattributed to an enclosing scope — so a caller splicing text at the end of the collection (via `findAtOffset` or similar) inserted after that comment instead of before it. The span now stops where the comment model says the collection actually ends, which shrinks the observable `offset`/`length` on any document with this shape (#643). [#654][#654]
+
+### Thanks
+
+Thanks to [@spencerbeggs](https://github.com/spencerbeggs) for their contributions!
+
+[#654]: https://github.com/spencerbeggs/effected/pull/654
+
 ## 0.13.0
 
 ### Breaking Changes
@@ -445,7 +719,9 @@ Thanks to [@spencerbeggs](https://github.com/spencerbeggs) for their contributio
 
 - ### `Yaml.bind(target)`
   Added `Yaml.bind`, which composes `Yaml.schema(target)` once and hands back
-  a `YamlBoundCodec` carrying that `schema` plus `decode` and `encode`&#10;functions already derived from it. Call sites stop reaching for&#10;`Schema.decodeEffect` / `Schema.encodeEffect` around a domain schema every
+  a `YamlBoundCodec` carrying that `schema` plus `decode` and `encode`
+  functions already derived from it. Call sites stop reaching for
+  `Schema.decodeEffect` / `Schema.encodeEffect` around a domain schema every
   time they touch a YAML file.
   ```ts
   import { Yaml } from "@effected/yaml";
@@ -461,8 +737,10 @@ Thanks to [@spencerbeggs](https://github.com/spencerbeggs) for their contributio
   	// => "port: 3000\n"
   });
   ```
-  Both directions fail with `Schema.SchemaError`, exactly as&#10;`Schema.decodeEffect` / `Schema.encodeEffect` over `Yaml.schema` do, and the
-  target's decoding and encoding service requirements flow through to `RD` and&#10;`RE`.
+  Both directions fail with `Schema.SchemaError`, exactly as
+  `Schema.decodeEffect` / `Schema.encodeEffect` over `Yaml.schema` do, and the
+  target's decoding and encoding service requirements flow through to `RD` and
+  `RE`.
 
   `bind` covers the plain single-document form only — default parse options on
   the way in, default stringify options on the way out. Multi-document streams
@@ -488,10 +766,13 @@ Thanks to [@spencerbeggs](https://github.com/spencerbeggs) for their contributio
 
 ### Documentation
 
-- Clarify that `lineWidth` scalar folding is a value-path-only feature:&#10;`Yaml.stringify`/`Yaml.stringifySync` honor it, while `YamlDocument#stringify`&#10;and the `YamlFormat` helpers accept the option but never fold — callers
+- Clarify that `lineWidth` scalar folding is a value-path-only feature:
+  `Yaml.stringify`/`Yaml.stringifySync` honor it, while `YamlDocument#stringify`
+  and the `YamlFormat` helpers accept the option but never fold — callers
   needing folded output on that path should render the plain value instead
   (`Yaml.stringify(doc.toValue(), options)`).
-- Fixed two `{@link Result}` cross-package references that produced&#10;`ae-unresolved-link` warnings in the production build; the package now
+- Fixed two `{@link Result}` cross-package references that produced
+  `ae-unresolved-link` warnings in the production build; the package now
   builds warning-free. [#112][#112]
 
 ### Patch Changes

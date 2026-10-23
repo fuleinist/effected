@@ -1,6 +1,8 @@
+import { CommandNeutralizer, WorkflowCommand } from "@effected/github-commands";
 import { Console, Context, Effect, FileSystem, Layer, Schema } from "effect";
 import { ActionEnvironment } from "./ActionEnvironment.js";
-import { WorkflowCommand } from "./WorkflowCommand.js";
+import { heredocBlock, isUsableName } from "./internal/runnerFile.js";
+import { unstubbed } from "./internal/unstubbed.js";
 
 /**
  * Raised when an action cannot publish an output.
@@ -108,33 +110,91 @@ export type ActionOutputError =
 	| OutputEncodeError
 	| DetachedOutputError;
 
-/** The base delimiter for a heredoc block. */
-const BASE_DELIMITER = "EFFECTED_EOF";
+/**
+ * The runner file each member appends to — spelled once, so the real layer,
+ * the detached layer and the recording double cannot disagree about which
+ * file a member's failure names.
+ */
+const RUNNER_FILE = {
+	set: "GITHUB_OUTPUT",
+	setJson: "GITHUB_OUTPUT",
+	exportVariable: "GITHUB_ENV",
+	summary: "GITHUB_STEP_SUMMARY",
+	addPath: "GITHUB_PATH",
+} as const;
 
 /**
- * A delimiter guaranteed absent from `value`.
+ * Run `effect` only if `name` can head a heredoc block; otherwise fail typed,
+ * naming the file. The one name check every construction of the service
+ * applies before a named write.
+ */
+const withUsableName = <A, E, R>(
+	file: string,
+	name: string,
+	effect: Effect.Effect<A, E, R>,
+): Effect.Effect<A, E | InvalidOutputNameError, R> =>
+	isUsableName(name) ? effect : Effect.fail(new InvalidOutputNameError({ file, name }));
+
+/**
+ * The JSON text `setJson` publishes for `value`: encoded through `schema`,
+ * then stringified. The one step of `setJson` that can fail, shared by the
+ * real layer and both test doubles so that none of them can skip it.
+ */
+const encodeJson = <A, I>(
+	name: string,
+	value: A,
+	schema: Schema.Codec<A, I>,
+): Effect.Effect<string, OutputEncodeError> =>
+	Schema.encodeUnknownEffect(Schema.fromJsonString(schema))(value).pipe(
+		Effect.mapError((cause) => new OutputEncodeError({ name, cause })),
+	);
+
+/**
+ * One call an {@link ActionOutputs.recording} double observed.
  *
  * @remarks
- * GitHub's own toolkit uses a random UUID here and accepts the (tiny) chance
- * of collision. Deriving the delimiter instead makes collision **impossible**
- * rather than improbable, needs no randomness — so no `Crypto` in `R` and no
- * unreproducible output — and is trivially testable. A value that contains a
- * delimiter would terminate its block early and corrupt every entry after it,
- * which is a value-controlled injection into the runner's own file.
+ * `value` is always the string the runner would have seen: for `setJson` that
+ * is the **encoded** JSON text, after the same schema encode the real layer
+ * performs, so a test asserting on it reads exactly what a later step's
+ * `steps.<id>.outputs.<name>` expression would. `name` is present for the
+ * members that take one (`set`, `setJson`, `exportVariable`) and absent
+ * otherwise.
+ *
+ * @public
  */
-const delimiterFor = (value: string): string => {
-	let delimiter = BASE_DELIMITER;
-	while (value.includes(delimiter)) {
-		delimiter = `${delimiter}_`;
-	}
-	return delimiter;
-};
-
-/** A name that would break the block structure it lives in. */
-const isUsableName = (name: string): boolean => name !== "" && !/[\r\n]/.test(name);
+export class RecordedOutput extends Schema.Class<RecordedOutput>("RecordedOutput")({
+	/** Which {@link ActionOutputsShape} member was called. */
+	member: Schema.Literals(["set", "setJson", "summary", "exportVariable", "addPath", "setFailed", "setSecret"]),
+	/** The output or variable name, for the members that take one. */
+	name: Schema.optionalKey(Schema.String),
+	/** What was published — value, message, path, content or secret — as the runner would have read it. */
+	value: Schema.String,
+}) {}
 
 /**
- * The {@link ActionOutputs} service shape.
+ * The member names a {@link RecordedOutput} can carry.
+ *
+ * @public
+ */
+export type RecordedOutputMember = RecordedOutput["member"];
+
+/**
+ * What {@link ActionOutputs.recording} returns: the layer to provide and the
+ * journal it fills.
+ *
+ * @public
+ */
+export interface RecordingOutputs {
+	/** An {@link ActionOutputs} whose every member records into this journal. */
+	readonly layer: Layer.Layer<ActionOutputs>;
+	/** A snapshot of every recorded call so far, in call order. */
+	readonly entries: () => ReadonlyArray<RecordedOutput>;
+}
+
+/**
+ * The members of the {@link ActionOutputs} service: step outputs, exported
+ * variables, `PATH` additions, the job summary, masking and failure
+ * annotations.
  *
  * @public
  */
@@ -181,34 +241,24 @@ const make = Effect.gen(function* () {
 				.pipe(Effect.mapError((cause) => new RunnerFileWriteError({ file, cause })));
 		});
 
-	const appendBlock = (file: string, name: string, value: string): Effect.Effect<void, ActionOutputError> => {
-		if (!isUsableName(name)) {
-			return Effect.fail(new InvalidOutputNameError({ file, name }));
-		}
-		const delimiter = delimiterFor(value);
-		return append(file, `${name}<<${delimiter}\n${value}\n${delimiter}\n`);
-	};
+	const appendBlock = (file: string, name: string, value: string): Effect.Effect<void, ActionOutputError> =>
+		withUsableName(file, name, append(file, heredocBlock(name, value)));
 
-	const set = (name: string, value: string) => appendBlock("GITHUB_OUTPUT", name, value);
+	const set = (name: string, value: string) => appendBlock(RUNNER_FILE.set, name, value);
 
 	return {
 		set,
 		setJson: <A, I>(name: string, value: A, schema: Schema.Codec<A, I>) =>
-			Schema.encodeUnknownEffect(schema)(value).pipe(
-				Effect.mapError((cause) => new OutputEncodeError({ name, cause })),
-				Effect.flatMap((encoded) => set(name, JSON.stringify(encoded))),
-			),
-		summary: (content: string) => append("GITHUB_STEP_SUMMARY", content),
-		exportVariable: (name: string, value: string) => appendBlock("GITHUB_ENV", name, value),
-		addPath: (path: string) => append("GITHUB_PATH", `${path}\n`),
+			encodeJson(name, value, schema).pipe(Effect.flatMap((json) => set(name, json))),
+		summary: (content: string) => append(RUNNER_FILE.summary, content),
+		exportVariable: (name: string, value: string) => appendBlock(RUNNER_FILE.exportVariable, name, value),
+		addPath: (path: string) => append(RUNNER_FILE.addPath, `${path}\n`),
 		setFailed: (message: string) => Console.log(WorkflowCommand.error(message)),
 		setSecret: (value: string) => Console.log(WorkflowCommand.addMask(value)),
 	} satisfies ActionOutputsShape;
 });
 
-const unimplemented = (member: string): never => {
-	throw new Error(`ActionOutputs.makeTest: ${member}() was called but not stubbed — pass a \`${member}\` override.`);
-};
+const dies = unstubbed("ActionOutputs.makeTest");
 
 /**
  * Everything an action publishes: step outputs, exported variables, `PATH`
@@ -223,11 +273,32 @@ const unimplemented = (member: string): never => {
  * — that is `Action.run`'s job, so that an action which reports a failure and
  * then recovers is not silently doomed by a side effect it cannot undo.
  *
+ * Members that write a runner file fail with {@link ActionOutputError}.
+ *
+ * @example
+ * ```ts
+ * import { ActionOutputs } from "@effected/github-actions";
+ * import { Effect, Schema } from "effect";
+ *
+ * const program = Effect.gen(function* () {
+ *   const outputs = yield* ActionOutputs;
+ *   yield* outputs.set("version", "1.2.3");
+ *   yield* outputs.setJson("packages", ["a", "b"], Schema.Array(Schema.String));
+ * });
+ * ```
+ *
  * @public
  */
 export class ActionOutputs extends Context.Service<ActionOutputs, ActionOutputsShape>()(
 	"@effected/github-actions/ActionOutputs",
 ) {
+	/**
+	 * The live service, appending to the runner's `GITHUB_OUTPUT`, `GITHUB_ENV`,
+	 * `GITHUB_PATH` and `GITHUB_STEP_SUMMARY` files.
+	 *
+	 * @remarks
+	 * `ActionRuntime.layer` already provides every requirement.
+	 */
 	static readonly layer: Layer.Layer<ActionOutputs, never, ActionEnvironment | FileSystem.FileSystem> = Layer.effect(
 		this,
 		make,
@@ -241,10 +312,8 @@ export class ActionOutputs extends Context.Service<ActionOutputs, ActionOutputsS
 	 * stdout is a **log file no runner parses**, so under the real layer
 	 * `setSecret` emits `::add-mask::<plaintext>` into that file — a command
 	 * that is simultaneously **inert** (nothing reads it, so nothing is masked)
-	 * and a **secret leak** (the plaintext is now sitting verbatim in a log). A
-	 * production action shipped exactly that for one round: an S3 secret and
-	 * session token written into a worker's log by the masking call itself.
-	 * This layer is the worker-side fix; the parent-side rule is that every
+	 * and a **secret leak** (the plaintext is now sitting verbatim in a log).
+	 * This layer is the worker-side guard; the parent-side rule is that every
 	 * secret a worker will hold is masked **before** the spawn, by
 	 * `Secret.forChildEnv` under the real layer.
 	 *
@@ -257,7 +326,7 @@ export class ActionOutputs extends Context.Service<ActionOutputs, ActionOutputsS
 	 *   spelling of it in the log IS the leak. Masking is the parent's job,
 	 *   before the worker exists.
 	 * - **`set`, `setJson`, `exportVariable`, `addPath`, `summary` — fail
-	 *   typed** (`reason: "detached"`, naming the file). Each writes a runner
+	 *   typed** with {@link DetachedOutputError}, naming the file. Each writes a runner
 	 *   file that configures the parent job's *later steps* — `GITHUB_OUTPUT`,
 	 *   `GITHUB_ENV`, `GITHUB_PATH` — or is collected when the step completes
 	 *   (`GITHUB_STEP_SUMMARY`). A detached worker has no later steps, may
@@ -272,28 +341,94 @@ export class ActionOutputs extends Context.Service<ActionOutputs, ActionOutputsS
 	 *   channel to fail through.
 	 */
 	static readonly layerDetached: Layer.Layer<ActionOutputs> = Layer.succeed(this, {
-		set: (name) => Effect.fail(new DetachedOutputError({ file: "GITHUB_OUTPUT", name })),
-		setJson: (name) => Effect.fail(new DetachedOutputError({ file: "GITHUB_OUTPUT", name })),
-		summary: () => Effect.fail(new DetachedOutputError({ file: "GITHUB_STEP_SUMMARY" })),
-		exportVariable: (name) => Effect.fail(new DetachedOutputError({ file: "GITHUB_ENV", name })),
-		addPath: () => Effect.fail(new DetachedOutputError({ file: "GITHUB_PATH" })),
-		setFailed: (message) => Console.error(message),
+		set: (name) => Effect.fail(new DetachedOutputError({ file: RUNNER_FILE.set, name })),
+		setJson: (name) => Effect.fail(new DetachedOutputError({ file: RUNNER_FILE.setJson, name })),
+		summary: () => Effect.fail(new DetachedOutputError({ file: RUNNER_FILE.summary })),
+		exportVariable: (name) => Effect.fail(new DetachedOutputError({ file: RUNNER_FILE.exportVariable, name })),
+		addPath: () => Effect.fail(new DetachedOutputError({ file: RUNNER_FILE.addPath })),
+		setFailed: (message) => Console.error(CommandNeutralizer.text(message)),
 		setSecret: () => Effect.void,
 	} satisfies ActionOutputsShape);
 
-	/** A test double. Unstubbed members die rather than silently succeeding. */
-	static readonly makeTest = (overrides: Partial<ActionOutputsShape> = {}): ActionOutputsShape => ({
-		set: () => Effect.sync(() => unimplemented("set")),
-		setJson: () => Effect.sync(() => unimplemented("setJson")),
-		summary: () => Effect.sync(() => unimplemented("summary")),
-		exportVariable: () => Effect.sync(() => unimplemented("exportVariable")),
-		addPath: () => Effect.sync(() => unimplemented("addPath")),
-		setFailed: () => Effect.sync(() => unimplemented("setFailed")),
-		setSecret: () => Effect.sync(() => unimplemented("setSecret")),
-		...overrides,
-	});
+	/**
+	 * A test double. Unstubbed members die rather than silently succeeding.
+	 *
+	 * @remarks
+	 * **`setJson` always encodes first.** The value is encoded through its
+	 * schema exactly as the real layer does — failing typed with
+	 * {@link OutputEncodeError} — and only then is a supplied `setJson`
+	 * override called, with the original `(name, value, schema)`. An override
+	 * that accepts `schema` and ignores it therefore **cannot disable
+	 * output-schema checking**: a value/schema drift is a typed failure under
+	 * this double whether or not the override looks at the schema. Without an
+	 * override, a valid value still dies unimplemented as every other unstubbed
+	 * member does. Most tests want neither: reach for
+	 * {@link ActionOutputs.recording} instead.
+	 */
+	static readonly makeTest = (overrides: Partial<ActionOutputsShape> = {}): ActionOutputsShape => {
+		const setJson: ActionOutputsShape["setJson"] = overrides.setJson ?? (() => dies("setJson"));
+		return {
+			set: () => dies("set"),
+			summary: () => dies("summary"),
+			exportVariable: () => dies("exportVariable"),
+			addPath: () => dies("addPath"),
+			setFailed: () => dies("setFailed"),
+			setSecret: () => dies("setSecret"),
+			...overrides,
+			setJson: <A, I>(name: string, value: A, schema: Schema.Codec<A, I>) =>
+				encodeJson(name, value, schema).pipe(Effect.flatMap(() => setJson(name, value, schema))),
+		};
+	};
 
 	/** {@link ActionOutputs.makeTest} behind `Layer.succeed`. */
 	static readonly layerTest = (overrides: Partial<ActionOutputsShape> = {}): Layer.Layer<ActionOutputs> =>
 		Layer.succeed(ActionOutputs, ActionOutputs.makeTest(overrides));
+
+	/**
+	 * A recording double: every member appends a {@link RecordedOutput} to a
+	 * journal the test reads back, in call order.
+	 *
+	 * @remarks
+	 * This is the double most tests of an action want — "what did it publish?"
+	 * — shipped so that nobody hand-writes a `setJson` override that drops the
+	 * schema encode (a trap `makeTest` closes too). `setJson` encodes
+	 * through its schema exactly as the real layer does, failing typed with
+	 * {@link OutputEncodeError} and recording nothing on a drift, and records
+	 * the **encoded JSON text** — what the runner would have read — not the
+	 * decoded value. `set`, `exportVariable` and `setJson` refuse an unusable
+	 * name with {@link InvalidOutputNameError}, as the real layer does, rather
+	 * than recording it.
+	 *
+	 * `setSecret` records the secret's **plaintext** under
+	 * `member: "setSecret"`. That is deliberate for a recording double: the
+	 * journal never leaves the test, and a test asserting that a value *was*
+	 * masked needs to see which one. Do not hand this journal to anything that
+	 * logs.
+	 *
+	 * Each call returns a fresh, independent journal — there is no state shared
+	 * between two `recording()` calls.
+	 */
+	static readonly recording = (): RecordingOutputs => {
+		const entries: Array<RecordedOutput> = [];
+		const record = (member: RecordedOutputMember, value: string, name?: string): Effect.Effect<void> =>
+			Effect.sync(() => {
+				entries.push(RecordedOutput.make({ member, value, ...(name === undefined ? {} : { name }) }));
+			});
+		const layer = Layer.succeed(ActionOutputs, {
+			set: (name, value) => withUsableName(RUNNER_FILE.set, name, record("set", value, name)),
+			setJson: <A, I>(name: string, value: A, schema: Schema.Codec<A, I>) =>
+				withUsableName(
+					RUNNER_FILE.setJson,
+					name,
+					encodeJson(name, value, schema).pipe(Effect.flatMap((json) => record("setJson", json, name))),
+				),
+			summary: (content) => record("summary", content),
+			exportVariable: (name, value) =>
+				withUsableName(RUNNER_FILE.exportVariable, name, record("exportVariable", value, name)),
+			addPath: (path) => record("addPath", path),
+			setFailed: (message) => record("setFailed", message),
+			setSecret: (value) => record("setSecret", value),
+		} satisfies ActionOutputsShape);
+		return { layer, entries: () => entries.slice() };
+	};
 }

@@ -4,7 +4,7 @@ GitHub's issue-reference grammar as pure functions: the nine closing keywords an
 
 **Tier: pure.** Peer-depends on `effect` only; zero runtime dependencies, no IO, `"sideEffects": false`. Never add a dependency here — the package exists so a consumer with no octokit can speak the grammar instead of re-deriving it.
 
-**Design doc:** `@../../.claude/design/effected/packages/github-references.md` — load when changing a dialect, adding a keyword set, or ruling on a disagreement with a downstream hand-rolled copy.
+**Design doc:** `@./okf/modules/github-references.md` — load when changing a dialect, adding a keyword set, or ruling on a disagreement with a downstream hand-rolled copy.
 
 ## The three dialects
 
@@ -55,7 +55,7 @@ Cross-repo (`owner/repo#N`) and full-URL (`https://github.com/owner/repo/issues/
 Tests live in `__test__/`, use `@effect/vitest`, assert with `assert.*` — never `expect`. The suite moved from `github` **unchanged**, the check that the move was a move; do not rewrite it. The closing-list suite carries the design doc's drift rulings as executable cases, plus a hostility case pinning the linear-time posture. `KeywordFamily.test.ts` and the adoption-driven cases pin the rules above: whitespace-class split, lowercase-only `and`, exhaustive twelve-keyword `keywordFamily` coverage, and `collectReferenceLists`'s once-per-posture preference.
 
 ```bash
-pnpm vitest run --project @effected/github-references   # this package's tests
+pnpm vitest run --project @effected/github-references   # this package's tests, from the repo root
 pnpm build --filter @effected/github-references         # dev + prod, from the repo root
 ```
 

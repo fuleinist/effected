@@ -5,8 +5,7 @@
 // filesystem enumeration, only the live root walk (the one place it touches the
 // working tree, because you need a repository to run git against). Package
 // discovery reuses the compiled `@effected/glob` set, matched against
-// `Git.lsTree` output rather than a directory descent — the promise glob.md
-// recorded when at-ref discovery was deferred. Catalogs assemble from the inline
+// `Git.lsTree` output rather than a directory descent. Catalogs assemble from the inline
 // config source at the ref plus the detected manager's own lockfile at the ref,
 // and BOTH pnpm and bun carry catalogs, so the lockfile read is PM-aware.
 //
@@ -20,10 +19,13 @@ import { Lockfile as LockfileModel, filenameFor } from "@effected/lockfiles";
 import { CatalogAssemblyError } from "@effected/npm";
 import { Yaml } from "@effected/yaml";
 import { Context, Duration, Effect, Exit, Layer, Option } from "effect";
+import type { HookReplay } from "./ConfigDependencyHooks.js";
+import { ConfigDependencyHooks } from "./ConfigDependencyHooks.js";
 import { importerVersionsOf } from "./internal/importerVersions.js";
+import { findLayerRoot } from "./internal/layerRoot.js";
 import { manifestPatternsOf, pnpmPatternsOf } from "./internal/patterns.js";
 import type { ImporterVersions } from "./WorkspaceCatalogs.js";
-import { CatalogSet, WorkspaceCatalogs } from "./WorkspaceCatalogs.js";
+import { CatalogSet, WorkspaceCatalogs, injectFromDocument } from "./WorkspaceCatalogs.js";
 import type { WorkspaceDiscoveryFailure } from "./WorkspaceDiscovery.js";
 import { WorkspaceDiscovery } from "./WorkspaceDiscovery.js";
 import type { WorkspaceRootNotFoundError } from "./WorkspaceRoot.js";
@@ -32,15 +34,15 @@ import { PackageStateSnapshot, WorkspaceStateSnapshot } from "./WorkspaceStateSn
 
 /**
  * Every failure `WorkspaceSnapshots.at` can surface: git's own typed
- * errors, a catalog-assembly failure from the inline config source at the ref,
- * or an unfindable workspace root.
+ * errors, a catalog-assembly failure from the inline config source or the
+ * config-dependency hook replay at the ref, or an unfindable workspace root.
  *
  * @remarks
  * Narrow by design. `at` reads through git and never enumerates the live
  * filesystem, so no `WorkspaceDiscoveryError` / `WorkspacePatternError` appears —
  * and a malformed *lockfile* at the ref degrades to no catalogs (a lockfile is a
- * record, not a source of truth), so only the inline source raises
- * `CatalogAssemblyError`.
+ * record, not a source of truth), so only the inline source and a
+ * `hooks`-source replay failure raise `CatalogAssemblyError`.
  *
  * @public
  */
@@ -79,6 +81,21 @@ export interface WorkspaceSnapshotsOptions {
 	 */
 	readonly cwd?: string;
 	/**
+	 * A ceiling for the root ascent from `cwd`, passed straight through to the
+	 * `stopAt` of {@link WorkspaceRoot}'s `find`.
+	 *
+	 * @remarks
+	 * Inclusive, and resolved to an absolute path exactly as `cwd` is. When no
+	 * root is found at or below the ceiling, `at(ref)` fails with
+	 * {@link WorkspaceRootNotFoundError} carrying the resolved `stopAt` rather
+	 * than adopting an enclosing directory's workspace. Pass the same value as
+	 * {@link WorkspaceDiscoveryOptions.stopAt} so every service agrees on the
+	 * root; the `Workspaces.*` composites forward one `stopAt` to all of them.
+	 *
+	 * @defaultValue no ceiling — the ascent runs to the filesystem root.
+	 */
+	readonly stopAt?: string | undefined;
+	/**
 	 * Catalogs every snapshot this service produces carries as its
 	 * `seededCatalogs` — consulted only where the snapshot's own catalogs cannot
 	 * answer.
@@ -90,18 +107,20 @@ export interface WorkspaceSnapshotsOptions {
 	 * remembering to call `withSeededCatalogs` at each site — and a forgotten
 	 * call is a silently missing diff row, not a type error.
 	 *
-	 * **This executes nothing.** The caller supplies the set; `at(ref)` still
-	 * never replays config-dependency hooks and still never fetches. The
-	 * deliberate at/worktree asymmetry is unchanged — this only lets a consumer
-	 * who has already paid for the live set share it with the ref side.
+	 * **This executes nothing by itself.** The caller supplies the set, and
+	 * `at(ref)` still never fetches. Whether `at(ref)` replays that ref's
+	 * config-dependency hooks is decided by the {@link ConfigDependencyHooks}
+	 * layer in scope, not by this option: under a replaying layer the ref's own
+	 * replay answers first and the seed fills only what neither source declared;
+	 * under `layerNoop` the seed is the only way a hook-injected catalog reaches
+	 * the ref side at all.
 	 *
 	 * Applied to `worktree()` too, for symmetry. There it is usually inert: a
 	 * live set assembled under a config-dependency layer already contains the
 	 * hook-injected catalogs at full precedence, so the seed answers nothing the
 	 * snapshot could not answer itself.
 	 *
-	 * @defaultValue absent — no seed, and resolution behaves exactly as before
-	 *   this option existed.
+	 * @defaultValue absent — no seed.
 	 */
 	readonly seedCatalogs?: CatalogSet;
 }
@@ -112,11 +131,34 @@ export interface WorkspaceSnapshotsOptions {
  * @public
  */
 export interface WorkspaceSnapshotsShape {
-	/** The workspace state at a git ref, read with no checkout. Cached per `(root, ref)`. */
+	/**
+	 * The workspace state at a git ref, read with no checkout. Cached per
+	 * `(root, ref)`.
+	 *
+	 * @remarks
+	 * The ref's `pnpm-workspace.yaml` `configDependencies` are replayed through
+	 * the {@link ConfigDependencyHooks} layer in scope at the versions THAT ref
+	 * declares (a replaying layer resolves them via `.pnpm-config` or the pnpm
+	 * store and fails closed when a declared version is installed nowhere;
+	 * `layerNoop` executes nothing). The injected catalogs merge above the
+	 * ref's lockfile and inline sources, exactly as the live assembler does.
+	 */
 	readonly at: (ref: string) => Effect.Effect<WorkspaceStateSnapshot, WorkspaceSnapshotAtFailure>;
 	/** The live workspace state, over discovery and catalog assembly. Uncached. */
 	readonly worktree: () => Effect.Effect<WorkspaceStateSnapshot, WorkspaceSnapshotWorktreeFailure>;
 }
+
+/**
+ * Project the live replay record onto the snapshot's `name → version` field:
+ * a snapshot is "what the workspace looked like then", and WHERE this machine
+ * found each pnpmfile is machine-local provenance that does not belong on a
+ * serializable value.
+ */
+const hookVersionsOf = (replays: Readonly<Record<string, HookReplay>>): Record<string, string> => {
+	const versions: Record<string, string> = {};
+	for (const [name, replay] of Object.entries(replays)) versions[name] = replay.version;
+	return versions;
+};
 
 /** Whether `value` is a non-null, non-array object. */
 const isObject = (value: unknown): value is Record<string, unknown> =>
@@ -150,11 +192,14 @@ const snapshotOf = (content: Option.Option<string>, relativePath: string): Optio
 	const parsed = parseJsonObject(content.value);
 	const name = parsed.name;
 	if (typeof name !== "string" || name.length === 0) return Option.none();
-	const version = typeof parsed.version === "string" ? parsed.version : "";
+	// Absent stays absent. At-ref content is not ours to fix, so a present but
+	// unusable `version` (a non-string, or `""`) degrades to absent rather than
+	// failing the snapshot — the tolerance this projection applies throughout.
+	const version = parsed.version;
 	return Option.some(
 		PackageStateSnapshot.make({
 			name,
-			version,
+			...(typeof version === "string" && version !== "" ? { version } : {}),
 			relativePath,
 			...(isStringRecord(parsed.dependencies) ? { dependencies: parsed.dependencies } : {}),
 			...(isStringRecord(parsed.devDependencies) ? { devDependencies: parsed.devDependencies } : {}),
@@ -229,15 +274,29 @@ const unstubbed = (method: string): Effect.Effect<never> =>
 export class WorkspaceSnapshots extends Context.Service<WorkspaceSnapshots, WorkspaceSnapshotsShape>()(
 	"@effected/workspaces/WorkspaceSnapshots",
 ) {
-	/** Builds the service over `Git`, {@link WorkspaceRoot}, {@link WorkspaceDiscovery} and {@link WorkspaceCatalogs}. */
+	/**
+	 * Builds the service over `Git`, {@link WorkspaceRoot}, {@link WorkspaceDiscovery},
+	 * {@link WorkspaceCatalogs} and {@link ConfigDependencyHooks}.
+	 *
+	 * @remarks
+	 * `ConfigDependencyHooks` is what `at(ref)` replays a ref's
+	 * `configDependencies` through — at the versions THAT ref declares, which is
+	 * why the composites hand the same hooks layer to this service and to
+	 * `WorkspaceCatalogs`. Under `layerNoop` the ref read executes nothing.
+	 */
 	static readonly make = (
 		options?: WorkspaceSnapshotsOptions,
-	): Effect.Effect<WorkspaceSnapshotsShape, never, Git | WorkspaceRoot | WorkspaceDiscovery | WorkspaceCatalogs> =>
+	): Effect.Effect<
+		WorkspaceSnapshotsShape,
+		never,
+		Git | WorkspaceRoot | WorkspaceDiscovery | WorkspaceCatalogs | ConfigDependencyHooks
+	> =>
 		Effect.gen(function* () {
 			const git = yield* Git;
 			const roots = yield* WorkspaceRoot;
 			const discovery = yield* WorkspaceDiscovery;
 			const catalogsService = yield* WorkspaceCatalogs;
+			const hooks = yield* ConfigDependencyHooks;
 
 			// One seed for the layer's life, applied to every snapshot this service
 			// hands back. Kept as a function rather than inlined so `at` and
@@ -247,36 +306,36 @@ export class WorkspaceSnapshots extends Context.Service<WorkspaceSnapshots, Work
 			const seeded = (snapshot: WorkspaceStateSnapshot): WorkspaceStateSnapshot =>
 				options?.seedCatalogs === undefined ? snapshot : snapshot.withSeededCatalogs(options.seedCatalogs);
 
+			/** A manager's lockfile text at the ref, `none` when the ref has none. */
+			const lockfileText = (
+				root: string,
+				ref: string,
+				format: "pnpm" | "bun",
+			): Effect.Effect<Option.Option<string>, GitCommandError | NotARepositoryError | UnknownRefError> =>
+				// `./`-prefixed so git resolves the lockfile relative to `cwd` (the
+				// workspace root), NOT the git repo top-level — see `computeAt`.
+				git.show(root, ref, `./${filenameFor(format)}`);
+
 			/**
 			 * What a manager's lockfile records at the ref: its catalog set and its
 			 * importer versions, from ONE parse. Empty on both counts when the
 			 * lockfile is absent or malformed.
 			 */
-			const lockfileRecord = (
-				root: string,
-				ref: string,
-				format: "pnpm" | "bun",
-			): Effect.Effect<LockfileRecord, GitCommandError | NotARepositoryError | UnknownRefError> =>
-				// `./`-prefixed so git resolves the lockfile relative to `cwd` (the
-				// workspace root), NOT the git repo top-level — see `computeAt`.
-				git.show(root, ref, `./${filenameFor(format)}`).pipe(
-					Effect.flatMap((content) =>
-						Option.match(content, {
-							onNone: () => Effect.succeed(EMPTY_LOCKFILE_RECORD),
-							onSome: (text) =>
-								LockfileModel.parse(text, { format }).pipe(
-									Effect.map((lockfile) => ({
-										catalogs: CatalogSet.fromLockfile(lockfile),
-										importerVersions: importerVersionsOf(lockfile),
-									})),
-									// A malformed lockfile at the ref is a broken RECORD, not a
-									// broken source of truth — degrade to no catalogs, exactly as
-									// the live WorkspaceCatalogs does for an unreadable lockfile.
-									Effect.catch(() => Effect.succeed(EMPTY_LOCKFILE_RECORD)),
-								),
-						}),
-					),
-				);
+			const lockfileRecord = (content: Option.Option<string>, format: "pnpm" | "bun"): Effect.Effect<LockfileRecord> =>
+				Option.match(content, {
+					onNone: () => Effect.succeed(EMPTY_LOCKFILE_RECORD),
+					onSome: (text) =>
+						LockfileModel.parse(text, { format }).pipe(
+							Effect.map((lockfile) => ({
+								catalogs: CatalogSet.fromLockfile(lockfile),
+								importerVersions: importerVersionsOf(lockfile),
+							})),
+							// A malformed lockfile at the ref is a broken RECORD, not a
+							// broken source of truth — degrade to no catalogs, exactly as
+							// the live WorkspaceCatalogs does for an unreadable lockfile.
+							Effect.catch(() => Effect.succeed(EMPTY_LOCKFILE_RECORD)),
+						),
+				});
 
 			const computeAt = (
 				root: string,
@@ -290,8 +349,10 @@ export class WorkspaceSnapshots extends Context.Service<WorkspaceSnapshots, Work
 					// workspace root nested inside a larger repo would read the OUTER
 					// manifest and drop or misread its members. `Git.show`'s contract is
 					// unchanged — the `./` is this consumer's explicit choice.
-					const pnpmWorkspaceText = yield* git.show(root, ref, "./pnpm-workspace.yaml");
-					const rootManifestText = yield* git.show(root, ref, "./package.json");
+					const [pnpmWorkspaceText, rootManifestText] = yield* Effect.all(
+						[git.show(root, ref, "./pnpm-workspace.yaml"), git.show(root, ref, "./package.json")],
+						{ concurrency: 2 },
+					);
 					const rootManifest = Option.match(rootManifestText, {
 						onNone: () => ({}) as Record<string, unknown>,
 						onSome: parseJsonObject,
@@ -299,7 +360,11 @@ export class WorkspaceSnapshots extends Context.Service<WorkspaceSnapshots, Work
 
 					let patterns: ReadonlyArray<string>;
 					let inline: CatalogSet;
+					let injected: CatalogSet;
 					let recorded: LockfileRecord;
+					// The replay record: what the hooks layer resolved on the pnpm path,
+					// empty on the bun one (config dependencies are a pnpm feature).
+					let hookReplays: Readonly<Record<string, HookReplay>> = {};
 
 					if (Option.isSome(pnpmWorkspaceText)) {
 						const document = yield* Yaml.parse(pnpmWorkspaceText.value).pipe(
@@ -308,13 +373,30 @@ export class WorkspaceSnapshots extends Context.Service<WorkspaceSnapshots, Work
 							),
 						);
 						const pnpmPatterns = pnpmPatternsOf(document);
-						// c594ff1: a `pnpm-workspace.yaml` with no `packages:` falls back to
+						// A `pnpm-workspace.yaml` with no `packages:` falls back to
 						// the root manifest's `workspaces` field, matching live `readPatterns`.
 						patterns = pnpmPatterns.length > 0 ? pnpmPatterns : manifestPatternsOf(rootManifest);
 						inline = yield* CatalogSet.fromWorkspaceYaml(pnpmWorkspaceText.value);
-						recorded = yield* lockfileRecord(root, ref, "pnpm");
+						// Replay the ref's config-dependency hooks at the versions the ref's
+						// OWN `configDependencies` declare, seeded by the ref's inline
+						// catalogs — mirroring the live assembler. A replaying layer resolves
+						// each declared version through `.pnpm-config` or the pnpm store, so
+						// a config dependency bumped between two refs yields two different
+						// injected sets; `layerNoop` returns the seed and executes nothing.
+						// The ref's OWN lockfile is read once and serves twice: as the
+						// record below, and as the integrity source a fetched config
+						// dependency is verified against — the base side of a diff is
+						// checked against the base side's pins, never the working tree's.
+						const lockfile = yield* lockfileText(root, ref, "pnpm");
+						const replayed = yield* injectFromDocument(hooks, root, document, inline, {
+							lockfile: Option.getOrUndefined(lockfile),
+							ref,
+						});
+						injected = replayed.injected;
+						hookReplays = replayed.injection.replays;
+						recorded = yield* lockfileRecord(lockfile, "pnpm");
 					} else {
-						// c594ff1: with no `pnpm-workspace.yaml`, the workspace globs come
+						// With no `pnpm-workspace.yaml`, the workspace globs come
 						// from the root `package.json` `workspaces` field. WITHOUT this, a
 						// bun or npm workspace collapses to the root package alone at a ref,
 						// and a consumer diffing two snapshots sees every declared dependency
@@ -323,18 +405,20 @@ export class WorkspaceSnapshots extends Context.Service<WorkspaceSnapshots, Work
 						// Inline catalogs come from the root manifest UNCONDITIONALLY: a bun
 						// workspace declaring `workspaces.catalog`/`.catalogs` with no committed
 						// `bun.lock` at the ref still has catalogs, and gating them on the
-						// lockfile reintroduced c594ff1 one layer up — `at(ref)` and
-						// `worktree()` (which reads inline via `fromManifestWorkspaces`
-						// regardless of any lockfile) would disagree. `bunInlineCatalogs` is
+						// lockfile would make `at(ref)` and `worktree()` (which reads inline
+						// via `fromManifestWorkspaces` regardless of any lockfile) disagree. `bunInlineCatalogs` is
 						// tolerant: an npm/yarn array-form `workspaces` yields empty. The
 						// lockfile half degrades the absent `bun.lock` to empty on `Option.none`.
 						inline = bunInlineCatalogs(rootManifest);
-						recorded = yield* lockfileRecord(root, ref, "bun");
+						// Config dependencies are a pnpm feature; there are none on this path.
+						injected = CatalogSet.empty();
+						recorded = yield* lockfileRecord(yield* lockfileText(root, ref, "bun"), "bun");
 					}
 
-					// Precedence follows the live assembler: lockfile record first, inline
-					// declaration wins.
-					const catalogs = CatalogSet.merge(recorded.catalogs, inline);
+					// Precedence follows the live assembler: lockfile record first, then
+					// the inline declaration, then the hook-injected set (which already
+					// carries the inline seed).
+					const catalogs = CatalogSet.merge(recorded.catalogs, inline, injected);
 
 					const globs = yield* GlobSet.compile(patterns).pipe(
 						Effect.mapError(
@@ -375,7 +459,12 @@ export class WorkspaceSnapshots extends Context.Service<WorkspaceSnapshots, Work
 					}
 
 					return seeded(
-						WorkspaceStateSnapshot.make({ packages, catalogs, importerVersions: recorded.importerVersions }),
+						WorkspaceStateSnapshot.make({
+							packages,
+							catalogs,
+							importerVersions: recorded.importerVersions,
+							hookReplays: hookVersionsOf(hookReplays),
+						}),
 					);
 				});
 
@@ -385,12 +474,12 @@ export class WorkspaceSnapshots extends Context.Service<WorkspaceSnapshots, Work
 			const atCaches = new Map<string, Effect.Effect<WorkspaceStateSnapshot, WorkspaceSnapshotAtFailure>>();
 
 			const at = Effect.fn("WorkspaceSnapshots.at")(function* (ref: string) {
-				// `Effect.suspend` so the ambient cwd is read at call time, not layer build.
-				const root = yield* Effect.suspend(() => roots.find(options?.cwd ?? process.cwd()));
+				// The ambient cwd is read at call time, not layer build (`findLayerRoot` suspends).
+				const root = yield* findLayerRoot(roots, options);
 				// NUL-separated — a NUL can occur in neither a path nor a ref, so keys
 				// cannot collide. Kept as the `\0` escape deliberately: a literal NUL
 				// byte makes `file` classify this source as binary and grep/ripgrep
-				// silently skip it (#187).
+				// silently skip it.
 				const key = `${root}\0${ref}`;
 				let memo = atCaches.get(key);
 				if (memo === undefined) {
@@ -422,13 +511,15 @@ export class WorkspaceSnapshots extends Context.Service<WorkspaceSnapshots, Work
 				// answer an unresolvable `catalog:` specifier the same way, or the
 				// fallback would manufacture a bogus row on every run.
 				const importerVersions = yield* catalogsService.importerVersions();
+				// Same memo again: which version each config dependency replayed from.
+				const hookReplays = yield* catalogsService.hookReplays();
 				const snapshotPackages = packages.map((pkg) =>
 					PackageStateSnapshot.make({
 						name: pkg.name,
-						// A version-less member records `""`, exactly as `snapshotOf` does
+						// A version-less member omits the key, exactly as `snapshotOf` does
 						// for the same manifest at a ref: both sides of a diff must answer
 						// the same way, or the missing field would read as a change.
-						version: pkg.version ?? "",
+						...(pkg.version === undefined ? {} : { version: pkg.version }),
 						relativePath: pkg.relativePath,
 						dependencies: pkg.dependencies,
 						devDependencies: pkg.devDependencies,
@@ -436,23 +527,36 @@ export class WorkspaceSnapshots extends Context.Service<WorkspaceSnapshots, Work
 						optionalDependencies: pkg.optionalDependencies,
 					}),
 				);
-				return seeded(WorkspaceStateSnapshot.make({ packages: snapshotPackages, catalogs, importerVersions }));
+				return seeded(
+					WorkspaceStateSnapshot.make({
+						packages: snapshotPackages,
+						catalogs,
+						importerVersions,
+						hookReplays: hookVersionsOf(hookReplays),
+					}),
+				);
 			});
 
 			return { at, worktree };
 		});
 
 	/**
-	 * The live layer.
+	 * The live layer, reading workspace state at a git ref or from the live
+	 * worktree.
 	 *
 	 * @remarks
 	 * Parameterized, so it mints a fresh reference per call — bind it to a
 	 * `const` and reuse it, or layer memoization does not apply.
+	 *
+	 * @param options - Root resolution and the optional `seedCatalogs`.
 	 */
 	static readonly layer = (
 		options?: WorkspaceSnapshotsOptions,
-	): Layer.Layer<WorkspaceSnapshots, never, Git | WorkspaceRoot | WorkspaceDiscovery | WorkspaceCatalogs> =>
-		Layer.effect(WorkspaceSnapshots, WorkspaceSnapshots.make(options));
+	): Layer.Layer<
+		WorkspaceSnapshots,
+		never,
+		Git | WorkspaceRoot | WorkspaceDiscovery | WorkspaceCatalogs | ConfigDependencyHooks
+	> => Layer.effect(WorkspaceSnapshots, WorkspaceSnapshots.make(options));
 
 	/**
 	 * A test double satisfying the full {@link WorkspaceSnapshotsShape} with no

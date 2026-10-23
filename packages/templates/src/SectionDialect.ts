@@ -68,9 +68,7 @@ const GAP = "[ \\t]+";
 
 /**
  * Compiled matchers are cached per dialect instance. A `WeakMap` rather than
- * a field keeps `SectionDialect` a pure schema class — v3 hung a non-schema
- * private field off its definition class and had to hand-copy it on every
- * derivation.
+ * a field keeps `SectionDialect` a pure schema class.
  */
 const matcherCache = new WeakMap<
 	SectionDialect,
@@ -102,7 +100,7 @@ export class SectionDialect extends Schema.Class<SectionDialect>("SectionDialect
 	 * phrase can never contain the `---` rule and make a marker ambiguous
 	 * against itself.
 	 */
-	phrase: Schema.String.check(Schema.isPattern(/^[A-Za-z0-9][A-Za-z0-9 _]*$/)),
+	phrase: Schema.String.check(Schema.isPattern(/^[A-Za-z0-9][A-Za-z0-9 _]*$/u)),
 	/** Which comment styles the document scanner recognizes. At least one. */
 	styles: Schema.Array(CommentStyle).check(Schema.isMinLength(1)),
 }) {

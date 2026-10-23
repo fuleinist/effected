@@ -1,4 +1,5 @@
 import { Context, Effect, FileSystem, Layer, Option, Schema } from "effect";
+import { decodeJson } from "./internal/json.js";
 
 /**
  * Raised when the runner environment does not say what an action needs.
@@ -13,6 +14,7 @@ import { Context, Effect, FileSystem, Layer, Option, Schema } from "effect";
  * @public
  */
 export class ActionEnvironmentError extends Schema.TaggedError<ActionEnvironmentError>()("ActionEnvironmentError", {
+	/** `missing` — absent or empty; `malformed` — present but unusable. */
 	reason: Schema.Literals(["missing", "malformed"]),
 	/** The environment variable involved. */
 	name: Schema.String,
@@ -34,6 +36,7 @@ export class ActionEnvironmentError extends Schema.TaggedError<ActionEnvironment
 export class GitHubContext extends Schema.Class<GitHubContext>("GitHubContext")({
 	/** `owner/repo`. */
 	repository: Schema.String,
+	/** The repository owner's login. */
 	repositoryOwner: Schema.String,
 	/** The full ref, e.g. `refs/heads/main`. */
 	ref: Schema.String,
@@ -55,16 +58,27 @@ export class GitHubContext extends Schema.Class<GitHubContext>("GitHubContext")(
 	 * an encoded context stays plain JSON.
 	 */
 	headRef: Schema.OptionFromNullOr(Schema.String),
+	/** The commit SHA that triggered the workflow. */
 	sha: Schema.String,
+	/** The workflow's name. */
 	workflow: Schema.String,
+	/** The current job's id. */
 	job: Schema.String,
+	/** The run's unique number, decoded from `GITHUB_RUN_ID`. */
 	runId: Schema.Number,
+	/** The attempt number of this run, starting at 1. */
 	runAttempt: Schema.Number,
+	/** The name of the event that triggered the workflow, e.g. `push`. */
 	eventName: Schema.String,
+	/** The login of the user that triggered the run. */
 	actor: Schema.String,
+	/** The GitHub server URL, e.g. `https://github.com`. */
 	serverUrl: Schema.String,
+	/** The REST API URL, e.g. `https://api.github.com`. */
 	apiUrl: Schema.String,
+	/** The GraphQL API URL. */
 	graphqlUrl: Schema.String,
+	/** The default working directory on the runner for steps. */
 	workspace: Schema.String,
 }) {
 	/**
@@ -89,8 +103,11 @@ export class GitHubContext extends Schema.Class<GitHubContext>("GitHubContext")(
  * @public
  */
 export class RunnerContext extends Schema.Class<RunnerContext>("RunnerContext")({
+	/** The runner's operating system: `Linux`, `Windows` or `macOS`. */
 	os: Schema.String,
+	/** The runner's architecture, e.g. `X64` or `ARM64`. */
 	arch: Schema.String,
+	/** The runner's name. */
 	name: Schema.String,
 	/** A scratch directory emptied between jobs. */
 	temp: Schema.String,
@@ -105,8 +122,7 @@ export class RunnerContext extends Schema.Class<RunnerContext>("RunnerContext")(
  * A `Context.Reference` rather than a mutable global: overrides are
  * **fiber-local**, so two concurrent fibers can override the same variable
  * without seeing each other, and nothing needs restoring afterwards. This is
- * what makes {@link ActionEnvironmentShape.withEnv} parallel-safe — the
- * property the hand-rolled set/restore version it replaces could not have.
+ * what makes {@link ActionEnvironmentShape.withEnv} parallel-safe.
  *
  * @internal
  */
@@ -115,7 +131,8 @@ const EnvOverrides = Context.Reference<Readonly<Record<string, string>>>("@effec
 });
 
 /**
- * The {@link ActionEnvironment} service shape.
+ * The members of the {@link ActionEnvironment} service: variable lookup, the
+ * `GITHUB_*` and `RUNNER_*` contexts, the event payload and scoped overrides.
  *
  * @public
  */
@@ -190,61 +207,40 @@ const make = (
 			getOptional: lookup,
 			isDebug: Effect.map(lookup("RUNNER_DEBUG"), (value) => Option.isSome(value) && value.value === "1"),
 
-			github: Effect.gen(function* () {
-				const [repository, repositoryOwner, ref, refName, sha, workflow, job] = yield* Effect.all([
-					get("GITHUB_REPOSITORY"),
-					get("GITHUB_REPOSITORY_OWNER"),
-					get("GITHUB_REF"),
-					get("GITHUB_REF_NAME"),
-					get("GITHUB_SHA"),
-					get("GITHUB_WORKFLOW"),
-					get("GITHUB_JOB"),
-				]);
-				const runId = yield* Effect.flatMap(get("GITHUB_RUN_ID"), (raw) => numeric("GITHUB_RUN_ID", raw));
-				const runAttempt = yield* Effect.flatMap(get("GITHUB_RUN_ATTEMPT"), (raw) =>
-					numeric("GITHUB_RUN_ATTEMPT", raw),
-				);
-				// GITHUB_HEAD_REF is absent outside pull requests — and the runner may
-				// write it as the empty string, which `lookup` already reads as absent.
-				const headRef = yield* lookup("GITHUB_HEAD_REF");
-				const [eventName, actor, serverUrl, apiUrl, graphqlUrl, workspace] = yield* Effect.all([
-					get("GITHUB_EVENT_NAME"),
-					get("GITHUB_ACTOR"),
-					get("GITHUB_SERVER_URL"),
-					get("GITHUB_API_URL"),
-					get("GITHUB_GRAPHQL_URL"),
-					get("GITHUB_WORKSPACE"),
-				]);
-				return GitHubContext.make({
-					repository,
-					repositoryOwner,
-					ref,
-					refName,
-					headRef,
-					sha,
-					workflow,
-					job,
-					runId,
-					runAttempt,
-					eventName,
-					actor,
-					serverUrl,
-					apiUrl,
-					graphqlUrl,
-					workspace,
-				});
-			}),
+			github: Effect.map(
+				Effect.all({
+					repository: get("GITHUB_REPOSITORY"),
+					repositoryOwner: get("GITHUB_REPOSITORY_OWNER"),
+					ref: get("GITHUB_REF"),
+					refName: get("GITHUB_REF_NAME"),
+					// GITHUB_HEAD_REF is absent outside pull requests — and the runner may
+					// write it as the empty string, which `lookup` already reads as absent.
+					headRef: lookup("GITHUB_HEAD_REF"),
+					sha: get("GITHUB_SHA"),
+					workflow: get("GITHUB_WORKFLOW"),
+					job: get("GITHUB_JOB"),
+					runId: Effect.flatMap(get("GITHUB_RUN_ID"), (raw) => numeric("GITHUB_RUN_ID", raw)),
+					runAttempt: Effect.flatMap(get("GITHUB_RUN_ATTEMPT"), (raw) => numeric("GITHUB_RUN_ATTEMPT", raw)),
+					eventName: get("GITHUB_EVENT_NAME"),
+					actor: get("GITHUB_ACTOR"),
+					serverUrl: get("GITHUB_SERVER_URL"),
+					apiUrl: get("GITHUB_API_URL"),
+					graphqlUrl: get("GITHUB_GRAPHQL_URL"),
+					workspace: get("GITHUB_WORKSPACE"),
+				}),
+				(fields) => GitHubContext.make(fields),
+			),
 
-			runner: Effect.gen(function* () {
-				const [os, arch, name, temp, toolCache] = yield* Effect.all([
-					get("RUNNER_OS"),
-					get("RUNNER_ARCH"),
-					get("RUNNER_NAME"),
-					get("RUNNER_TEMP"),
-					get("RUNNER_TOOL_CACHE"),
-				]);
-				return RunnerContext.make({ os, arch, name, temp, toolCache });
-			}),
+			runner: Effect.map(
+				Effect.all({
+					os: get("RUNNER_OS"),
+					arch: get("RUNNER_ARCH"),
+					name: get("RUNNER_NAME"),
+					temp: get("RUNNER_TEMP"),
+					toolCache: get("RUNNER_TOOL_CACHE"),
+				}),
+				(fields) => RunnerContext.make(fields),
+			),
 
 			payload: Effect.gen(function* () {
 				const path = yield* get("GITHUB_EVENT_PATH");
@@ -258,15 +254,16 @@ const make = (
 							}),
 					),
 				);
-				return yield* Effect.try({
-					try: () => JSON.parse(raw) as unknown,
-					catch: (cause) =>
-						new ActionEnvironmentError({
-							reason: "malformed",
-							name: "GITHUB_EVENT_PATH",
-							detail: `not valid JSON: ${String(cause)}`,
-						}),
-				});
+				return yield* decodeJson(raw).pipe(
+					Effect.mapError(
+						(cause) =>
+							new ActionEnvironmentError({
+								reason: "malformed",
+								name: "GITHUB_EVENT_PATH",
+								detail: `not valid JSON: ${cause.message}`,
+							}),
+					),
+				);
 			}),
 
 			withEnv: (overrides, effect) =>
@@ -353,10 +350,10 @@ export class ActionEnvironment extends Context.Service<ActionEnvironment, Action
 	 * @remarks
 	 * **A recorded exception to the die-on-unstubbed rule.** Every other service
 	 * in this package dies when a suite calls something it did not stub, because
-	 * a plausible default hides a real gap. Here the opposite is true: the twelve
-	 * context variables have one obviously-correct shape, and requiring each
-	 * suite to restate them produced a byte-identical block duplicated six times
-	 * across the consumers. Overrides merge on top.
+	 * a plausible default hides a real gap. Here the opposite is true: the context
+	 * variables have one obviously-correct shape, and requiring each suite to
+	 * restate them would duplicate a byte-identical block in every suite.
+	 * Overrides merge on top.
 	 *
 	 * The optional second argument serves {@link ActionEnvironmentShape.payload}
 	 * **directly**, replacing the `GITHUB_EVENT_PATH` read rather than seeding a

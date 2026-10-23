@@ -34,6 +34,36 @@ describe("CatalogEntry", () => {
 				"1.4.0": "https://example.com/schemas/agripparc-1.4.0.json",
 			});
 		});
+
+		it("forwards layout and current to the URL derivation", () => {
+			const entry = CatalogEntry.assemble({
+				name: "okfit",
+				description: "d",
+				fileMatch: ["okfit.toml"],
+				baseUrl: "https://x/schemas",
+				versions: [version("1.0"), version("1.1")],
+				layout: "versioned",
+				current: version("1.0"),
+			});
+			assert.strictEqual(entry.url, "https://x/schemas/1.0/okfit-1.0.json");
+			assert.strictEqual(entry.versions?.["1.1"], "https://x/schemas/1.1/okfit-1.1.json");
+		});
+	});
+
+	describe("assemble rejects", () => {
+		it("two spellings of one version, naming both", () => {
+			assert.throws(
+				() =>
+					CatalogEntry.assemble({
+						name: "okfit",
+						description: "okfit config",
+						fileMatch: ["okfit.toml"],
+						baseUrl: "https://example.com/schemas",
+						versions: ["1.2", "1.2.0"].map(version),
+					}),
+				/"okfit".*"1\.2".*"1\.2\.0"/,
+			);
+		});
 	});
 
 	describe("codec round trip", () => {

@@ -1,5 +1,451 @@
 # @effected/config-file
 
+## 0.18.0
+
+### Dependencies
+
+| Dependency | Type | Action | From | To |
+| --- | --- | --- | --- | --- |
+| @effected/glob | dependency | updated | 0.13.0 | 0.14.0 |
+| @effected/jsonc | dependency | updated | 0.18.0 | 0.19.0 |
+| @effected/toml | dependency | updated | 0.14.0 | 0.15.0 |
+| @effected/walker | dependency | updated | 0.18.0 | 0.19.0 |
+| @effected/yaml | dependency | updated | 0.22.0 | 0.23.0 |
+
+### Maintenance
+
+- Upgrades core Effect library dependencies to v4.0.6 [#1039][#1039]
+
+### Thanks
+
+Thanks to [@spencerbeggs](https://github.com/spencerbeggs) for their contributions!
+
+[#1039]: https://github.com/spencerbeggs/effected/pull/1039
+
+## 0.17.0
+
+### Dependencies
+
+| Dependency | Type | Action | From | To |
+| --- | --- | --- | --- | --- |
+| @effected/glob | dependency | updated | 0.12.0 | 0.13.0 |
+| @effected/jsonc | dependency | updated | 0.17.0 | 0.18.0 |
+| @effected/toml | dependency | updated | 0.13.0 | 0.14.0 |
+| @effected/walker | dependency | updated | 0.17.0 | 0.18.0 |
+| @effected/yaml | dependency | updated | 0.21.0 | 0.22.0 |
+
+### Maintenance
+
+- Upgrades core Effect library dependencies to v4.0.5 [#1019][#1019]
+
+### Thanks
+
+Thanks to [@spencerbeggs](https://github.com/spencerbeggs) for their contributions!
+
+[#1019]: https://github.com/spencerbeggs/effected/pull/1019
+
+## 0.16.0
+
+### Dependencies
+
+| Dependency | Type | Action | From | To |
+| --- | --- | --- | --- | --- |
+| @effected/glob | dependency | updated | 0.11.0 | 0.12.0 |
+| @effected/jsonc | dependency | updated | 0.16.0 | 0.17.0 |
+| @effected/toml | dependency | updated | 0.12.0 | 0.13.0 |
+| @effected/walker | dependency | updated | 0.16.0 | 0.17.0 |
+| @effected/yaml | dependency | updated | 0.20.0 | 0.21.0 |
+
+### Maintenance
+
+- Upgrades core Effect library dependencies to v4.0.4 [#1008][#1008]
+
+### Thanks
+
+Thanks to [@spencerbeggs](https://github.com/spencerbeggs) for their contributions!
+
+[#1008]: https://github.com/spencerbeggs/effected/pull/1008
+
+## 0.15.0
+
+### Dependencies
+
+| Dependency | Type | Action | From | To |
+| --- | --- | --- | --- | --- |
+| @effected/glob | dependency | updated | 0.10.1 | 0.11.0 |
+| @effected/jsonc | dependency | updated | 0.15.2 | 0.16.0 |
+| @effected/toml | dependency | updated | 0.11.2 | 0.12.0 |
+| @effected/walker | dependency | updated | 0.15.1 | 0.16.0 |
+| @effected/yaml | dependency | updated | 0.19.2 | 0.20.0 |
+| effect | peerDependency | updated | 4.0.2 | ^4.0.3 |
+
+- Effect 4.0.3 advance: the `effect` peer and catalog move from the exact `4.0.2` hold back to `^4.0.3`. No API change. [#1000][#1000]
+
+### Thanks
+
+Thanks to [@spencerbeggs](https://github.com/spencerbeggs) for their contributions!
+
+[#1000]: https://github.com/spencerbeggs/effected/pull/1000
+
+## 0.14.3
+
+### Bug Fixes
+
+- Republished with every `effect` and `@effect/*` version pinned exactly to `4.0.2`, both peer and dependency ranges.
+
+- On 2026-10-10, every `@effect/*` package published at `4.0.3`, but `effect@4.0.3` itself never reached npm (Effect-TS/effect#8994). The 4.0.3 packages require `effect ^4.0.3`. A caret range on any of them therefore resolves a 4.0.3 package next to `effect@4.0.2`, and the program crashes when it imports them. Exact pins keep a fresh install of any kit package on a matched set until `effect@4.0.3` is available. [#997][#997]
+
+### Dependencies
+
+| Dependency | Type | Action | From | To |
+| --- | --- | --- | --- | --- |
+| @effected/glob | dependency | updated | 0.10.0 | 0.10.1 |
+| @effected/jsonc | dependency | updated | 0.15.1 | 0.15.2 |
+| @effected/toml | dependency | updated | 0.11.1 | 0.11.2 |
+| @effected/walker | dependency | updated | 0.15.0 | 0.15.1 |
+| @effected/yaml | dependency | updated | 0.19.1 | 0.19.2 |
+
+### Thanks
+
+Thanks to [@spencerbeggs](https://github.com/spencerbeggs) for their contributions!
+
+[#997]: https://github.com/spencerbeggs/effected/pull/997
+
+## 0.14.2
+
+### Bug Fixes
+
+- `ConfigFile.layer` and `ConfigFile.testLayer` once again infer the config type `A` from the key. Since 0.14.1, a call whose options carried no `A` of their own, such as a bare `MergeStrategy.firstMatch()` strategy, inferred `A` as `unknown`. A correctly shaped `ConfigFile.Service` key then failed with "not assignable to parameter of type `Key<…, ConfigFileShape<unknown>>`". Remove any explicit type arguments you added as a workaround.
+- A key whose shape adds members to `ConfigFileShape<A>` is still a compile error. [#935][#935]
+
+### Thanks
+
+Thanks to [@spencerbeggs](https://github.com/spencerbeggs) for their contributions!
+
+[#935]: https://github.com/spencerbeggs/effected/pull/935
+
+## 0.14.1
+
+### Bug Fixes
+
+- `ConfigFile.layer` and `ConfigFile.testLayer` now reject a key whose service shape is wider than `ConfigFileShape` at compile time, instead of accepting it silently. Calls that pass the type arguments explicitly keep compiling. [#933][#933]
+
+### Thanks
+
+Thanks to [@spencerbeggs](https://github.com/spencerbeggs) for their contributions!
+
+[#933]: https://github.com/spencerbeggs/effected/pull/933
+
+## 0.14.0
+
+### Breaking Changes
+
+- The kit now builds on and peers stable `effect` `^4.0.0`, in place of an exact release-candidate pin. Move `effect` and every `@effect/*` package to the same `4.x` version in one install: Effect releases them together at one version. A package from this release cannot share an install with an `effect` release candidate. The peer is a caret range, so later `4.x` releases of Effect satisfy the kit without a kit release.
+- Kit exports are unchanged. A consumer moving to stable `effect` meets these changes in its own code:
+  - `Array`, `Chunk`, `Effect` and `Record` `partition`, their `separate` helpers and `Option.partitionMap` return `[successes, failures]`. Where both sides share a type, the reversed destructuring still compiles, so search for every call.
+  - `Schema.brand` takes one identifier and is type-only: the identifier is not stored on the AST and does not survive `SchemaRepresentation`. Compose distinct brands by applying `brand` more than once.
+  - `TestSchema`'s round-trip assertion is `verifyRoundTrip`, with Effect forms `succeedEffect`, `failEffect` and `verifyRoundTripEffect`.
+  - Effect marks some APIs `@stability unstable`: those may change in a minor Effect release. Untagged APIs follow semver.
+
+### Documentation
+
+- Every exported construct's TSDoc was reviewed against the current API. Summaries open with what the construct does, error channels and requirements are stated, examples use real imports and compile, and links resolve. Comments that described options, errors or defaults the code does not have were corrected. [#910][#910]
+
+### Dependencies
+
+| Dependency | Type | Action | From | To |
+| --- | --- | --- | --- | --- |
+| @effected/glob | dependency | updated | 0.9.0 | 0.10.0 |
+| @effected/jsonc | dependency | updated | 0.14.0 | 0.15.0 |
+| @effected/toml | dependency | updated | 0.10.0 | 0.11.0 |
+| @effected/walker | dependency | updated | 0.14.1 | 0.15.0 |
+| @effected/yaml | dependency | updated | 0.18.0 | 0.19.0 |
+| @effected/glob | peerDependency | added | — | 0.9.0 |
+
+- The package now declares its full `@effected` peer closure: every peer required by an `@effected` package it peers on, recursively. These packages were already needed at runtime through those peers; declaring them lets your package manager report a missing one instead of relying on whatever your install happens to contain. [#905][#905]
+
+### Thanks
+
+Thanks to [@spencerbeggs](https://github.com/spencerbeggs) for their contributions!
+
+[#905]: https://github.com/spencerbeggs/effected/pull/905
+
+[#910]: https://github.com/spencerbeggs/effected/pull/910
+
+## 0.13.1
+
+### Dependencies
+
+| Dependency | Type | Action | From | To |
+| --- | --- | --- | --- | --- |
+| @effected/walker | dependency | updated | 0.13.0 | 0.14.0 |
+
+## 0.13.0
+
+### Breaking Changes
+
+- The kit now builds on and peers `effect` `4.0.0-rc.118`, pinned exactly. Consumers must move `effect` and every `@effect/*` package to `4.0.0-rc.118` in the same install. Effect removed the `effect/unstable/*` export paths in this release, so an `@effected` package built on rc.118 cannot share an install with `effect` rc.117.
+
+- Moving the pin also closes a fresh-install failure on rc.117. `@effect/platform-node@4.0.0-rc.117` depends on `@effect/platform-node-shared` with a caret, so an install without a lockfile paired the rc.118 shared package with `effect` rc.117 and failed at startup with `ERR_MODULE_NOT_FOUND`.
+
+- Consumers moving to this release: effect removed the `effect/unstable/*` export paths (imports become `effect/<module>`), moved `Arbitrary` to `effect`, split `effect/Encoding` into `effect/encoding/Base64`, `Base64Url` and `Hex`, and renamed the `Schema` range and string checks (`isLengthBetween` → `isBetweenLength`, `isStartsWith` → `isStartingWith`, and so on). Kit exports are otherwise unchanged; the kit's own imports moved onto the new paths. [#864][#864]
+
+### Dependencies
+
+| Dependency | Type | Action | From | To |
+| --- | --- | --- | --- | --- |
+| @effected/jsonc | dependency | updated | 0.13.0 | 0.14.0 |
+| @effected/toml | dependency | updated | 0.9.0 | 0.10.0 |
+| @effected/walker | dependency | updated | 0.12.0 | 0.13.0 |
+| @effected/yaml | dependency | updated | 0.17.0 | 0.18.0 |
+
+### Thanks
+
+Thanks to [@spencerbeggs](https://github.com/spencerbeggs) for their contributions!
+
+[#864]: https://github.com/spencerbeggs/effected/pull/864
+
+## 0.12.0
+
+### Features
+
+- Upgrades core Effect to `rc-117` [#812][#812]
+
+### Dependencies
+
+| Dependency | Type | Action | From | To |
+| --- | --- | --- | --- | --- |
+| @effected/jsonc | dependency | updated | 0.12.0 | 0.13.0 |
+| @effected/toml | dependency | updated | 0.8.0 | 0.9.0 |
+| @effected/walker | dependency | updated | 0.11.0 | 0.12.0 |
+| @effected/yaml | dependency | updated | 0.16.0 | 0.17.0 |
+
+### Thanks
+
+Thanks to [@spencerbeggs](https://github.com/spencerbeggs) for their contributions!
+
+[#812]: https://github.com/spencerbeggs/effected/pull/812
+
+## 0.11.1
+
+### Dependencies
+
+| Dependency | Type | Action | From | To |
+| --- | --- | --- | --- | --- |
+| @effected/walker | dependency | updated | 0.10.0 | 0.11.0 |
+
+## 0.11.0
+
+### Breaking Changes
+
+#### The whole kit tracks Effect `4.0.0-rc.116`
+
+- Every package's `effect` peer moves from `4.0.0-rc.115` to `4.0.0-rc.116`. The kit uses exact prerelease pins rather than a caret, so a consumer must move with it. No `@effected` API changes shape on this advance; the kit itself needed one edit (`Stream.scan` now takes a lazy initial state, met once in `@effected/jsonl`'s `Journal.projection`). A consumer that upgrades meets the rc.116 renames on its own code:
+
+- `SchemaTransformation.make` is `makeTransformation`, and `Transformation#compose` is the dual standalone `SchemaTransformation.composeTransformation`.
+
+- `SchemaGetter.Getter` is a tagged union exposing only `pipe`: `new SchemaGetter.Getter`, `onSome` and `onNone` are gone in favour of `SchemaGetter.map` / `compose` / `run` and `transformEffect` / `transformOptionalEffect`.
+
+- `Stream.scan` and `Stream.scanEffect` take `() => initial`; `Stream.partition` returns `[passes, fails]`; `Stream.mapBoth` takes `onElement` / `onError`.
+
+- `Effect.orElseSucceed` passes the error to its fallback and `Effect.isEffect` narrows to `Effect<unknown, unknown, unknown>`.
+
+- `ByteSize.Input` string literals are checked at compile time; parse external strings with `ByteSize.fromString`.
+
+- Arbitrary shrinking changed, so property-test replay tokens recorded at rc.115 no longer reproduce.
+
+### Documentation
+
+#### The Claude Code and Copilot plugins teach the rc.116 surface
+
+- The `effect-v4-schema` transformation reference composes transformations with `SchemaTransformation.composeTransformation` and describes the `Getter` surface rc.116 left behind; the source-lookup and testing skills report rc.116 as the kit's pin and the two-copy lockfile shape the bridge now produces (`rc.115` for the toolchain, `rc.116` for the kit); the session-start briefing reports rc.116.
+
+### Dependencies
+
+| Dependency | Type | Action | From | To |
+| --- | --- | --- | --- | --- |
+| @effected/jsonc | dependency | updated | 0.11.1 | 0.12.0 |
+| @effected/toml | dependency | updated | 0.7.1 | 0.8.0 |
+| @effected/walker | dependency | updated | 0.9.1 | 0.10.0 |
+| @effected/yaml | dependency | updated | 0.15.2 | 0.16.0 |
+| @effect/platform-node | devDependency | updated | 4.0.0-rc.115 | 4.0.0-rc.116 |
+| @effect/vitest | devDependency | updated | 4.0.0-rc.115 | 4.0.0-rc.116 |
+| effect | devDependency | updated | 4.0.0-rc.115 | 4.0.0-rc.116 |
+| effect | peerDependency | updated | 4.0.0-rc.115 | 4.0.0-rc.116 |
+
+### Maintenance
+
+#### The rc.115 `packageExtensions` bridge is retired
+
+- The toolchain (`@savvy-web/tsdown-plugins`, `rolldown-pnpm-config`, `@vitest-agent/*`) has republished declaring `effect` and its `@effected/*` inputs as regular dependencies, so the workspace no longer needs the `packageExtensions` block that pinned them by hand. Its ten keys named versions no longer installed and the lockfile diff on removal was the checksum line alone. Nothing published changes; this is the workspace's own install shape. [#792][#792]
+
+### Thanks
+
+Thanks to [@spencerbeggs](https://github.com/spencerbeggs) for their contributions!
+
+[#792]: https://github.com/spencerbeggs/effected/pull/792
+
+## 0.10.1
+
+### Bug Fixes
+
+- Fixes closure issues in all packages.
+
+### Dependencies
+
+| Dependency | Type | Action | From | To |
+| --- | --- | --- | --- | --- |
+| @effected/jsonc | dependency | updated | 0.11.0 | 0.11.1 |
+| @effected/toml | dependency | updated | 0.7.0 | 0.7.1 |
+| @effected/walker | dependency | updated | 0.9.0 | 0.9.1 |
+| @effected/yaml | dependency | updated | 0.15.1 | 0.15.2 |
+
+### Thanks
+
+Thanks to [@spencerbeggs](https://github.com/spencerbeggs) for their contributions!
+
+## 0.10.0
+
+### Breaking Changes
+
+- `ConfigFileNotFoundError` gains `candidates: ReadonlyArray<string>` as a **required** schema field — the paths the resolver chain actually checked on disk, in probe order. Code that constructs the error by hand (a test double, a mock service, a re-raise) must now supply `candidates`, and a payload encoded by an earlier release no longer decodes through the error's schema. One `searched` entry can hide many candidates since `upwardWalk` grew its `filenames`/`subpaths` forms, so "nothing found, here is what I looked for" under-reported the search (#651). The message names the candidate count; the field carries the list.
+
+### Features
+
+- Resolvers gain an optional `resolveProbe` member reporting `ConfigProbe` — the match plus the probed prefix (a short-circuiting walk lists what it checked, not everything it could have). Every built-in derives `resolve`/`resolveMatch` from it through `fromProbe`, so the three cannot drift; a hand-rolled resolver that omits it degrades to contributing no candidates, exactly as it degrades to a bare-path match today. The failure path is now as informative as the success path's `ConfigMatch`. [#733][#733]
+
+### Thanks
+
+Thanks to [@fuleinist](https://github.com/fuleinist) for their contributions!
+
+[#733]: https://github.com/spencerbeggs/effected/pull/733
+
+## 0.9.0
+
+### Features
+
+- `ConfigFileShape.encode(value, options?)` serializes `value` to text without writing it — byte-for-byte what `write` would put on disk, with no event emitted and path-less errors (`ConfigEncodeError = ConfigCodecError | ConfigValidationError`). Useful for a `--dry-run` flag or a "show me the file" preview.
+- `write(value, path, options?)` gains the same `options`, so the two share one encoding path and cannot drift.
+- New `ConfigEncodeOptions.header`: text prepended verbatim ahead of the serialized document, separated by exactly one newline (a header already ending in `\n` is not given another). The caller owns the header's validity in the target format — `#` for TOML/YAML, `//` for JSONC; JSON has no comment syntax, so a header there yields an unparseable file by construction. The motivating case is a `#:schema` directive at the top of a TOML file.
+
+```ts
+import { ConfigFile, TomlCodec } from "@effected/config-file";
+
+const text = yield* config.encode(value, { header: "#:schema https://example.com/config.schema.json" });
+```
+
+- `save` and `update` are unchanged.
+
+- Closes #650. [#693][#693]
+
+### Dependencies
+
+| Dependency | Type | Action | From | To |
+| --- | --- | --- | --- | --- |
+| @effected/walker | dependency | updated | 0.8.0 | 0.9.0 |
+| @effected/yaml | dependency | updated | 0.15.0 | 0.15.1 |
+
+### Thanks
+
+Thanks to [@spencerbeggs](https://github.com/spencerbeggs) for their contributions!
+
+[#693]: https://github.com/spencerbeggs/effected/pull/693
+
+## 0.8.0
+
+### Breaking Changes
+
+#### The whole kit tracks Effect `4.0.0-rc.115`
+
+- Every package's `effect` peer moves from `4.0.0-rc.112` to `4.0.0-rc.115`. The kit uses exact prerelease pins rather than a caret, so a consumer must move with it. This advance is the first whose Effect changes are not source-compatible with the previous pin, so a consumer that upgrades meets the same renames the kit did:
+
+- `SchemaTransformation.transformOrFail` and `SchemaGetter.transformOrFail` are `transformEffect`.
+
+- The `Config` constructors are PascalCase (`Config.String`, `Config.Redacted`, `Config.Int`, `Config.Boolean`, …) and `Config.mapOrFail` is `Config.mapEffect`.
+
+- `FileSystem.Size` and `FileSystem.SizeInput` are gone in favour of the `ByteSize` module: `File.Info.size` is a `ByteSize`, `File.seek` takes a `bigint`, `read`/`write` return a `number`.
+
+- The fast-check bridge (`effect/testing/FastCheck`, `Schema.toArbitrary`, the `fastCheck` property-test option) is removed in favour of `effect/unstable/arbitrary/Arbitrary`; `it.effect.prop` takes `arbitrary: { runs, size, seed, … }`.
+
+#### `@effected/schemastore` documents are open unless told otherwise
+
+- `Schema.ToJsonSchemaOptions.additionalProperties` became `onExcessProperty: "ignore" | "error"` upstream, and its default now mirrors the decoder's: generated object schemas carry `additionalProperties: true` unless `jsonSchema: { onExcessProperty: "error" }` is passed. `StoreDocument.fromSchema` passes the option through unchanged, so a document that was closed by default at rc.112 is open by default now. Pass `onExcessProperty: "error"` to keep a closed document; a generator that silently disagreed with the decoder it is paired with would be the worse default.
+
+#### `@effected/memfs` seeks before the start of a file fail
+
+- `File.seek` gained a `PlatformError` channel upstream, and memfs now matches Node: a seek whose resulting position would be negative fails with `BadArgument` ("Cannot seek before the start of the file") and leaves the cursor unchanged, where it previously stored the negative position and failed on the next read. No memfs-declared type changes; the `File`/`File.Info` shape changes are Effect's own, reaching consumers through the peer.
+
+### Documentation
+
+#### A `Schema.Class` root is annotated on the `Struct` it wraps
+
+- [Effect-TS/effect#8084](https://github.com/Effect-TS/effect/issues/8084), which the rc.112 notes carried as an open limitation, was closed upstream as by design: annotations passed as `Schema.Class`'s second argument sit on the class node, while the `$defs` entry is generated from the encoded fields `Struct`. Annotate that `Struct` — `Schema.Class<X>("X")(Schema.Struct({ … }).annotate({ title, description, "x-taplo": … }))` — and every key reaches the document. `@effected/schemastore`'s design doc and context files now state the rule instead of the limitation.
+
+#### The Claude Code and Copilot plugins teach the rc.115 surface
+
+- The `effect-v4-schema`, `effect-v4-testing` and `effect-v4-module-index` skills describe the native `Arbitrary` module in place of the fast-check bridge, including the migration traps met on this advance: the `size` clamp (default 10) that silently shrinks a property's string and array domains, the `-0` the generator's near-zero bias emits for an unbounded `Schema.Int` or any `Schema.Number`, which JSON and YAML cannot round-trip, and the absence of `oneof`/`constantFrom`/`array` combinators. `ByteSize` has a module-index row, the `Config` and CLI constructors are shown in their PascalCase spellings, and the session-start briefing reports rc.115 as the kit's pin. [#686][#686]
+
+### Dependencies
+
+| Dependency | Type | Action | From | To |
+| --- | --- | --- | --- | --- |
+| @effected/jsonc | dependency | updated | 0.10.0 | 0.11.0 |
+| @effected/toml | dependency | updated | 0.6.0 | 0.7.0 |
+| @effected/walker | dependency | updated | 0.7.0 | 0.8.0 |
+| @effected/yaml | dependency | updated | 0.14.0 | 0.15.0 |
+| @effect/platform-node | devDependency | updated | 4.0.0-rc.112 | 4.0.0-rc.115 |
+| @effect/tsgo | devDependency | updated | 0.41.0 | 0.45.0 |
+| @effect/vitest | devDependency | updated | 4.0.0-rc.112 | 4.0.0-rc.115 |
+| effect | devDependency | updated | 4.0.0-rc.112 | 4.0.0-rc.115 |
+| effect | peerDependency | updated | 4.0.0-rc.112 | 4.0.0-rc.115 |
+
+### Thanks
+
+Thanks to [@spencerbeggs](https://github.com/spencerbeggs) for their contributions!
+
+[#686]: https://github.com/spencerbeggs/effected/pull/686
+
+## 0.7.1
+
+### Dependencies
+
+| Dependency | Type | Action | From | To |
+| --- | --- | --- | --- | --- |
+| @effected/jsonc | dependency | updated | 0.9.0 | 0.10.0 |
+
+## 0.7.0
+
+### Features
+
+#### `ConfigResolver.upwardWalk` takes a per-directory candidate list
+
+- `upwardWalk` now accepts `filenames` alongside the existing `filename`: every name in the list is probed at one ancestor directory before the walk ascends, so a "config-dir" convention (`.app.toml`, then `app.toml`, then `.config/app.toml`, all at one level) can be expressed as one resolver instead of chaining several — a chain of separate `upwardWalk` calls exhausts one filename to the filesystem root before starting the next, which cannot express this ordering (#644).
+
+```ts
+ConfigResolver.upwardWalk({ filenames: [".app.toml", "app.toml", ".config/app.toml"] });
+```
+
+#### `ConfigResolver.resolveMatch` and `ConfigMatch`
+
+- Every built-in resolver now optionally implements `resolveMatch`, reporting *how* a file was found rather than only the path: the anchor directory it resolved against, and the `subpath`/`filename` entry that matched. `ConfigFile.discover` threads the result onto `ConfigSource.match`, so a consumer resolving a project root, or distinguishing which candidate matched in an `upwardWalk` with several names, no longer has to string-match the discovered path's tail. Multiple `upwardWalk` calls in one chain can also each take a distinct `name` so they're distinguishable by resolver name too (#630).
+
+### Bug Fixes
+
+- `ConfigCodecError` gains an optional `path` field, threaded by `ConfigFile`'s read/write pipeline whenever a codec failure is re-raised for a file it resolved — so a discovery pass over several candidates still names the file that failed. `message` deliberately does not include the path: a wrapper that renders its own message almost always names the file too, and a message carrying the path would print it twice (#632). [#654][#654]
+
+### Dependencies
+
+| Dependency | Type | Action | From | To |
+| --- | --- | --- | --- | --- |
+| @effected/walker | dependency | updated | 0.6.0 | 0.7.0 |
+| @effected/yaml | dependency | updated | 0.13.0 | 0.14.0 |
+
+### Thanks
+
+Thanks to [@spencerbeggs](https://github.com/spencerbeggs) for their contributions!
+
+[#654]: https://github.com/spencerbeggs/effected/pull/654
+
 ## 0.6.0
 
 ### Breaking Changes

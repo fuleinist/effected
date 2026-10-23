@@ -18,15 +18,15 @@
 // set to "always" — the superproject (and any clone of it) sets that BEFORE
 // the submodule operation that would otherwise be refused.
 
-import { mkdir, mkdtemp, rm, stat, writeFile } from "node:fs/promises";
+import { mkdir, mkdtemp, realpath, rm, stat, symlink, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { NodeServices } from "@effect/platform-node";
 import { afterAll, assert, beforeAll, describe, it } from "@effect/vitest";
-import { Cause, Effect, Exit, Layer, Option, Result } from "effect";
-import type { ChildProcessSpawner } from "effect/unstable/process";
-import { ChildProcess } from "effect/unstable/process";
-import { Git, UnknownRefError } from "../../src/Git.js";
+import { Cause, DateTime, Effect, Exit, Layer, Option, Result } from "effect";
+import type { ChildProcessSpawner } from "effect/process";
+import { ChildProcess } from "effect/process";
+import { Git, NotARepositoryError, UnknownRefError } from "../../src/Git.js";
 import { runCollected } from "../../src/internal/run.js";
 
 /** Resolves both `Git` and every Node platform service (including the real `ChildProcessSpawner`). */
@@ -35,20 +35,21 @@ const TestLayer = Git.layer.pipe(Layer.provideMerge(NodeServices.layer));
 const run = <A, E>(effect: Effect.Effect<A, E, Git | ChildProcessSpawner.ChildProcessSpawner>) =>
 	effect.pipe(Effect.provide(TestLayer));
 
-/** Pinned the same way GitCommand pins its own invocations, plus a prompt kill-switch. */
+/** The locale and prompt pins the `Git` service applies to its own spawns (#670). */
 const FIXTURE_ENV = { LC_ALL: "C", GIT_TERMINAL_PROMPT: "0" } as const;
 
 // git >= 2.38 (CVE-2022-39253) refuses a file:// submodule remote unless
 // explicitly allowed. Probed against the installed git (2.54.0): a repo-local
 // `git config protocol.file.allow always` on the superproject does NOT reach
 // `git submodule add`'s internal clone subprocess — only a command-line `-c`,
-// the environment, or global config do. `GitCommand`'s hardcoded per-call env
-// (`{ LC_ALL: "C" }`, `extendEnv: true`) merges with `process.env`, so setting
-// it here on the running test process reaches every spawn in this file,
-// including the real `Git` service's own submoduleAdd/fetch/sparseCheckoutSet
-// calls. The fixtures below also set the repo-local config, matching the
-// documented mutating-tier contract, but it is this environment variable that
-// actually authorizes the file-protocol clone/fetch on this git version.
+// the environment, or global config do. The `Git` service's per-call env pins
+// (applied at its spawn choke point, over `extendEnv: true`) merge with
+// `process.env`, so setting it here on the running test process reaches every
+// spawn in this file, including the real `Git` service's own
+// submoduleAdd/fetch/sparseCheckoutSet calls. The fixtures below also set the
+// repo-local config, matching the documented mutating-tier contract, but it is
+// this environment variable that actually authorizes the file-protocol
+// clone/fetch on this git version.
 process.env.GIT_ALLOW_PROTOCOL = "file";
 
 /**
@@ -77,6 +78,35 @@ const runFixtureGit = (
 
 /** Confirms a path exists on the real FS — dies (via the rejected promise) if it does not. */
 const assertExists = (path: string): Effect.Effect<void> => Effect.promise(() => stat(path)).pipe(Effect.asVoid);
+
+// The `Git` service probes `ssh.variant` before every network-touching member,
+// and that read is a MERGED config read — so without this it reaches the
+// developer's or runner's own global git config. A machine with a global
+// `ssh.variant` outside `auto`/`ssh` would decline the ssh pin and fail the
+// assertions below with a message that says nothing about why. Pointing both
+// config scopes at /dev/null makes every git spawn in this file see only the
+// repository config its fixture wrote. Safe here because the fixtures pin
+// everything they depend on locally, including `init.defaultBranch`.
+const HOST_CONFIG_KEYS = ["GIT_CONFIG_GLOBAL", "GIT_CONFIG_SYSTEM"] as const;
+const hostConfig = new Map<string, string | undefined>();
+
+beforeAll(() => {
+	for (const key of HOST_CONFIG_KEYS) {
+		hostConfig.set(key, process.env[key]);
+		process.env[key] = "/dev/null";
+	}
+});
+
+afterAll(() => {
+	for (const key of HOST_CONFIG_KEYS) {
+		const previous = hostConfig.get(key);
+		if (previous === undefined) {
+			delete process.env[key];
+		} else {
+			process.env[key] = previous;
+		}
+	}
+});
 
 describe("Git surface — introspection repository (fixture A)", () => {
 	let dirA: string;
@@ -431,4 +461,312 @@ describe("Git surface — submodule/fetch pair (fixture B)", () => {
 			20_000,
 		);
 	});
+});
+
+// Fixture C is `Git.log`'s own: it is the only member whose answer depends on
+// the SHAPE of history rather than one tree, so it needs a repository with a
+// rename across the scoped path, an off-pathspec commit, and a real merge.
+// A mock spawner can pin the parser; only real git can tell us whether
+// `--follow` actually walks the rename and whether `--diff-merges` actually
+// changes what a merge contributes.
+describe("Git.log — history repository (fixture C)", () => {
+	let dirC: string;
+	let emptyDir: string;
+
+	/**
+	 * main:  c1 (tracked/old.txt + other.txt)
+	 *     -> c2 (tracked/old.txt renamed to tracked/new.txt)
+	 *     -> c3 (other.txt only — the off-pathspec commit)
+	 *     -> c4 (main edits tracked/new.txt)   \
+	 *        side branched at c2, also edits it -> merge (conflict, resolved)
+	 */
+	beforeAll(async () => {
+		dirC = await mkdtemp(join(tmpdir(), "effected-git-log-c-"));
+		emptyDir = await mkdtemp(join(tmpdir(), "effected-git-log-empty-"));
+		await Effect.runPromise(
+			run(
+				Effect.gen(function* () {
+					const raw = (args: ReadonlyArray<string>) => runFixtureGit(dirC, args);
+					const commit = (message: string) => raw(["-c", "commit.gpgsign=false", "commit", "-m", message]);
+
+					yield* raw(["-c", "init.defaultBranch=main", "init"]);
+					yield* raw(["config", "user.email", "log-integration@example.com"]);
+					yield* raw(["config", "user.name", "Log Integration"]);
+
+					yield* Effect.promise(() => mkdir(join(dirC, "tracked"), { recursive: true }));
+					yield* Effect.promise(() => writeFile(join(dirC, "tracked", "old.txt"), "one\n"));
+					yield* Effect.promise(() => writeFile(join(dirC, "other.txt"), "other\n"));
+					// A path with a space, to prove -z leaves names unquoted.
+					yield* Effect.promise(() => writeFile(join(dirC, "a name.txt"), "spaced\n"));
+					yield* raw(["add", "-A"]);
+					yield* commit("c1");
+
+					yield* raw(["mv", "tracked/old.txt", "tracked/new.txt"]);
+					yield* commit("c2");
+					const branchPoint = (yield* raw(["rev-parse", "HEAD"])).trim();
+
+					yield* Effect.promise(() => writeFile(join(dirC, "other.txt"), "other again\n"));
+					yield* raw(["add", "-A"]);
+					yield* commit("c3");
+
+					yield* Effect.promise(() => writeFile(join(dirC, "tracked", "new.txt"), "main\n"));
+					yield* raw(["add", "-A"]);
+					yield* commit("c4");
+
+					yield* raw(["checkout", "-b", "side", branchPoint]);
+					yield* Effect.promise(() => writeFile(join(dirC, "tracked", "new.txt"), "side\n"));
+					yield* raw(["add", "-A"]);
+					yield* commit("side");
+
+					yield* raw(["checkout", "main"]);
+					// The merge conflicts on purpose; the resolution is what makes the
+					// merge commit differ from its first parent.
+					yield* runCollected(
+						ChildProcess.setCwd(
+							ChildProcess.make("git", ["merge", "side"], { env: FIXTURE_ENV, extendEnv: true }),
+							dirC,
+						),
+					).pipe(Effect.orDie);
+					yield* Effect.promise(() => writeFile(join(dirC, "tracked", "new.txt"), "resolved\n"));
+					yield* raw(["add", "-A"]);
+					yield* commit("merge side");
+
+					yield* runFixtureGit(emptyDir, ["-c", "init.defaultBranch=main", "init"]);
+				}),
+			),
+		);
+	}, 60_000);
+
+	afterAll(async () => {
+		if (dirC) await rm(dirC, { recursive: true, force: true });
+		if (emptyDir) await rm(emptyDir, { recursive: true, force: true });
+	});
+
+	it.effect("--follow walks a real rename; the same query without it stops at the rename", () =>
+		run(
+			Effect.gen(function* () {
+				const git = yield* Git;
+				const followed = yield* git.log(dirC, { paths: ["tracked/new.txt"], follow: true });
+				const unfollowed = yield* git.log(dirC, { paths: ["tracked/new.txt"] });
+
+				// The discriminating pair: `--follow` reaches back past c2's rename to
+				// c1, where the blob was still tracked/old.txt. Without it, history
+				// for this path begins at the rename. Note this is NOT a
+				// longer-vs-shorter comparison — `--follow` also drops merge commits
+				// (probed against git 2.54), so the two walks are the same LENGTH here
+				// and only their contents discriminate.
+				assert.include(
+					followed.flatMap((entry) => entry.paths),
+					"tracked/old.txt",
+				);
+				assert.notInclude(
+					unfollowed.flatMap((entry) => entry.paths),
+					"tracked/old.txt",
+				);
+				// ...and the merge, present unfollowed, is gone under --follow.
+				const merged = unfollowed.find((entry) => entry.paths.length === 0);
+				assert.isDefined(merged);
+				assert.isUndefined(followed.find((entry) => entry.sha === merged?.sha));
+			}),
+		),
+	);
+
+	it.effect("a pathspec scopes the walk — an off-pathspec commit never appears", () =>
+		run(
+			Effect.gen(function* () {
+				const git = yield* Git;
+				const scoped = yield* git.log(dirC, { paths: ["other.txt"] });
+				const everything = yield* git.log(dirC);
+
+				assert.isTrue(scoped.length < everything.length);
+				// Every scoped entry touched other.txt and nothing that is not it.
+				for (const entry of scoped) {
+					assert.deepStrictEqual(entry.paths, ["other.txt"]);
+				}
+				// The control: c2's rename IS in the unscoped walk, so the absence
+				// above is scoping rather than an empty query.
+				assert.include(
+					everything.flatMap((entry) => entry.paths),
+					"tracked/new.txt",
+				);
+			}),
+		),
+	);
+
+	it.effect("firstParentDiffMerges is what gives a merge commit any paths at all", () =>
+		run(
+			Effect.gen(function* () {
+				const git = yield* Git;
+				const plain = yield* git.log(dirC, { paths: ["tracked/new.txt"], limit: 1 });
+				const firstParent = yield* git.log(dirC, {
+					paths: ["tracked/new.txt"],
+					limit: 1,
+					firstParentDiffMerges: true,
+				});
+
+				// Same commit both times — the merge — but git omits a merge's diff by
+				// default, so the entry's path list is empty until we ask for the
+				// first-parent diff.
+				assert.strictEqual(plain[0]?.sha, firstParent[0]?.sha);
+				assert.deepStrictEqual(plain[0]?.paths, []);
+				assert.deepStrictEqual(firstParent[0]?.paths, ["tracked/new.txt"]);
+			}),
+		),
+	);
+
+	it.effect("entries arrive newest-first with real, ordered, decoded dates", () =>
+		run(
+			Effect.gen(function* () {
+				const git = yield* Git;
+				const entries = yield* git.log(dirC);
+				assert.isTrue(entries.length >= 5);
+				for (let index = 1; index < entries.length; index++) {
+					const newer = entries[index - 1];
+					const older = entries[index];
+					assert.isDefined(newer);
+					assert.isDefined(older);
+					if (newer === undefined || older === undefined) continue;
+					assert.isTrue(DateTime.toEpochMillis(newer.committedAt) >= DateTime.toEpochMillis(older.committedAt));
+				}
+				assert.strictEqual(entries[0]?.authorEmail, "log-integration@example.com");
+			}),
+		),
+	);
+
+	it.effect("limit caps the walk, and limit 0 is the empty listing", () =>
+		run(
+			Effect.gen(function* () {
+				const git = yield* Git;
+				assert.strictEqual((yield* git.log(dirC, { limit: 2 })).length, 2);
+				assert.deepStrictEqual(yield* git.log(dirC, { limit: 0 }), []);
+			}),
+		),
+	);
+
+	it.effect("a path with a space comes back raw, never C-quoted", () =>
+		run(
+			Effect.gen(function* () {
+				const git = yield* Git;
+				const entries = yield* git.log(dirC, { paths: ["a name.txt"], follow: true });
+				assert.deepStrictEqual(entries.at(-1)?.paths, ["a name.txt"]);
+			}),
+		),
+	);
+
+	it.effect("an unborn HEAD is the empty listing against real git, not a failure", () =>
+		run(
+			Effect.gen(function* () {
+				const git = yield* Git;
+				assert.deepStrictEqual(yield* git.log(emptyDir), []);
+			}),
+		),
+	);
+
+	it.effect("a directory that is not a repository still fails NotARepositoryError", () =>
+		run(
+			Effect.gen(function* () {
+				const git = yield* Git;
+				const error = yield* Effect.flip(git.log(tmpdir()));
+				assert.isTrue(error instanceof NotARepositoryError);
+			}),
+		),
+	);
+});
+
+describe("Git surface — repository identity across worktrees (commonDir)", () => {
+	let base: string;
+	let main: string;
+	let worktree: string;
+	let linked: string;
+	let bare: string;
+	let spaced: string;
+	let outside: string;
+
+	/**
+	 * A repository with a subdirectory and one linked worktree, a directory
+	 * symlink onto the repository, a bare repository, and a plain directory.
+	 * `base` is the UNRESOLVED tmpdir path, so on macOS every cwd below sits
+	 * behind the `/var` -> `/private/var` link, and `linked` adds an explicit
+	 * symlink so the same trap is exercised on Linux, whose tmpdir is real.
+	 */
+	beforeAll(async () => {
+		base = await mkdtemp(join(tmpdir(), "effected-git-common-dir-"));
+		main = join(base, "main");
+		worktree = join(base, "worktree");
+		linked = join(base, "linked");
+		bare = join(base, "bare.git");
+		spaced = join(base, "spaced.git ");
+		outside = join(base, "outside");
+		await mkdir(join(main, "sub"), { recursive: true });
+		await mkdir(outside);
+		await Effect.runPromise(
+			run(
+				Effect.gen(function* () {
+					yield* runFixtureGit(main, ["-c", "init.defaultBranch=main", "init"]);
+					yield* runFixtureGit(main, [
+						"-c",
+						"user.email=git-integration@example.com",
+						"-c",
+						"user.name=Git Integration",
+						"-c",
+						"commit.gpgsign=false",
+						"commit",
+						"--allow-empty",
+						"-m",
+						"init",
+					]);
+					yield* runFixtureGit(main, ["worktree", "add", "-b", "side", worktree]);
+					yield* runFixtureGit(base, ["init", "--bare", bare]);
+					yield* runFixtureGit(base, ["init", "--bare", spaced]);
+				}),
+			),
+		);
+		await symlink(main, linked, "dir");
+	});
+
+	afterAll(async () => {
+		await rm(base, { recursive: true, force: true });
+	});
+
+	it.effect("answers one realpath'd directory from the checkout, a subdirectory, a worktree and a symlink", () =>
+		run(
+			Effect.gen(function* () {
+				const git = yield* Git;
+				const expected = yield* Effect.promise(() => realpath(join(main, ".git")));
+				for (const cwd of [main, join(main, "sub"), worktree, linked, join(linked, "sub")]) {
+					assert.strictEqual(yield* git.commonDir(cwd), expected, cwd);
+				}
+			}),
+		),
+	);
+
+	it.effect("answers the repository directory itself for a bare repository", () =>
+		run(
+			Effect.gen(function* () {
+				const git = yield* Git;
+				assert.strictEqual(yield* git.commonDir(bare), yield* Effect.promise(() => realpath(bare)));
+			}),
+		),
+	);
+
+	it.effect("keeps a trailing space that belongs to the repository path", () =>
+		run(
+			Effect.gen(function* () {
+				const git = yield* Git;
+				const answer = yield* git.commonDir(spaced);
+				assert.strictEqual(answer, yield* Effect.promise(() => realpath(spaced)));
+				assert.isTrue(answer.endsWith(" "));
+			}),
+		),
+	);
+
+	it.effect("fails NotARepositoryError outside any repository", () =>
+		run(
+			Effect.gen(function* () {
+				const git = yield* Git;
+				const failure = yield* Effect.flip(git.commonDir(outside));
+				assert.instanceOf(failure, NotARepositoryError);
+			}),
+		),
+	);
 });

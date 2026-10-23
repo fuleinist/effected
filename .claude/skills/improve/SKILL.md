@@ -1,17 +1,17 @@
 ---
 name: improve
-description: Use when maintaining the "effective" plugin's skills in plugins/claude-code/skills/ — harvesting falsified skill claims from a finished migration into GitHub tickets, or draining those tickets by verifying each claim against the vendored Effect v4 source and amending the skill. Enforces the evidence ladder (docs settle renames, source settles existence, only a probe settles semantics) and the probe preconditions that make a probe non-vacuous.
+description: Use when maintaining the "effective" plugin's skills in plugin/skills/ — harvesting falsified skill claims from a finished migration into GitHub tickets, or draining those tickets by verifying each claim against the vendored Effect v4 source and amending the skill. Enforces the evidence ladder (docs settle renames, source settles existence, only a probe settles semantics) and the probe preconditions that make a probe non-vacuous.
 ---
 
 # Improving the plugin's skills
 
-This skill maintains `${CLAUDE_PROJECT_DIR}/plugins/claude-code/skills/`. It is a **project-level** skill and lives outside the plugin on purpose: the plugin carries no machinery for grading itself, and this skill is free to assume the layout of this repo — most importantly the vendored source at `${CLAUDE_PROJECT_DIR}/.repos/effect`, which a published plugin could never rely on.
+This skill maintains `${CLAUDE_PROJECT_DIR}/plugin/skills/`. It is a **project-level** skill and lives outside the plugin on purpose: the plugin carries no machinery for grading itself, and this skill is free to assume the layout of this repo — most importantly the vendored source at `${CLAUDE_PROJECT_DIR}/.repos/effect`, which a published plugin could never rely on.
 
 It has two modes. **Harvest** turns a finished migration into tickets. **Tune** turns tickets into skill edits. Together they close the loop the plugin's ethos already implies: migrations falsify skill claims, and something has to carry the falsifications back.
 
 ## The problem this exists to solve
 
-Every skill in `${CLAUDE_PROJECT_DIR}/plugins/claude-code/skills/` was written from Effect's own documentation. Every serious error found in those skills was a place where the documentation was *right* and the skill's inference from it was wrong — or where the documentation was silent and v3 memory filled the gap.
+Every skill in `${CLAUDE_PROJECT_DIR}/plugin/skills/` was written from Effect's own documentation. Every serious error found in those skills was a place where the documentation was *right* and the skill's inference from it was wrong — or where the documentation was silent and v3 memory filled the gap.
 
 Re-reading the docs harder cannot find those errors. That is the whole reason for the ladder below.
 
@@ -47,7 +47,7 @@ Citing a doc passage for a semantic claim is how these skills acquired their err
 
 A probe that cannot fail is worse than no probe. Each precondition below was learned by being burned.
 
-1. **Run from inside the package, never the repo root.** The rule is unchanged; its stated mechanism was wrong and is corrected here. This document long claimed the root "resolves `effect@3.21.4` and will describe the v3 surface with total confidence." **That is false in this repo** — verified 2026-09-05 on the rc.112 advance: `grep -c "effect@3\." pnpm-lock.yaml` is `0`, and a root-relative resolve fails outright with `ERR_MODULE_NOT_FOUND`. Note that `ls node_modules/.pnpm | grep '^effect@'` is **not** the check — it lists store directories, which outlive the lockfile: during a catalog advance the previous release's directory lingers there, orphaned, and a stale copy can also be genuinely live while a toolchain bridge is up (see `CLAUDE.dependencies.md`). Read the lockfile's **`packages:` section**, not the store — and not the whole lockfile either: while a toolchain bridge is up, a bare `grep -c "effect@<old>" pnpm-lock.yaml` matches the override's own redirect line (`effect@<old>: <new>`), which is one resolved version spelled twice, not a second copy. Scope it: `awk '/^packages:/,/^snapshots:/' pnpm-lock.yaml | grep -c '<old>'`. The root resolves **nothing**, not the wrong thing. The v3-shadowing hazard is real *where a v3 is installed*, so keep the rule — but **gate on the resolved version, never on the directory**, because a remembered answer for a directory is exactly the recollection this ladder exists to replace. The pnpm fix in [pnpm/pnpm#12847](https://github.com/pnpm/pnpm/pull/12847) addresses lockfile poisoning; it does not change which `effect` a root-relative `require` resolves.
+1. **Run from inside the package, never the repo root.** The rule is unchanged; its stated mechanism was wrong and is corrected here. This document long claimed the root "resolves `effect@3.21.4` and will describe the v3 surface with total confidence." **That is false in this repo** — verified 2026-09-05 on the rc.112 advance: `grep -c "effect@3\." pnpm-lock.yaml` is `0`, and a root-relative resolve fails outright with `ERR_MODULE_NOT_FOUND`. Note that `ls node_modules/.pnpm | grep '^effect@'` is **not** the check — it lists store directories, which outlive the lockfile: during a catalog advance the previous release's directory lingers there, orphaned, and a stale copy can also be genuinely live while a toolchain bridge is up (see `okf/runbooks/advance-the-effect-pin.md`). Read the lockfile's **`packages:` section**, not the store — and not the whole lockfile either: while a toolchain bridge is up, a bare `grep -c "effect@<old>" pnpm-lock.yaml` matches the override's own redirect line (`effect@<old>: <new>`), which is one resolved version spelled twice, not a second copy. Scope it: `awk '/^packages:/,/^snapshots:/' pnpm-lock.yaml | grep -c '<old>'`. The root resolves **nothing**, not the wrong thing. The v3-shadowing hazard is real *where a v3 is installed*, so keep the rule — but **gate on the resolved version, never on the directory**, because a remembered answer for a directory is exactly the recollection this ladder exists to replace. The pnpm fix in [pnpm/pnpm#12847](https://github.com/pnpm/pnpm/pull/12847) addresses lockfile poisoning; it does not change which `effect` a root-relative `require` resolves.
 2. **Print the resolved version inside every probe, and compare it against `catalog:effect` in `pnpm-workspace.yaml`** — not against a hardcoded prefix. A rule reading "if it does not say `4.0.0-beta.<n>`, the probe is void" is self-defeating the moment the line moves to `rc`: a correct probe printing `4.0.0-rc.112` gets rejected by the check meant to protect it. What voids a probe is a `3.x` resolution, or a resolution that disagrees with the catalog pin.
 3. **Probe files live at the package root.** The tsconfig `include` is `${configDir}/*.ts` and does **not** match subdirectories. A probe in a subdirectory silently leaves the compilation program, and its control error never fires — it false-passes.
 4. **Run the control first.** Write a line you *know* must fail to compile or must throw. Watch it fail. Only then write the real assertion. If the control passes, the harness is broken, not the claim.
@@ -91,7 +91,7 @@ Run against open skill tickets.
 
 1. List them: `gh issue list --repo spencerbeggs/effected --state open`. Skill tickets are titled `<skill-name>: …`.
 2. For each ticket, classify the claim — rename, existence, or semantics — and climb to exactly that rung. No further, no less.
-3. Amend the skill in `plugins/claude-code/skills/<name>/SKILL.md`. State the corrected fact **and the trap it replaces**, so a future reader recognises the error rather than re-deriving it.
+3. Amend the skill in `plugin/skills/<name>/SKILL.md`. State the corrected fact **and the trap it replaces**, so a future reader recognises the error rather than re-deriving it.
 4. Close the ticket citing the evidence. Rung 2 cites a file and line under `.repos/effect`. Rung 3 pastes the probe and its output, including the resolved version line.
 5. Reload plugins so the edit takes effect in-session.
 
@@ -110,6 +110,8 @@ So on any dependency bump, sweep twice:
 
 The tell that you are in this failure mode: you found one such line **by reading**, fixed it, and did not widen your sweep pattern to the class of defect you had just discovered. Turn every mechanism-bug you find by hand into a grep before moving on.
 
+Re-verify every anchor this sweep touches against the **vendored tree**, never `node_modules` — the installed copy's publish-time TSDoc shifts line numbers even when the symbol itself is unchanged, so a line that still resolves in `node_modules` is not evidence the vendored-tree anchor still holds.
+
 ## Red flags
 
 Stop if you catch yourself doing any of these. Each has happened.
@@ -118,8 +120,8 @@ Stop if you catch yourself doing any of these. Each has happened.
 - **"Fixing" something already correct.** During the `config-file` cycle two agents nearly re-exported a deliberately-deleted internal symbol onto the public API because they trusted a stale reference over the current tree. Read the current code before you believe a ticket.
 - **Widening a suppression to make a gate green.** The `_base` suppression in each `savvy.build.ts` is narrow and four packages depend on it staying narrow.
 - **Spreading `.repos/effect` across the plugin.** While the plugin is dogfooded from this repo alone, its agents and skills *may* assume the vendored tree — but only **two** files may name the path, for two different reasons, and everything else consults the skill:
-  - `plugins/claude-code/skills/effect-v4-source-lookup/SKILL.md` — resolves the ladder, so it owns the path for *reading*.
-  - `plugins/claude-code/hooks/session-start/orientation.sh` — reports the vendored-source posture and tells a repo that has no vendored tree where to put one, so it owns the path for *bootstrapping*. A hook that could not name the destination could not do its job.
+  - `plugin/skills/effect-v4-source-lookup/SKILL.md` — resolves the ladder, so it owns the path for *reading*.
+  - `plugin/hooks/session-start/orientation.sh`, the one SessionStart script both hosts run — reports the vendored-source posture and tells a repo that has no vendored tree where to put one, so it owns the path for *bootstrapping*. A hook that could not name the destination could not do its job.
 
   Any **third** hardcoded reference is the drift this red flag is about; collapse it into one of those two. See [pre-publish debt](#pre-publish-debt).
 - **Trusting a green build you did not run correctly.** `node savvy.build.ts --target prod` run directly skips `build:dev`, produces no `.d.ts`, and leaves a truncated `issues.json` shaped exactly like a clean gate. Build with `pnpm build --filter <pkg>` from the repo root.
@@ -133,20 +135,20 @@ The plugin is currently loaded only from this repo (`claude --plugin-dir plugin`
 
 `effect-v4-source-lookup` now resolves an ordered ladder: `$EFFECT_SMOL_SRC` override → the vendored tree → `node_modules/effect/src` → hard failure. Two facts settled it, and the second corrects what this section used to claim:
 
-- **`effect` publishes its source.** Its `files` array is `["src/**/*.ts", "dist/**/*.js", …]`, so every consumer has the complete v4 TypeScript source, `internal/` implementations included — not merely `.d.ts`. `node_modules/effect/src/Context.ts:65` is byte-identical to the vendored tree's, same line. Rung 2 survives publication at full fidelity.
+- **`effect` publishes its source.** Its `files` array is `["src/**/*.ts", "dist/**/*.js", …]`, so every consumer has the complete v4 TypeScript source, `internal/` implementations included — not merely `.d.ts`. Rung 2 survives publication at full fidelity **for existence and signature**. **Line numbers do not**: npm's publish step adds TSDoc the vendored tag does not carry, so most modules diverge in total line count between the two trees, and a declaration further into a file lands at a different line in each. `node_modules/effect/src/Context.ts:65` happens to still match the vendored tree at that early line, but that is a property of *this* declaration's position, not a guarantee — settle any other anchor by symbol name in `node_modules`, never by assuming the line survived.
 - **Rung 1 does not survive.** No `migration/`, `ai-docs/`, or `LLMS.md` ships in the package. The ladder announces this and sends the reader to rung 2, rather than papering over it.
 
 **The version gate is the load-bearing line.** `effect@3` *also* ships `src/`, so a bare `require.resolve` from the workspace root returns a complete, confident, wrong rung-2 source. The resolver must **refuse** a non-`4.*` resolution, not report it — a printed version is a version a reader skims past. This was caught by running the resolver's own control (no tree + only v3 resolvable → must exit 1, must not serve v3), which the first draft failed.
 
 Two invariants remain this skill's to keep:
 
-1. Keep the path in the two files that own it — the source-lookup skill (reading) and the session-start hook (bootstrapping). Every **agent** (`${CLAUDE_PROJECT_DIR}/plugins/claude-code/agents/*.md`) must name the ladder and never the directory, and no skill but `effect-v4-source-lookup` may name it:
+1. Keep the path in the two files that own it — the source-lookup skill (reading) and the session-start hook (bootstrapping). Every **agent** (`${CLAUDE_PROJECT_DIR}/plugin/agents/*.md`) must name the ladder and never the directory, and no skill but `effect-v4-source-lookup` may name it:
 
    ```bash
    # Agents never name the path.
-   test -z "$(grep -rl '\.repos/effect' plugins/claude-code/agents/ 2>/dev/null)"
+   test -z "$(grep -rl '\.repos/effect' plugin/agents/ 2>/dev/null)"
    # Exactly one skill names it.
-   test "$(grep -rl '\.repos/effect' plugins/claude-code/skills/ | wc -l)" -eq 1
+   test "$(grep -rl '\.repos/effect' plugin/skills/ | wc -l)" -eq 1
    ```
 
    The hook's own bats suite (`__test__/session-start-orientation.bats`) exercises the path, so it appears there too; that is the test of the owner, not a third owner.
@@ -155,10 +157,10 @@ Two invariants remain this skill's to keep:
 
 ## Where things are
 
-- Skills under maintenance: `plugins/claude-code/skills/*/SKILL.md`
+- Skills under maintenance: `plugin/skills/*/SKILL.md`
 - Migration ledger and retractions: `.superpowers/sdd/progress.md`
 - Vendored v4 source, pinned to the `effect` catalog tag: `.repos/effect`, a git submodule managed by the silk repos tooling (see `.claude/design/effected/architecture.md`)
 - Migration notes (rung 1): `.repos/effect/migration/*.md`
-- Design record for this loop: `.claude/design/effected/plugin.md`
+- Design record for this loop: `okf/modules/ai-plugin.md` and `okf/conventions/evidence-ladder.md`
 
 When the `effect` catalog bumps, the vendored tree is re-pinned **in the same commit** so the two never drift: `savvy repos pin effect effect@<new-tag>` (or the `repos_manage` MCP tool, `action:"pin"`). The pin stages the gitlink and manifest and returns a ready-made commit message; fold it into the catalog-bump commit and review any `staleNoteIds` it flags. On a fresh clone or new worktree the checkout is empty until `savvy repos sync` runs.

@@ -67,8 +67,7 @@ export class YamlParseOptions extends Schema.Class<YamlParseOptions>("YamlParseO
  * `false`.
  *
  * `lineWidth` controls column-based scalar folding. The default `0` (and any
- * value `<= 0`) never wraps, emitting byte-identical output to the historic
- * no-fold behavior; a positive value folds long plain, double-quoted and
+ * value `<= 0`) never wraps; a positive value folds long plain, double-quoted and
  * block-folded (`>`) scalars at approximately that column, inserting only
  * semantically transparent line breaks. Block-literal (`|`) content is never
  * folded — literal blocks preserve their bytes by definition. Folding is a
@@ -76,15 +75,14 @@ export class YamlParseOptions extends Schema.Class<YamlParseOptions>("YamlParseO
  * helpers accept these options but do not fold (see `lineWidth`).
  *
  * `indentSequences` controls the presentation of block sequences nested under
- * a mapping key: `false` (the default) emits them at the key's column — the
- * kit's byte-compatible legacy form — while `true` indents them one level,
+ * a mapping key: `false` (the default) emits them at the key's column, while
+ * `true` indents them one level,
  * matching the `yaml` npm package's default output. Top-level sequences stay
  * at column zero in both modes.
  *
  * `quoteStyle` selects the quote character used when a `plain`-styled scalar
  * (the `defaultScalarStyle` default) turns out to require quoting: `"single"`
- * (the default) emits `'@parcel/watcher'` — the kit's byte-compatible legacy
- * form — while `"double"` emits `"@parcel/watcher"`, matching the `yaml` npm
+ * (the default) emits `'@parcel/watcher'`, while `"double"` emits `"@parcel/watcher"`, matching the `yaml` npm
  * package's `singleQuote: false` output. It is a fallback selector only:
  * scalars that need no quoting stay plain, and an explicit
  * `defaultScalarStyle` of `"single-quoted"` or `"double-quoted"` still wins.
@@ -133,7 +131,7 @@ export class YamlStringifyOptions extends Schema.Class<YamlStringifyOptions>("Ya
 	indentSequences: Schema.optionalKey(Schema.Boolean),
 	/**
 	 * Quote style used when a `plain`-styled scalar requires quoting. Default
-	 * `"single"` — the released byte-compatible behavior. `"double"` renders
+	 * `"single"`. `"double"` renders
 	 * the same scalars double-quoted instead, matching the `yaml` npm
 	 * package's `singleQuote: false` output.
 	 *
@@ -145,7 +143,7 @@ export class YamlStringifyOptions extends Schema.Class<YamlStringifyOptions>("Ya
 	/**
 	 * Additionally quote plain scalars a foreign resolution dialect would
 	 * coerce to a non-string. Absent (the default) adds no quoting beyond the
-	 * YAML 1.2 Core Schema rules — byte-identical to the released output.
+	 * YAML 1.2 Core Schema rules.
 	 *
 	 * `"yaml-1.1"` quotes every plain scalar a YAML 1.1 parser (js-yaml,
 	 * PyYAML, libyaml, and the `yaml` npm package's YAML 1.1 schema, whose
@@ -181,6 +179,13 @@ export class YamlStringifyOptions extends Schema.Class<YamlStringifyOptions>("Ya
  * `code` field: read the code from the diagnostics —
  * `error.diagnostics[0].code` is the primary failure.
  *
+ * @remarks
+ * The `message` renders each diagnostic's position 1-based
+ * (`line + 1:character + 1`) for human readers — a CLI printing this string
+ * shows the line/column a person counts in their editor. The structured
+ * {@link YamlDiagnostic} `line`/`character` fields stay 0-based (LSP
+ * convention); the offset applies to the rendered message only.
+ *
  * @public
  */
 export class YamlParseError extends Schema.TaggedError<YamlParseError>()("YamlParseError", {
@@ -189,7 +194,7 @@ export class YamlParseError extends Schema.TaggedError<YamlParseError>()("YamlPa
 }) {
 	override get message(): string {
 		const count = this.diagnostics.length;
-		const summary = this.diagnostics.map((d) => `${d.code} at ${d.line}:${d.character}`).join("; ");
+		const summary = this.diagnostics.map((d) => `${d.code} at ${d.line + 1}:${d.character + 1}`).join("; ");
 		return `YAML parse failed with ${count} error${count === 1 ? "" : "s"}: ${summary}`;
 	}
 }
@@ -391,7 +396,7 @@ const stringifyResultImpl = (
 /**
  * Collect the raw diagnostics that make a composed document a parse failure:
  * every fatal-code error, plus DuplicateKey warnings promoted to errors when
- * `uniqueKeys` is in force (the v3 `parse` contract). Order preserved:
+ * `uniqueKeys` is in force. Order preserved:
  * fatals first, then promotions.
  */
 const failureRecords = (doc: RawYamlDocument, uniqueKeys: boolean): ReadonlyArray<RawDiagnostic> => {
@@ -471,6 +476,12 @@ export class Yaml {
 	 *
 	 * Defined in terms of {@link Yaml.parseResult} — synchronous callers can
 	 * use that variant directly.
+	 *
+	 * @param text - The YAML source to parse.
+	 * @param options - Optional {@link YamlParseOptions}; defaults apply for
+	 *   omitted fields.
+	 * @returns An `Effect` that succeeds with the decoded value, or fails with
+	 *   the aggregate {@link YamlParseError}.
 	 */
 	static readonly parse = Effect.fn("Yaml.parse")((text: string, options?: YamlParseOptions) =>
 		Effect.fromResult(Yaml.parseResult(text, options)),
@@ -488,6 +499,12 @@ export class Yaml {
 	 *
 	 * Defined in terms of {@link Yaml.parseAllResult} — synchronous callers
 	 * can use that variant directly.
+	 *
+	 * @param text - The YAML stream to parse.
+	 * @param options - Optional {@link YamlParseOptions}; defaults apply for
+	 *   omitted fields.
+	 * @returns An `Effect` that succeeds with one value per document, or fails
+	 *   with the aggregate {@link YamlParseError}.
 	 */
 	static readonly parseAll = Effect.fn("Yaml.parseAll")((text: string, options?: YamlParseOptions) =>
 		Effect.fromResult(Yaml.parseAllResult(text, options)),
@@ -508,6 +525,12 @@ export class Yaml {
 	 * `"<<"` key on a plain JavaScript object is an ordinary string key that
 	 * never carried merge semantics, so emitting it plain would silently turn
 	 * ordinary data into a merge directive.
+	 *
+	 * @param value - The plain JavaScript value to stringify.
+	 * @param options - Optional {@link YamlStringifyOptions}; defaults apply for
+	 *   omitted fields.
+	 * @returns An `Effect` that succeeds with the YAML text, or fails with
+	 *   {@link YamlStringifyError}.
 	 */
 	static readonly stringify = Effect.fn("Yaml.stringify")(function* (value: unknown, options?: YamlStringifyOptions) {
 		return yield* stringifyOrFail(value, options);
@@ -630,6 +653,11 @@ export class Yaml {
 	 * `replaceCh` (e.g. `" "`), each comment character is replaced instead,
 	 * keeping all offsets stable. Quote-aware: `#` inside quoted scalars is
 	 * content, not a comment. Pure and total.
+	 *
+	 * @param text - The YAML source to strip.
+	 * @param replaceCh - Optional single character replacing each stripped
+	 *   comment character (offset-preserving).
+	 * @returns The text without comments.
 	 */
 	static stripComments(text: string, replaceCh?: string): string {
 		let result = "";
@@ -696,6 +724,10 @@ export class Yaml {
 	 * significant. Malformed input is never equal to anything — parse errors
 	 * (or duplicate keys) on either side yield `false` rather than comparing
 	 * recovery-parser artifacts. Pure and total.
+	 *
+	 * @param a - The first YAML source.
+	 * @param b - The second YAML source.
+	 * @returns `true` when `a` and `b` decode to structurally equal values.
 	 */
 	static equals(a: string, b: string): boolean {
 		const va = parseForEquality(a);
@@ -708,6 +740,11 @@ export class Yaml {
 	 * Compare a YAML string against an existing JavaScript value with the
 	 * same semantics as {@link Yaml.equals}: malformed `text` yields `false`.
 	 * Pure and total.
+	 *
+	 * @param text - The YAML source to decode and compare.
+	 * @param value - The plain JavaScript value to compare against.
+	 * @returns `true` when `text` decodes to a value structurally equal to
+	 *   `value`.
 	 */
 	static equalsValue(text: string, value: unknown): boolean {
 		const v = parseForEquality(text);
@@ -728,7 +765,7 @@ export class Yaml {
 		return Schema.String.pipe(
 			Schema.decodeTo(
 				Schema.Unknown,
-				SchemaTransformation.transformOrFail({
+				SchemaTransformation.transformEffect({
 					decode: (input: string) =>
 						Yaml.parse(input, options).pipe(
 							Effect.mapError((error) => new SchemaIssue.InvalidValue({ message: error.message }, input)),
@@ -761,7 +798,7 @@ export class Yaml {
 		return Schema.String.pipe(
 			Schema.decodeTo(
 				Schema.Array(Schema.Unknown),
-				SchemaTransformation.transformOrFail({
+				SchemaTransformation.transformEffect({
 					decode: (input: string) =>
 						Yaml.parseAll(input, options).pipe(
 							Effect.mapError((error) => new SchemaIssue.InvalidValue({ message: error.message }, input)),
@@ -786,11 +823,14 @@ export class Yaml {
 	/**
 	 * Compose {@link Yaml.fromString} with a target schema, yielding a
 	 * `Schema<A, string>` that decodes YAML straight into a validated domain
-	 * value — the single best consumer-facing feature of the library. The
-	 * target's decoding/encoding service requirements flow through.
+	 * value. The target's decoding/encoding service requirements flow through.
 	 *
 	 * Schema-producing: bind the result to a `const` on hot paths (see
 	 * {@link Yaml.fromString}).
+	 *
+	 * @param target - The domain schema decoded values must satisfy.
+	 * @param options - Optional {@link YamlParseOptions} applied on decode.
+	 * @returns A `Schema.Codec<T, string>` decoding YAML text straight into `T`.
 	 */
 	static schema<T, E, RD = never, RE = never>(
 		target: Schema.Codec<T, E, RD, RE>,

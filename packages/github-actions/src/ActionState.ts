@@ -1,9 +1,12 @@
 import { Context, Effect, FileSystem, Layer, Option, Schema } from "effect";
 import { ActionEnvironment } from "./ActionEnvironment.js";
 import { ActionOutputs } from "./ActionOutputs.js";
+import { heredocBlock, isUsableName } from "./internal/runnerFile.js";
+import { unstubbed } from "./internal/unstubbed.js";
 
 /**
- * Raised when state cannot cross the phase boundary.
+ * Raised when action state cannot be saved, read or decoded across the phase
+ * boundary.
  *
  * @public
  */
@@ -18,7 +21,9 @@ export class ActionStateError extends Schema.TaggedError<ActionStateError>()("Ac
 	 * appended to.
 	 */
 	reason: Schema.Literals(["missing", "malformed", "notPlainJson", "writeFailed"]),
+	/** The state key that was being saved or read. */
 	key: Schema.String,
+	/** The underlying failure, preserved structurally. */
 	cause: Schema.optionalKey(Schema.Defect()),
 }) {
 	override get message(): string {
@@ -36,7 +41,8 @@ export class ActionStateError extends Schema.TaggedError<ActionStateError>()("Ac
 }
 
 /**
- * The {@link ActionState} service shape.
+ * The members of the {@link ActionState} service: save and read values, and
+ * persist secrets, across the `pre` → `main` → `post` boundary.
  *
  * @public
  */
@@ -88,18 +94,14 @@ const make = Effect.gen(function* () {
 
 	const write = (key: string, serialized: string): Effect.Effect<void, ActionStateError> =>
 		Effect.gen(function* () {
-			const path = yield* env
-				.get("GITHUB_STATE")
-				.pipe(Effect.mapError((cause) => new ActionStateError({ reason: "writeFailed", key, cause })));
-			// Same derived-delimiter discipline as ActionOutputs: a value that
-			// contains the delimiter would terminate its block early.
-			let delimiter = "EFFECTED_EOF";
-			while (serialized.includes(delimiter)) {
-				delimiter = `${delimiter}_`;
+			const writeFailed = (cause: unknown) => new ActionStateError({ reason: "writeFailed", key, cause });
+			// The same heredoc protocol as ActionOutputs (`internal/runnerFile.ts`):
+			// a key that cannot head a block would corrupt every entry after it.
+			if (!isUsableName(key)) {
+				return yield* Effect.fail(writeFailed(new Error(`"${key}" cannot name a GITHUB_STATE entry`)));
 			}
-			yield* fs
-				.writeFileString(path, `${key}<<${delimiter}\n${serialized}\n${delimiter}\n`, { flag: "a" })
-				.pipe(Effect.mapError((cause) => new ActionStateError({ reason: "writeFailed", key, cause })));
+			const path = yield* env.get("GITHUB_STATE").pipe(Effect.mapError(writeFailed));
+			yield* fs.writeFileString(path, heredocBlock(key, serialized), { flag: "a" }).pipe(Effect.mapError(writeFailed));
 		});
 
 	const read = <A, I>(key: string, schema: Schema.Codec<A, I>): Effect.Effect<Option.Option<A>, ActionStateError> =>
@@ -108,11 +110,7 @@ const make = Effect.gen(function* () {
 			if (Option.isNone(raw)) {
 				return Option.none<A>();
 			}
-			const parsed = yield* Effect.try({
-				try: () => JSON.parse(raw.value) as unknown,
-				catch: (cause) => new ActionStateError({ reason: "malformed", key, cause }),
-			});
-			const decoded = yield* Schema.decodeUnknownEffect(schema)(parsed).pipe(
+			const decoded = yield* Schema.decodeUnknownEffect(Schema.fromJsonString(schema))(raw.value).pipe(
 				Effect.mapError((cause) => new ActionStateError({ reason: "malformed", key, cause })),
 			);
 			return Option.some(decoded);
@@ -158,9 +156,7 @@ const make = Effect.gen(function* () {
 	} satisfies ActionStateShape;
 });
 
-const unimplemented = (member: string): never => {
-	throw new Error(`ActionState.makeTest: ${member}() was called but not stubbed — pass a \`${member}\` override.`);
-};
+const dies = unstubbed("ActionState.makeTest");
 
 /**
  * State that survives the `pre` → `main` → `post` phase boundary.
@@ -170,22 +166,48 @@ const unimplemented = (member: string): never => {
  * write-only file (`GITHUB_STATE`) whose entries the runner republishes to the
  * next phase as `STATE_<key>` environment variables — so saving and reading go
  * through different mechanisms, which is why this is a service rather than a
- * pair of helpers.
+ * pair of helpers. Every member fails with {@link ActionStateError}.
+ *
+ * @example
+ * ```ts
+ * import { ActionState } from "@effected/github-actions";
+ * import { Effect, Schema } from "effect";
+ *
+ * // in `pre`
+ * const pre = Effect.gen(function* () {
+ *   const state = yield* ActionState;
+ *   yield* state.save("server-pid", 4242, Schema.Number);
+ * });
+ *
+ * // in `post`
+ * const post = Effect.gen(function* () {
+ *   const state = yield* ActionState;
+ *   const pid = yield* state.get("server-pid", Schema.Number);
+ *   return pid;
+ * });
+ * ```
  *
  * @public
  */
 export class ActionState extends Context.Service<ActionState, ActionStateShape>()(
 	"@effected/github-actions/ActionState",
 ) {
+	/**
+	 * The live service, writing to the runner's `GITHUB_STATE` file and reading
+	 * the `STATE_<key>` variables it republishes.
+	 *
+	 * @remarks
+	 * `ActionRuntime.layer` already provides every requirement.
+	 */
 	static readonly layer: Layer.Layer<ActionState, never, ActionEnvironment | FileSystem.FileSystem | ActionOutputs> =
 		Layer.effect(this, make);
 
 	/** A test double. Unstubbed members die rather than answering wrongly. */
 	static readonly makeTest = (overrides: Partial<ActionStateShape> = {}): ActionStateShape => ({
-		save: () => Effect.sync(() => unimplemented("save")),
-		get: () => Effect.sync(() => unimplemented("get")),
-		getOptional: () => Effect.sync(() => unimplemented("getOptional")),
-		saveSecret: () => Effect.sync(() => unimplemented("saveSecret")),
+		save: () => dies("save"),
+		get: () => dies("get"),
+		getOptional: () => dies("getOptional"),
+		saveSecret: () => dies("saveSecret"),
 		...overrides,
 	});
 

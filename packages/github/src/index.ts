@@ -1,6 +1,37 @@
-// The issue-reference grammar moved to @effected/github-references; these six
-// re-exports keep existing consumers working. The new closing-list dialect is
-// deliberately NOT re-exported here — new consumers take the grammar package.
+/**
+ * Typed GitHub REST and GraphQL for Effect: a route-keyed client, one error
+ * taxonomy, GitHub App auth, and one resource service per GitHub noun.
+ *
+ * @remarks
+ * `GitHubClient.request` types both the parameters and the returned `data` from
+ * the route literal. Every REST failure is a `GitHubError` whose `kind` you
+ * branch on. Resource services (`GitBranch`, `GitTag`, `CheckRun`,
+ * `PullRequest`, `GitHubRelease` and others) turn multi-call sequences into one
+ * call, and a configuration tier writes secrets, variables, rulesets,
+ * deployment environments and security settings. `GitHubApp` mints and revokes
+ * installation tokens, and `AuthenticatedApp` reads the app itself and its
+ * webhook deliveries.
+ *
+ * @example
+ * ```ts
+ * import { GitHubClient } from "@effected/github";
+ * import { Effect } from "effect";
+ *
+ * const program = Effect.gen(function* () {
+ *   const client = yield* GitHubClient;
+ *   const repo = yield* client.request("GET /repos/{owner}/{repo}", { owner: "effect-ts", repo: "effect" });
+ *   return repo.default_branch;
+ * });
+ *
+ * // GITHUB_TOKEN is read through the ambient ConfigProvider.
+ * Effect.runPromise(program.pipe(Effect.provide(GitHubClient.layerFromConfig())));
+ * ```
+ *
+ * @packageDocumentation
+ */
+
+// Six issue-reference names from `@effected/github-references` are re-exported
+// here for existing consumers; the closing-list dialect is deliberately not.
 export {
 	type BareLineReference,
 	CLOSING_KEYWORDS,
@@ -9,8 +40,21 @@ export {
 	harvestIssueReferences,
 	parseBareLineReference,
 } from "@effected/github-references";
+export {
+	ActionsOidc,
+	ActionsOidcClaims,
+	ActionsOidcClaimsFromWire,
+	type ActionsOidcVerifyOptions,
+} from "./ActionsOidc.js";
 export { ArtifactMetadata, type ArtifactMetadataShape, StorageRecordInput } from "./ArtifactMetadata.js";
 export { Attestation, AttestationListEntry, AttestationRecord, type AttestationShape } from "./Attestation.js";
+export {
+	AppInfo,
+	AuthenticatedApp,
+	type AuthenticatedAppShape,
+	type DeliveriesOptions,
+	DeliveryAttempt,
+} from "./AuthenticatedApp.js";
 export {
 	Annotation,
 	AnnotationLevel,
@@ -19,7 +63,14 @@ export {
 	CheckRunOutput,
 	CheckRunRef,
 	type CheckRunShape,
+	CheckRunStatus,
+	type CompleteCheckRunOptions,
 	type ConcludeCheckRun,
+	type CreateCheckRunOptions,
+	type ListCheckRunsOptions,
+	ReportedCheckConclusion,
+	ReportedCheckRunOutput,
+	type UpdateCheckRunOptions,
 } from "./CheckRun.js";
 export { CodeScanning, type CodeScanningSetup, type CodeScanningShape } from "./CodeScanning.js";
 export {
@@ -41,6 +92,10 @@ export {
 	type AppCredentials,
 	AppIdentity,
 	BotIdentity,
+	BotUser,
+	type BotUserRequest,
+	type CachedToken,
+	type CachedTokenRequest,
 	GitHubApp,
 	GitHubAppError,
 	type GitHubAppOptions,
@@ -53,7 +108,8 @@ export {
 	GitHubClient,
 	type GitHubClientOptions,
 	type GitHubClientShape,
-	type GitHubFixtures,
+	GitHubFixtures,
+	RawFailure,
 	type RecordedCall,
 } from "./GitHubClient.js";
 export {
@@ -65,7 +121,7 @@ export {
 	type GitHubCommitShape,
 } from "./GitHubCommit.js";
 export { GitHubContent, type GitHubContentShape } from "./GitHubContent.js";
-export { GitHubError, GitHubErrorKind } from "./GitHubError.js";
+export { GitHubError, GitHubErrorKind, GitHubValidationCode, GitHubValidationEntry } from "./GitHubError.js";
 export { CommentOnceResult, GitHubIssue, type GitHubIssueShape, IssueInfo, LinkedIssue } from "./GitHubIssue.js";
 export { GitHubRelease, type GitHubReleaseShape, ReleaseAsset, ReleaseInfo } from "./GitHubRelease.js";
 export {
@@ -91,6 +147,7 @@ export {
 	versionFromTag,
 } from "./GitTag.js";
 export { GitHubGraphQLError, GraphQLDocument, GraphQLErrorEntry } from "./GraphQL.js";
+export { InstallationTokenStore, type InstallationTokenStoreShape } from "./InstallationTokenStore.js";
 export {
 	MergeMethod,
 	PullRequest,
@@ -129,6 +186,7 @@ export {
 	TokenPermissions,
 } from "./TokenPermissions.js";
 export {
+	DispatchedRun,
 	type PollOptions,
 	WorkflowDispatch,
 	type WorkflowDispatchShape,

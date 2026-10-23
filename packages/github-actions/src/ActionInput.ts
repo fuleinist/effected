@@ -1,5 +1,6 @@
 import type { Layer, Redacted } from "effect";
 import { Config, ConfigProvider, Context, Effect, Schema, SchemaIssue } from "effect";
+import { decodeJson } from "./internal/json.js";
 
 /**
  * The variable name the runner publishes an input under.
@@ -9,10 +10,10 @@ import { Config, ConfigProvider, Context, Effect, Schema, SchemaIssue } from "ef
  * and leaves every other character, **dashes included**, alone. So the input
  * `sbom-config` arrives as `INPUT_SBOM-CONFIG`, not `INPUT_SBOM_CONFIG`.
  *
- * That distinction is not academic: a consumer read `process.env["INPUT_SBOM_CONFIG"]`
- * directly, silently got nothing, and shipped it. Every accessor in this module
- * goes through this function so no caller ever spells the variable name, which
- * makes that class of bug unrepresentable rather than merely documented.
+ * That distinction is not academic: reading `process.env["INPUT_SBOM_CONFIG"]`
+ * directly silently yields nothing. Every accessor in this module goes through
+ * this function so no caller ever spells the variable name, which makes that
+ * class of bug unrepresentable rather than merely documented.
  *
  * @internal
  */
@@ -22,16 +23,30 @@ export const inputVariable = (name: string): string => `INPUT_${name.replaceAll(
  * A validation failure for an input that is present but unusable.
  *
  * @remarks
- * `actual` carries the offending value, and that is load-bearing rather than
- * decorative: `Config.withDefault` and `Config.option` fall back only for
- * *missing data*, and their `isMissingDataOnly` check reads an `InvalidValue`
- * whose `actual` is `None` as missing (`Config.ts:304`). An error built without
- * it would therefore be **swallowed by a default** — so `dry-run: yes` would
- * quietly become `false` and the action would perform the mutations the author
- * meant to rehearse.
+ * `Config.withDefault` and `Config.option` fall back only when the config
+ * resolves *absent* — no provider input at all. A failure raised from inside
+ * `Config.mapEffect` is a hard evaluation failure carrying the evidence that
+ * input WAS present, so a default never swallows it. That is the guard against
+ * `dry-run: yes` quietly becoming `false` and the action performing the
+ * mutations the author meant to rehearse. `actual` carries the offending value
+ * so the rendered error names it.
  */
-const configError = (message: string, actual: unknown): Config.ConfigError =>
-	new Config.ConfigError(new Schema.SchemaError(new SchemaIssue.InvalidValue({ message }, actual)));
+/**
+ * A `ConfigError` carrying `message` as its first issue and, when a decode
+ * failed, that decode's own issue beside it, so the cause is structured
+ * rather than flattened into the message.
+ */
+const configError = (message: string, actual: unknown, cause?: Schema.SchemaError): Config.ConfigError => {
+	const stated = new SchemaIssue.InvalidValue({ message }, actual);
+	return new Config.ConfigError(
+		new Schema.SchemaError(
+			cause === undefined ? stated : new SchemaIssue.Composite(Schema.Unknown.ast, [stated, cause.issue], actual),
+		),
+	);
+};
+
+/** The JSON-array form of {@link ActionInput.list}. */
+const decodeStringArray = Schema.decodeUnknownEffect(Schema.Array(Schema.String));
 
 /** YAML 1.2 core-schema booleans, which is what the runner documents. */
 const TRUE = new Set(["true", "True", "TRUE"]);
@@ -63,19 +78,12 @@ const stripComment = (line: string): string => {
  * @remarks
  * Inputs are **never** read from `process.env` directly. Every accessor names
  * the input the way the workflow author wrote it and lets this module derive
- * the runner's variable name — see `inputVariable` for why that matters. (A
- * `{@link}` cannot reach it: it is internal, so it is not exported from the
- * entrypoint and the reference would not resolve.)
+ * the runner's variable name — see `ActionInput.variable` for why that
+ * matters.
  *
- * `lines`, `list` and `pairs` exist because the `@actions/core`-faithful
- * newline split was not enough for real consumers: two of them reinvented
- * richer parsing independently, one parsing JSON arrays and bullet lists, the
- * other stripping comments and reading `key=value` pairs. Those are now one
- * implementation with one set of tests instead of two divergent ones with
- * none.
- *
- * These are grouped statics over one concept reaching nothing but `Config` —
- * not a namespace object over engines.
+ * `lines` is the `@actions/core`-faithful newline split; `list` and `pairs`
+ * read the richer shapes workflow authors write — JSON arrays, bullet lists,
+ * comments and `key=value` pairs.
  *
  * **The absence contract, shared by every accessor:** the runner writes `""`
  * for an input the workflow left out, and the provider reads an empty string
@@ -132,10 +140,9 @@ export class ActionInput {
 	 * **An input whose documented meaning is "set it empty to disable this"
 	 * cannot be read with `Config.withDefault`.** Empty is classified as missing
 	 * *before* the default is consulted, so the default substitutes and the
-	 * documented behavior can never happen. A live action shipped exactly that
-	 * for its whole lifetime: `action.yml` promised `release-prefix: ""` would
-	 * disable retry, and it never could. `Config.option` is the shape that
-	 * distinguishes the states:
+	 * documented behavior can never happen: if `action.yml` promises
+	 * `release-prefix: ""` disables retry, a `withDefault` read makes that
+	 * impossible. `Config.option` is the shape that distinguishes the states:
 	 *
 	 * ```ts
 	 * Config.option(ActionInput.string("release-prefix"))
@@ -151,8 +158,7 @@ export class ActionInput {
 	 * no-default case, and it is the manifest default — when there is one — that
 	 * makes the unsupplied and explicitly-empty cases distinguishable at all.
 	 *
-	 * Two consequences follow from how the runner actually behaves, both
-	 * confirmed against `actions/runner` and on a live runner:
+	 * Two consequences follow from how the runner actually behaves:
 	 *
 	 * - **The runner publishes a variable for every declared input**, so *absent*
 	 *   is a state a runner never produces. The `Some` branch above depends on
@@ -167,7 +173,7 @@ export class ActionInput {
 	 *   manifest default explicitly instead of omitting the key.
 	 */
 	static string(name: string): Config.Config<string> {
-		return Config.string(inputVariable(name));
+		return Config.String(inputVariable(name));
 	}
 
 	/**
@@ -177,12 +183,12 @@ export class ActionInput {
 	 * Absent or `""` is **missing data** — wrap with `Config.withDefault` for
 	 * an optional flag. A **present but malformed** value (`yes`, `on`, `1`) is
 	 * a different class: it fails carrying its `actual`, deliberately, so a
-	 * default does NOT swallow it — the shipped defect this guards against was
-	 * a malformed `dry-run` quietly reading as `false`.
+	 * default does NOT swallow it, so a malformed `dry-run` never quietly reads
+	 * as `false`.
 	 */
 	static boolean(name: string): Config.Config<boolean> {
-		return Config.string(inputVariable(name)).pipe(
-			Config.mapOrFail((raw) => {
+		return Config.String(inputVariable(name)).pipe(
+			Config.mapEffect((raw) => {
 				const value = raw.trim();
 				if (TRUE.has(value)) {
 					return Effect.succeed(true);
@@ -202,6 +208,47 @@ export class ActionInput {
 	}
 
 	/**
+	 * An input that must be one of a closed set of strings, typed as their
+	 * union.
+	 *
+	 * @remarks
+	 * The match is **exact**: no trimming and no case folding, so `" pr"` and
+	 * `"PR"` are both rejected for `["commit", "pr"]`. An action manifest
+	 * declares the set in `options:`-style prose and the workflow author copies
+	 * a value verbatim; the one thing worth tolerating there is nothing, because
+	 * a tolerated near-miss is a value the manifest never named. Absent or `""`
+	 * is **missing data** (see {@link ActionInput.string}) — `Config.withDefault`
+	 * for an optional input. A present value outside the set fails carrying its
+	 * `actual`, naming the input, the value and the allowed set, and is never
+	 * swallowed by a default.
+	 *
+	 * Core's `Config.Literals` is the same idea over `Config.schema`; this one
+	 * exists so the failure reads like every other `ActionInput` failure —
+	 * naming the input by its action name, not its `INPUT_` variable.
+	 *
+	 * @example
+	 * ```ts
+	 * import { ActionInput } from "@effected/github-actions";
+	 * import { Config } from "effect";
+	 *
+	 * // Config<"commit" | "pr">
+	 * const mode = ActionInput.literals("mode", ["commit", "pr"]).pipe(Config.withDefault("commit"));
+	 * ```
+	 */
+	static literals<const L extends readonly [string, ...Array<string>]>(
+		name: string,
+		allowed: L,
+	): Config.Config<L[number]> {
+		return Config.String(inputVariable(name)).pipe(
+			Config.mapEffect((raw) =>
+				allowed.includes(raw)
+					? Effect.succeed(raw as L[number])
+					: Effect.fail(configError(`Input "${name}" must be one of: ${allowed.join(" | ")} — received "${raw}"`, raw)),
+			),
+		);
+	}
+
+	/**
 	 * An integer input.
 	 *
 	 * @remarks
@@ -209,7 +256,7 @@ export class ActionInput {
 	 * `.pipe(Config.withDefault(n))`.
 	 */
 	static integer(name: string): Config.Config<number> {
-		return Config.int(inputVariable(name));
+		return Config.Int(inputVariable(name));
 	}
 
 	/**
@@ -221,7 +268,7 @@ export class ActionInput {
 	 * default to redact.
 	 */
 	static redacted(name: string): Config.Config<Redacted.Redacted<string>> {
-		return Config.redacted(inputVariable(name));
+		return Config.Redacted(inputVariable(name));
 	}
 
 	/**
@@ -236,7 +283,7 @@ export class ActionInput {
 	 * `Config.withDefault([])` is load-bearing for an optional multiline input.
 	 */
 	static lines(name: string): Config.Config<ReadonlyArray<string>> {
-		return Config.string(inputVariable(name)).pipe(
+		return Config.String(inputVariable(name)).pipe(
 			Config.map((raw) =>
 				raw
 					.split("\n")
@@ -252,10 +299,8 @@ export class ActionInput {
 	 * @remarks
 	 * A JSON array (`["a","b"]`), a bullet list (`- a` or `* a`), or comma- and
 	 * newline-separated values, with full-line `#` comments dropped — any
-	 * combination of these in the same input. Each shape was reinvented
-	 * independently by a consumer (one a bullet-list-and-JSON parser, the other
-	 * comment-stripping); accepting the union means a workflow author's first
-	 * guess works and nothing either prior consumer relied on regresses.
+	 * combination of these in the same input — so a workflow author's first
+	 * guess works.
 	 *
 	 * Parsing order, applied per newline/comma-separated item after trimming:
 	 *
@@ -281,22 +326,25 @@ export class ActionInput {
 	 * newline) is present, and parses to `[]`.
 	 */
 	static list(name: string): Config.Config<ReadonlyArray<string>> {
-		return Config.string(inputVariable(name)).pipe(
-			Config.mapOrFail((raw) => {
+		return Config.String(inputVariable(name)).pipe(
+			Config.mapEffect((raw) => {
 				const trimmed = raw.trim();
 				if (trimmed === "") {
 					return Effect.succeed<ReadonlyArray<string>>([]);
 				}
 				if (trimmed.startsWith("[")) {
-					try {
-						const parsed: unknown = JSON.parse(trimmed);
-						if (Array.isArray(parsed) && parsed.every((item) => typeof item === "string")) {
-							return Effect.succeed<ReadonlyArray<string>>(parsed as ReadonlyArray<string>);
-						}
-						return Effect.fail(configError(`Input "${name}" is a JSON array but not an array of strings`, raw));
-					} catch {
-						return Effect.fail(configError(`Input "${name}" looks like JSON but could not be parsed`, raw));
-					}
+					return decodeJson(trimmed).pipe(
+						Effect.mapError((cause) =>
+							configError(`Input "${name}" looks like JSON but could not be parsed`, raw, cause),
+						),
+						Effect.flatMap((parsed) =>
+							decodeStringArray(parsed).pipe(
+								Effect.mapError((cause) =>
+									configError(`Input "${name}" is a JSON array but not an array of strings`, raw, cause),
+								),
+							),
+						),
+					);
 				}
 				const entries = trimmed
 					.split(/[\n,]/)
@@ -319,9 +367,9 @@ export class ActionInput {
 	 * Only the **first** `=` splits, so a value may contain one.
 	 *
 	 * An **empty key** (`=value`, or a bare `=`) is always rejected: `{ "": v }`
-	 * cannot be what a workflow meant, and the damage lands far from the typo —
-	 * an empty key became a repository filter that matched nothing, and the run
-	 * reported zero results with no indication why. An empty **value** (`key=`)
+	 * cannot be what a workflow meant, and the damage would land far from the
+	 * typo — an empty key becomes a filter that matches nothing, and the run
+	 * reports zero results with no indication why. An empty **value** (`key=`)
 	 * is accepted by default, because setting a property to the empty string is
 	 * legitimate; pass `requireValue` to reject it. Every rejection names the
 	 * offending line.
@@ -334,8 +382,8 @@ export class ActionInput {
 	 */
 	static pairs(name: string, options?: PairsOptions): Config.Config<Record<string, string>> {
 		const requireValue = options?.requireValue ?? false;
-		return Config.string(inputVariable(name)).pipe(
-			Config.mapOrFail((raw) => {
+		return Config.String(inputVariable(name)).pipe(
+			Config.mapEffect((raw) => {
 				const result: Record<string, string> = {};
 				for (const line of raw.split("\n")) {
 					const stripped = stripComment(line);
@@ -370,20 +418,24 @@ export class ActionInput {
 	 * `Config.option` for an optional input. A present value that is not valid
 	 * JSON, or does not satisfy the schema, fails carrying its `actual` and is
 	 * never swallowed by a default.
+	 *
+	 * There is no `schemaOption`: `ActionInput.schema(name, S).pipe(Config.option)`
+	 * yields `Config<Option<A>>` with missing → `None` and a malformed value
+	 * still failing — core's `Config.option` lets validation errors propagate,
+	 * which is exactly the missing-versus-malformed split above.
 	 */
 	static schema<A, I>(name: string, schema: Schema.Codec<A, I>): Config.Config<A> {
-		return Config.string(inputVariable(name)).pipe(
-			Config.mapOrFail((raw) => {
-				let parsed: unknown;
-				try {
-					parsed = JSON.parse(raw);
-				} catch {
-					return Effect.fail(configError(`Input "${name}" is not valid JSON`, raw));
-				}
-				return Schema.decodeUnknownEffect(schema)(parsed).pipe(
-					Effect.mapError(() => configError(`Input "${name}" did not satisfy its schema`, parsed)),
-				);
-			}),
+		return Config.String(inputVariable(name)).pipe(
+			Config.mapEffect((raw) =>
+				decodeJson(raw).pipe(
+					Effect.mapError((cause) => configError(`Input "${name}" is not valid JSON`, raw, cause)),
+					Effect.flatMap((parsed) =>
+						Schema.decodeUnknownEffect(schema)(parsed).pipe(
+							Effect.mapError((cause) => configError(`Input "${name}" did not satisfy its schema`, parsed, cause)),
+						),
+					),
+				),
+			),
 		);
 	}
 
@@ -394,7 +446,7 @@ export class ActionInput {
 	 * The record dual-accepts, and the split is the `INPUT_` prefix:
 	 *
 	 * - A key already spelled as a runner variable (`INPUT_BIOME-VERSION`,
-	 *   `PLAIN_VAR`) is read verbatim, exactly as before.
+	 *   `PLAIN_VAR`) is read verbatim.
 	 * - Any other key is treated as an **input name**, `with:`-block style —
 	 *   `{ "biome-version": "2.3.14" }` — and serves the variable this module
 	 *   derives for it (`ActionInput.variable`). This is the spelling to
@@ -409,19 +461,22 @@ export class ActionInput {
 	 * A **flat single-segment** lookup additionally tries the `INPUT_`
 	 * derivation of the name first, mirroring the order the production runtime
 	 * installs ({@link ActionInput.providerOver} via `layerDefault`) — so a
-	 * bare `Config.string("biome-version")` resolves under this provider
+	 * bare `Config.String("biome-version")` resolves under this provider
 	 * exactly as it does inside `Action.run`. Nested and numeric paths pass
-	 * through as the joined spelling only, as ever.
+	 * through as the joined spelling only.
 	 *
-	 * The source package's `ActionsConfigProvider` behaviors are otherwise
-	 * preserved exactly: the path is joined with `_`, spaces become underscores
-	 * and the whole is uppercased; and an **empty string reads as absent**,
+	 * Otherwise the path is joined with `_`, spaces become underscores and the
+	 * whole is uppercased; and an **empty string reads as absent**,
 	 * because the runner sets unsupplied inputs to `""` and treating that as
 	 * present would make every optional input look supplied. That rule applies
 	 * to input-name entries too: `{ "flag": "" }` is an unsupplied input.
 	 *
 	 * Taking the environment as an argument rather than reading `process.env`
-	 * is what makes inputs testable without mutating the test process.
+	 * is what makes inputs testable without mutating the test process. The
+	 * `process.env` default is a sanctioned exception to the package rule
+	 * stated on `ChildEnv` (ambient process state is never read behind a
+	 * caller's back) — a default the caller overrides by passing a value, the
+	 * same class as `DetachedProcess.spawn`'s `base`.
 	 *
 	 * **A bare `ConfigProvider.fromEnv` cannot serve input-name keys.** Composed
 	 * beneath this provider or {@link ActionInput.providerOver}, it uppercases
@@ -429,9 +484,7 @@ export class ActionInput {
 	 * `TARGET-BRANCH`, never matches, and the read falls through to whatever
 	 * default the call site supplies. It **fails green**: nothing errors, the
 	 * suite passes against the default, and the test's name claims it proved the
-	 * input was read. A consuming action's integration harness did exactly this
-	 * and stayed green across several commits while a supplied `target-branch`
-	 * silently did nothing.
+	 * input was read.
 	 *
 	 * Runner-variable keys (`INPUT_TARGET-BRANCH`, `PLAIN_VAR`) are unaffected —
 	 * they are already in the spelling `fromEnv` produces, and they resolve. The
@@ -443,23 +496,21 @@ export class ActionInput {
 		/** Unset, and the `""` the runner writes for an unsupplied input, are both absent. */
 		const present = (value: string | undefined): value is string => value !== undefined && value !== "";
 		/**
-		 * Resolve one runner-variable name: the verbatim entry wins; an
-		 * `INPUT_`-prefixed miss then consults the input-name entries through the
-		 * one spelling of the derivation (`inputVariable`).
+		 * The input-name entries, keyed by the runner variable they would be
+		 * (`inputVariable`, the one spelling of the derivation) — built once,
+		 * so an `INPUT_`-prefixed miss is a map read rather than a scan of the
+		 * whole environment per `Config` read.
 		 */
+		const byInputName = new Map<string, string>();
+		for (const [key, value] of Object.entries(env)) {
+			if (!key.startsWith("INPUT_") && present(value) && !byInputName.has(inputVariable(key))) {
+				byInputName.set(inputVariable(key), value);
+			}
+		}
+		/** Resolve one runner-variable name: the verbatim entry wins, then the input-name entry. */
 		const lookup = (name: string): string | undefined => {
 			const direct = env[name];
-			if (present(direct)) {
-				return direct;
-			}
-			if (name.startsWith("INPUT_")) {
-				for (const [key, value] of Object.entries(env)) {
-					if (!key.startsWith("INPUT_") && inputVariable(key) === name && present(value)) {
-						return value;
-					}
-				}
-			}
-			return undefined;
+			return present(direct) ? direct : byInputName.get(name);
 		};
 		return ConfigProvider.make((path) => {
 			const single = path.length === 1 && typeof path[0] === "string" ? path[0] : undefined;
@@ -473,9 +524,8 @@ export class ActionInput {
 	 * A layer installing {@link ActionInput.provider}.
 	 *
 	 * @remarks
-	 * `ConfigProvider.ConfigProvider` is a `Context.Reference` in v4, so this is
-	 * a reference override rather than a service — there is no
-	 * `Effect.withConfigProvider`.
+	 * `ConfigProvider.ConfigProvider` is a `Context.Reference`, so this is a
+	 * reference override rather than a service.
 	 *
 	 * A parameterized layer factory mints a fresh reference per call; bind it to
 	 * a `const` rather than calling it at each composition site.
@@ -488,7 +538,7 @@ export class ActionInput {
 	 * Inputs-first resolution layered over an existing provider.
 	 *
 	 * @remarks
-	 * A bare `Config.string("dry-run")` resolves a **flat** name — one string
+	 * A bare `Config.String("dry-run")` resolves a **flat** name — one string
 	 * segment — by first trying the variable the runner would have published for
 	 * an input of that name (the `INPUT_` derivation this module owns), and only
 	 * then trying the name unchanged through `ambient`. Anything the runner
@@ -496,10 +546,9 @@ export class ActionInput {
 	 * passed to `ambient` untouched, so no path semantics are invented that the
 	 * runner does not have.
 	 *
-	 * This exists because a live action shipped a **false green**: every bare
-	 * `Config` read fell back to its `withDefault` because the runner exposes
-	 * inputs as `INPUT_<MANGLED>` variables and a plain-named lookup finds
-	 * nothing. Under this provider a bare read resolves through the same
+	 * This exists because the runner exposes inputs as `INPUT_<MANGLED>`
+	 * variables, so a plain-named lookup finds nothing and a bare `Config` read
+	 * would silently fall back to its `withDefault`. Under this provider a bare read resolves through the same
 	 * derivation `ActionInput.string` uses, so side-stepping the typed accessors
 	 * degrades to the right answer instead of to the default.
 	 *
@@ -520,7 +569,7 @@ export class ActionInput {
 	 *
 	 * **The single-segment retry above makes the obvious test
 	 * non-discriminating**, which is worth knowing before writing one. Because a
-	 * bare `Config.string("release-branch")` resolves through the same `INPUT_`
+	 * bare `Config.String("release-branch")` resolves through the same `INPUT_`
 	 * derivation as `ActionInput.string("release-branch")`, a test meant to prove
 	 * the accessor reads the mangled key passes just as well with the accessor
 	 * swapped for a bare `Config`. Only a bare `fromEnv` underneath tells them
@@ -562,7 +611,7 @@ export class ActionInput {
 	 * `ActionInput.provider` dual-accepts both spellings, so neither can miss.
 	 *
 	 * When none is installed, a **fresh** `ConfigProvider.fromEnv()`
-	 * is built rather than reading the reference's default: v4 caches that
+	 * is built rather than reading the reference's default: core caches that
 	 * default once per process, and a snapshot taken before the runner's
 	 * variables are visible would resurrect exactly the missed-input class this
 	 * layer exists to kill. An action's environment is fixed before the process

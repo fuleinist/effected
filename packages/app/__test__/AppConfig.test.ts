@@ -1,7 +1,11 @@
 import { assert, describe, it } from "@effect/vitest";
-import { ConfigFile, ConfigResolver, JsonCodec } from "@effected/config-file";
+import type { ConfigFileShape } from "@effected/config-file";
+import { ConfigFile, ConfigResolver, JsonCodec, MergeStrategy } from "@effected/config-file";
+import type { MemoryFileSystemSeed } from "@effected/memfs";
+import { MemoryFileSystem } from "@effected/memfs";
 import { AppDirs, CurrentPlatform, Xdg, XdgPaths } from "@effected/xdg";
-import { Effect, Exit, FileSystem, Layer, Path, Schema } from "effect";
+import type { FileSystem } from "effect";
+import { Context, Effect, Exit, Layer, Path, Schema } from "effect";
 import type { AppConfigOptions } from "../src/index.js";
 import { AppConfig } from "../src/index.js";
 import { filenameGuardCases } from "./filenameGuard.js";
@@ -16,23 +20,14 @@ const xdgPaths = XdgPaths.make({
 	dataDirs: ["/usr/share"],
 });
 
-/** A hermetic FileSystem: `exists` answers from a fixed set, reads are canned. */
-const fakeFs = (options?: {
-	readonly present?: ReadonlyArray<string>;
-	readonly written?: Array<string>;
-	/** Per-path bodies, for tests that must tell WHICH resolver won. */
-	readonly contents?: Readonly<Record<string, string>>;
-}) =>
-	FileSystem.layerNoop({
-		exists: (candidate) => Effect.succeed(options?.present?.includes(candidate) ?? false),
-		readFileString: (candidate) => Effect.succeed(options?.contents?.[candidate] ?? `{"port":4242}`),
-		makeDirectory: () => Effect.void,
-		writeFileString: (target) =>
-			Effect.suspend(() => {
-				options?.written?.push(target);
-				return Effect.void;
-			}),
-	});
+/** A well-formed config body, seeded wherever a test needs a file that loads. */
+const rc = `{"port":4242}`;
+
+/**
+ * A real in-memory volume holding exactly `seed`. Every other path is honestly
+ * absent, and every read answers with what was seeded — never a canned body.
+ */
+const fakeFs = (seed: MemoryFileSystemSeed = {}) => MemoryFileSystem.layerWith(seed);
 
 const harnessWith = (fs: Layer.Layer<FileSystem.FileSystem>, platform: "linux" | "darwin" = "linux") => {
 	const base = Layer.mergeAll(Path.layer, fs, Layer.succeed(CurrentPlatform, platform), Xdg.layerFrom(xdgPaths));
@@ -56,7 +51,7 @@ describe("AppConfig.layer", () => {
 		it.effect("a plain filename builds the layer cleanly", () =>
 			Effect.gen(function* () {
 				// Unlike the database glue, config construction does no IO at all, so
-				// a good filename must BUILD under the stub filesystem.
+				// a good filename must BUILD over an empty volume.
 				const exit = yield* Effect.exit(
 					Effect.provide(
 						Effect.void,
@@ -82,7 +77,7 @@ describe("AppConfig.layer", () => {
 			}).pipe(
 				Effect.provide(
 					configLayer({ filename: "rc.json", schema: Shape, codec: JsonCodec }).pipe(
-						Layer.provide(harnessWith(fakeFs({ present: ["/home/test/.config/myapp/rc.json"] }))),
+						Layer.provide(harnessWith(fakeFs({ "/home/test/.config/myapp/rc.json": rc }))),
 					),
 				),
 			),
@@ -90,19 +85,21 @@ describe("AppConfig.layer", () => {
 
 		it.effect("saves into the app's own config directory", () =>
 			Effect.gen(function* () {
-				const written: Array<string> = [];
+				const host = MemoryFileSystem.makeSync();
 				const target = yield* Effect.gen(function* () {
 					const cfg = yield* TestConfig;
 					return yield* cfg.save(Shape.make({ port: 9000 }));
 				}).pipe(
 					Effect.provide(
 						configLayer({ filename: "rc.json", schema: Shape, codec: JsonCodec }).pipe(
-							Layer.provide(harnessWith(fakeFs({ written }))),
+							Layer.provide(harnessWith(host.layer)),
 						),
 					),
 				);
 				assert.strictEqual(target, "/home/test/.config/myapp/rc.json");
-				assert.deepStrictEqual(written, ["/home/test/.config/myapp/rc.json"]);
+				// Exactly one file on the volume, and it is the one saved.
+				assert.deepStrictEqual(host.volume.paths(), ["/home/test/.config/myapp/rc.json"]);
+				assert.deepStrictEqual(JSON.parse(host.volume.text(target) ?? "null"), { port: 9000 });
 			}),
 		);
 	});
@@ -124,16 +121,7 @@ describe("AppConfig.layer", () => {
 						schema: Shape,
 						codec: JsonCodec,
 						resolvers: [ConfigResolver.explicitPath(flagged)],
-					}).pipe(
-						Layer.provide(
-							harnessWith(
-								fakeFs({
-									present: [flagged, xdgCandidate],
-									contents: { [flagged]: `{"port":8080}`, [xdgCandidate]: `{"port":4242}` },
-								}),
-							),
-						),
-					),
+					}).pipe(Layer.provide(harnessWith(fakeFs({ [flagged]: `{"port":8080}`, [xdgCandidate]: rc })))),
 				),
 			),
 		);
@@ -153,7 +141,7 @@ describe("AppConfig.layer", () => {
 						schema: Shape,
 						codec: JsonCodec,
 						resolvers: [ConfigResolver.explicitPath(flagged)],
-					}).pipe(Layer.provide(harnessWith(fakeFs({ present: [xdgCandidate] })))),
+					}).pipe(Layer.provide(harnessWith(fakeFs({ [xdgCandidate]: rc })))),
 				),
 			),
 		);
@@ -173,14 +161,7 @@ describe("AppConfig.layer", () => {
 							codec: JsonCodec,
 							resolvers: [ConfigResolver.explicitPath(first), ConfigResolver.explicitPath(second)],
 						}).pipe(
-							Layer.provide(
-								harnessWith(
-									fakeFs({
-										present: [first, second, xdgCandidate],
-										contents: { [first]: `{"port":1}`, [second]: `{"port":2}` },
-									}),
-								),
-							),
+							Layer.provide(harnessWith(fakeFs({ [first]: `{"port":1}`, [second]: `{"port":2}`, [xdgCandidate]: rc }))),
 						),
 					),
 				);
@@ -192,7 +173,7 @@ describe("AppConfig.layer", () => {
 			Effect.gen(function* () {
 				// The prepended resolver decides where config is READ from; the save
 				// path is `XdgConfig.savePath` and stays that way.
-				const written: Array<string> = [];
+				const host = MemoryFileSystem.makeSync({ [flagged]: `{"port":8080}` });
 				const target = yield* Effect.gen(function* () {
 					const cfg = yield* TestConfig;
 					return yield* cfg.save(Shape.make({ port: 9000 }));
@@ -203,11 +184,13 @@ describe("AppConfig.layer", () => {
 							schema: Shape,
 							codec: JsonCodec,
 							resolvers: [ConfigResolver.explicitPath(flagged)],
-						}).pipe(Layer.provide(harnessWith(fakeFs({ present: [flagged], written })))),
+						}).pipe(Layer.provide(harnessWith(host.layer))),
 					),
 				);
 				assert.strictEqual(target, xdgCandidate);
-				assert.deepStrictEqual(written, [xdgCandidate]);
+				assert.deepStrictEqual(JSON.parse(host.volume.text(xdgCandidate) ?? "null"), { port: 9000 });
+				// The discovered file is untouched.
+				assert.strictEqual(host.volume.text(flagged), `{"port":8080}`);
 			}),
 		);
 
@@ -219,7 +202,7 @@ describe("AppConfig.layer", () => {
 			}).pipe(
 				Effect.provide(
 					configLayer({ filename: "rc.json", schema: Shape, codec: JsonCodec, resolvers: [] }).pipe(
-						Layer.provide(harnessWith(fakeFs({ present: [xdgCandidate] }))),
+						Layer.provide(harnessWith(fakeFs({ [xdgCandidate]: rc }))),
 					),
 				),
 			),
@@ -242,15 +225,7 @@ describe("AppConfig.layer", () => {
 							native: false,
 							resolvers: [ConfigResolver.explicitPath(flagged)],
 						}).pipe(
-							Layer.provide(
-								harnessWith(
-									fakeFs({
-										present: [flagged, nativeCandidate],
-										contents: { [flagged]: `{"port":8080}` },
-									}),
-									"darwin",
-								),
-							),
+							Layer.provide(harnessWith(fakeFs({ [flagged]: `{"port":8080}`, [nativeCandidate]: rc }), "darwin")),
 						),
 					),
 				);
@@ -270,7 +245,7 @@ describe("AppConfig.layer", () => {
 			}).pipe(
 				Effect.provide(
 					configLayer({ filename: "rc.json", schema: Shape, codec: JsonCodec }).pipe(
-						Layer.provide(harnessWith(fakeFs({ present: [nativeCandidate] }), "darwin")),
+						Layer.provide(harnessWith(fakeFs({ [nativeCandidate]: rc }), "darwin")),
 					),
 				),
 			),
@@ -284,7 +259,7 @@ describe("AppConfig.layer", () => {
 			}).pipe(
 				Effect.provide(
 					configLayer({ filename: "rc.json", schema: Shape, codec: JsonCodec, native: false }).pipe(
-						Layer.provide(harnessWith(fakeFs({ present: [nativeCandidate] }), "darwin")),
+						Layer.provide(harnessWith(fakeFs({ [nativeCandidate]: rc }), "darwin")),
 					),
 				),
 			),
@@ -301,14 +276,7 @@ describe("AppConfig.layer", () => {
 			}).pipe(
 				Effect.provide(
 					configLayer({ filename: "rc.json", schema: Shape, codec: JsonCodec }).pipe(
-						Layer.provide(
-							harnessWith(
-								fakeFs({
-									present: [xdgCandidate2],
-									contents: { [xdgCandidate2]: `{"port":4242,"removedCredential":"stale"}` },
-								}),
-							),
-						),
+						Layer.provide(harnessWith(fakeFs({ [xdgCandidate2]: `{"port":4242,"removedCredential":"stale"}` }))),
 					),
 				),
 			),
@@ -332,16 +300,7 @@ describe("AppConfig.layer", () => {
 						schema: Shape,
 						codec: JsonCodec,
 						parseOptions: { onExcessProperty: "error" },
-					}).pipe(
-						Layer.provide(
-							harnessWith(
-								fakeFs({
-									present: [xdgCandidate2],
-									contents: { [xdgCandidate2]: `{"port":4242,"removedCredential":"stale"}` },
-								}),
-							),
-						),
-					),
+					}).pipe(Layer.provide(harnessWith(fakeFs({ [xdgCandidate2]: `{"port":4242,"removedCredential":"stale"}` })))),
 				),
 			),
 		);
@@ -358,9 +317,44 @@ describe("AppConfig.layer", () => {
 						schema: Shape,
 						codec: JsonCodec,
 						parseOptions: { onExcessProperty: "error" },
-					}).pipe(Layer.provide(harnessWith(fakeFs({ present: [xdgCandidate2] })))),
+					}).pipe(Layer.provide(harnessWith(fakeFs({ [xdgCandidate2]: rc })))),
 				),
 			),
 		);
+	});
+});
+
+describe("AppConfig.layer key typing", () => {
+	class Other extends Schema.Class<Other>("Other")({ name: Schema.String }) {}
+	class WiderConfig extends Context.Service<WiderConfig, ConfigFileShape<Shape> & { readonly extra: string }>()(
+		"app-test/WiderConfig",
+	) {}
+
+	it("accepts a ConfigFile.Service key and rejects a wider or mismatched one", () => {
+		const options = { filename: "c.json", schema: Shape, codec: JsonCodec } as const;
+		const ok = () => AppConfig.layer(TestConfig, options);
+		// @ts-expect-error a key over a WIDER shape would be handed a value missing `extra`
+		const wider = () => AppConfig.layer(WiderConfig, options);
+		// @ts-expect-error the key's config type must match the schema's
+		const mismatched = () => AppConfig.layer(TestConfig, { filename: "c.json", schema: Other, codec: JsonCodec });
+		for (const build of [ok, wider, mismatched]) assert.isFunction(build);
+	});
+
+	it("infers A from the key when the strategy is a bare firstMatch()", () => {
+		class Optional extends Schema.Class<Optional>("Optional")({
+			cacheDir: Schema.optional(Schema.String),
+			projectKey: Schema.optional(Schema.String),
+		}) {}
+		class OptionalConfig extends ConfigFile.Service<OptionalConfig, Optional>()("app-test/OptionalConfig") {}
+		const layer = AppConfig.layer(OptionalConfig, {
+			filename: "optional.json",
+			schema: Optional,
+			codec: JsonCodec,
+			strategy: MergeStrategy.firstMatch(),
+			resolvers: [ConfigResolver.upwardWalk({ filename: "optional.json" })],
+		});
+		// RR is inferred from the resolvers, so the requirements carry no stray `unknown`.
+		const typed: Layer.Layer<OptionalConfig, never, FileSystem.FileSystem | Path.Path | AppDirs | Xdg> = layer;
+		assert.isDefined(typed);
 	});
 });

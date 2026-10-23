@@ -77,18 +77,17 @@ export class Position extends Schema.Class<Position>("Position")({
 // constructs in one line — `Text.make({ value: "shipped" })`. Constructor
 // defaults apply only to `make`, never to decode or encode.
 //
-// Resolved at effect@4.0.0-beta.101 (Effect-TS/effect#6491): `recurDefaults`
-// now appends the default link instead of replacing the field's class
-// construction link, so an explicit `position` may be a plain literal again —
-// `make` promotes it to real `Position`/`Point` instances. The beta.99
-// tripwire in frontmatter.test.ts is retired.
+// A constructor-defaulted class field accepts a plain-object literal, not
+// only a matching instance — `make` promotes a literal to real
+// `Position`/`Point` instances, pinned by __test__/frontmatter.test.ts's
+// "make accepts a plain-object position and promotes it to instances".
 //
-// Consequence of the same fix: the field's construction link always runs, so
-// `make` RE-CONSTRUCTS a nested class value rather than passing it through by
-// reference. `Text.make({ position: p }).position !== p` (structurally equal,
-// distinct instance). Nothing here depends on that identity — `Position` is an
-// immutable value class with structural equality — but never assert a
-// synthesized node's position by reference.
+// An ALREADY-CONSTRUCTED `Position` instance passed as `position` is passed
+// through by reference (`Text.make({ position: p }).position === p`); a
+// plain literal is always promoted to a fresh instance instead. Nothing here
+// depends on which happened — `Position` is an immutable value class with
+// structural equality — but never assert a synthesized node's position by
+// reference; use `deepStrictEqual`/`Equal.equals`.
 const NodePosition = Position.pipe(Schema.withConstructorDefault(Effect.succeed(Position.synthetic)));
 
 /**
@@ -244,11 +243,60 @@ export type TableAlign = typeof TableAlign.Type;
  * Text — a run of literal characters, with entity references and backslash
  * escapes already resolved into `value`.
  *
+ * @remarks
+ * `escapeStyle` is an opt-in emitter extra, the one fidelity field the
+ * parser never sets: absent (or `"canonical"`), `Markdown.stringify` escapes
+ * the value canonically so it re-parses to the same text. `"literal"` is the
+ * caller vouching that `value` is already safe markdown source, so the
+ * emitter writes it verbatim and applies no escaping aimed at inline syntax:
+ * `~0.2.1`, `^1.0.0`, `some_pkg` and `@scope/pkg` come out as written, as do
+ * `*`, `_`, `[`, `]`, `~`, `&`, `\`, the backtick and autolink-shaped
+ * text.
+ *
+ * Escaping that defends the containing BLOCK'S structure still applies,
+ * because its absence would corrupt the document around the text rather
+ * than add formatting inside it:
+ *
+ * - in a table cell, every `|` not already backslash-escaped is written
+ *   `\|` (a bare pipe splits the cell);
+ *
+ * - in any container, a value-final `\` is doubled when more content
+ *   follows it (it would otherwise pair with that content's first
+ *   character, escaping an inline-code backtick or freeing a cell's `\|`);
+ *
+ * - in a table cell or heading, a newline becomes a space (neither can
+ *   hold a line break);
+ *
+ * - in a heading, a trailing `#` run that would read as the ATX closing
+ *   sequence is escaped;
+ *
+ * - elsewhere, a newline that would form a blank line (ending the
+ *   paragraph) becomes `&#10;`, and at every line start leading whitespace
+ *   becomes a character reference, and a line start that can open a block
+ *   is escaped: a `-`, `+` or `*` bullet or an ordered-list marker followed
+ *   by a space, tab or line end; one to six `#` followed by the same; `>`;
+ *   three or more backticks or tildes; a thematic-break or setext run
+ *   (`***`, `___`, `==`); a `---` or `+++` frontmatter fence; a line of
+ *   only `-`, `:`, `|` and whitespace; and, conservatively, any `<`, `[`,
+ *   `|` or `:`. Text that cannot open a block there, such as `~0.2.1`,
+ *   `1.0.0`, `-x` or `#x`, is written as is;
+ *
+ * - in a tree carrying MDX nodes, `{` and `<` stay escaped, since MDX reads
+ *   a stray one as a syntax error rather than as text.
+ *
+ * **A literal text whose value parses as markdown does not round-trip to the
+ * same value**: `*a*` emits verbatim and re-parses as emphasis. Keeping the
+ * value free of inline syntax is the caller's promise, not something the
+ * emitter checks. `Mdast.fromMdast` admits this field on a `text` node (it is
+ * the one emitter instruction a plain tree can carry in), and `Mdast.toMdast`
+ * projects it back out when present.
+ *
  * @public
  */
 export class Text extends Schema.Class<Text>("Text")({
 	type: Schema.tag("text"),
 	value: Schema.String,
+	escapeStyle: Schema.optionalKey(Schema.Literals(["canonical", "literal"])),
 	position: NodePosition,
 }) {}
 
@@ -651,15 +699,14 @@ export class TableCell extends Schema.Class<TableCell>("TableCell")({
  * content — the cells in a {@link TableRow}. A one-member union, kept because
  * mdast names the category.
  *
- * A REAL `Schema.Union`, not a bare suspended class reference, and the
- * wrapper is load-bearing: `make` passes an already-constructed class
- * instance through a union member untouched, while a class-typed field
- * re-runs construction on every element of the array. On a 30k-row table
- * that re-construction was 1137ms for the single `Table.make` call against
- * 9ms through the union (measured; the pathological suite's "tables" case is
- * the regression instrument). The `children` fields of `TableRow`, `Table`
- * and `List` point at these category unions for exactly that reason — do not
- * "simplify" them back to the member class.
+ * A REAL `Schema.Union`, not a bare suspended class reference. `make` passes
+ * an already-constructed class instance through a nested class-typed field
+ * by reference regardless of whether the field is a plain class type or —
+ * as here — wrapped in a `Schema.Union`, so the wrapper buys no
+ * construction-cost advantage over the bare member class. It is kept
+ * because mdast names the category: the `children` fields of `TableRow`,
+ * `Table` and `List` point at these category unions to mirror mdast's
+ * content-model vocabulary, not for a performance reason.
  *
  * @public
  */
@@ -1016,11 +1063,11 @@ export type FrontmatterFormat = typeof FrontmatterFormat.Type;
  *
  * mdast has no single frontmatter node: it names `yaml` in the readme and
  * `toml` through the frontmatter extension, and json has no mdast name at
- * all. This package captures all three through ONE node — the design doc's
- * "text plus a format marker" — and the `Mdast` projection (P5) maps
- * `format` onto the mdast type names where they exist. Decoding the value is
- * the codec modules' job (`YamlFrontmatter`/`TomlFrontmatter`/
- * `JsonFrontmatter`, P3 Task 2); the engine never looks inside it.
+ * all. This package captures all three through ONE node — text plus a format
+ * marker — and the `Mdast` projection maps `format` onto the mdast type
+ * names where they exist. Decoding the value is the codec modules' job
+ * (`YamlFrontmatter`/`TomlFrontmatter`/`JsonFrontmatter`); the engine never
+ * looks inside it.
  *
  * Only ever the first child of {@link Root}, and only when parsing opted in
  * via `MarkdownParseOptions.frontmatter` — mdast's "limited to one node, only

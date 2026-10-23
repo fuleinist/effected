@@ -11,9 +11,14 @@
  * vocabulary with both versioning modes, the structural and hygiene lints,
  * canonical JSON text, content-comparing write-if-changed file IO
  * (`SchemaFile`), change classification for the versioning decision
- * (`DocumentDiff`), real-engine validation over ajv (`SchemaValidator`,
- * which ships closed — no adapter to write), and the emit pipeline over all
- * of it (`SchemaPipeline`).
+ * (`DocumentDiff`), the validation contracts and their doubles
+ * (`SchemaValidator` for documents, `InstanceValidator` for a payload
+ * against a published document — the shipped ajv engines are `AjvValidator`
+ * and `AjvInstanceValidator` in `@effected/schemastore-cli`, so this
+ * package installs no engine), the
+ * hosted identity an application derives its `$schema` from and
+ * `defineConfig` derives `$id` from (`HostedSchema`), and the emit pipeline
+ * over all of it (`SchemaPipeline`).
  *
  * @example
  * ```ts
@@ -54,6 +59,22 @@ export {
 export { CatalogEntry, CatalogLintFinding } from "./CatalogEntry.js";
 export { DocumentDiff, type SchemaChange } from "./DocumentDiff.js";
 export { DocumentLint, DocumentLintFinding } from "./DocumentLint.js";
+export { type DriftOptions, DriftPolicy, type DriftTolerance, type DriftVerdict, type OnDrift } from "./DriftPolicy.js";
+export {
+	type CustomHostedSchemaInput,
+	type GitHubHostedSchemaInput,
+	HostedSchema,
+	type HostedSchemaVersionsInput,
+	SCHEMASTORE_CATALOG_BASE,
+	SCHEMASTORE_ID_BASE,
+} from "./HostedSchema.js";
+export {
+	InstanceFinding,
+	InstanceValidator,
+	InstanceValidatorError,
+	type InstanceValidatorOptions,
+	type InstanceValidatorShape,
+} from "./InstanceValidator.js";
 export { KeywordFamilies } from "./KeywordFamilies.js";
 export {
 	type CheckResult,
@@ -78,6 +99,16 @@ export {
 	SchemaPipeline,
 	type SchemaPipelineOptions,
 } from "./SchemaPipeline.js";
+export {
+	type CatalogInput,
+	type FrozenVersion,
+	type ResolvedSchema,
+	type SchemaEntryInput,
+	type SchemastoreConfig,
+	type SchemastoreConfigInput,
+	defineConfig,
+	isSchemastoreConfig,
+} from "./SchemastoreConfig.js";
 export { SchemaTarget } from "./SchemaTarget.js";
 export {
 	SchemaValidator,
@@ -89,6 +120,7 @@ export {
 export {
 	type CatalogUrls,
 	InvalidSchemaVersionError,
+	type SchemaLayout,
 	SchemaVersion,
 	SchemaVersioning,
 } from "./SchemaVersioning.js";

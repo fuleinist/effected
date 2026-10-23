@@ -1,5 +1,513 @@
 # @effected/github
 
+## 0.23.0
+
+### Features
+
+#### `ActionsOidcClaimsFromWire`
+
+- New export: a schema that decodes the wire form of a GitHub Actions OIDC token payload (GitHub's own snake_case claim names) into `ActionsOidcClaims`, and encodes it back. `@effected/github-actions` uses it to read and mint tokens.
+
+### Dependencies
+
+| Dependency | Type | Action | From | To |
+| --- | --- | --- | --- | --- |
+| @effected/oidc | dependency | updated | 0.0.0 | 0.1.0 |
+
+### Maintenance
+
+- `ActionsOidc.verify` is now built on `Oidc.verify` from `@effected/oidc`. Its API and behaviour are unchanged. [#1051][#1051]
+
+### Thanks
+
+Thanks to [@spencerbeggs](https://github.com/spencerbeggs) for their contributions!
+
+[#1051]: https://github.com/spencerbeggs/effected/pull/1051
+
+## 0.22.0
+
+### Dependencies
+
+| Dependency | Type | Action | From | To |
+| --- | --- | --- | --- | --- |
+| @effected/github-references | dependency | updated | 0.10.0 | 0.11.0 |
+| @effected/jwt | dependency | updated | 0.4.0 | 0.5.0 |
+| @effected/semver | dependency | updated | 0.14.0 | 0.15.0 |
+
+### Maintenance
+
+- Upgrades core Effect library dependencies to v4.0.6 [#1039][#1039]
+
+### Thanks
+
+Thanks to [@spencerbeggs](https://github.com/spencerbeggs) for their contributions!
+
+[#1039]: https://github.com/spencerbeggs/effected/pull/1039
+
+## 0.21.0
+
+### Dependencies
+
+| Dependency | Type | Action | From | To |
+| --- | --- | --- | --- | --- |
+| @effected/github-references | dependency | updated | 0.9.0 | 0.10.0 |
+| @effected/jwt | dependency | updated | 0.3.0 | 0.4.0 |
+| @effected/semver | dependency | updated | 0.13.0 | 0.14.0 |
+
+### Maintenance
+
+- Upgrades core Effect library dependencies to v4.0.5 [#1019][#1019]
+
+### Thanks
+
+Thanks to [@spencerbeggs](https://github.com/spencerbeggs) for their contributions!
+
+[#1019]: https://github.com/spencerbeggs/effected/pull/1019
+
+## 0.20.0
+
+### Dependencies
+
+| Dependency | Type | Action | From | To |
+| --- | --- | --- | --- | --- |
+| @effected/github-references | dependency | updated | 0.8.0 | 0.9.0 |
+| @effected/jwt | dependency | updated | 0.2.0 | 0.3.0 |
+| @effected/semver | dependency | updated | 0.12.0 | 0.13.0 |
+
+### Maintenance
+
+- Upgrades core Effect library dependencies to v4.0.4 [#1008][#1008]
+
+### Thanks
+
+Thanks to [@spencerbeggs](https://github.com/spencerbeggs) for their contributions!
+
+[#1008]: https://github.com/spencerbeggs/effected/pull/1008
+
+## 0.19.0
+
+### Features
+
+#### Single-flight installation tokens
+
+- `GitHubApp.cachedToken` now single-flights concurrent misses per installation within one process, through a new `GitHubAppShape.cachedToken` member built with the layer (`makeTest` honours an override). Closes #999.
+
+- Joiners receive the new `CachedToken.source` value `"joined"`; the union is now `"cached" | "minted" | "joined"`.
+
+- A failed mint fails every waiter with the same `GitHubAppError` and releases the key.
+
+- Interrupting the leader leaves the mint running for waiters.
+
+- The key is the installation id only. Cross-isolate double-minting remains accepted. [#1000][#1000]
+
+### Dependencies
+
+| Dependency | Type | Action | From | To |
+| --- | --- | --- | --- | --- |
+| @effected/github-references | dependency | updated | 0.7.1 | 0.8.0 |
+| @effected/jwt | dependency | updated | 0.1.1 | 0.2.0 |
+| @effected/semver | dependency | updated | 0.11.1 | 0.12.0 |
+| effect | peerDependency | updated | 4.0.2 | ^4.0.3 |
+
+### Thanks
+
+Thanks to [@spencerbeggs](https://github.com/spencerbeggs) for their contributions!
+
+[#1000]: https://github.com/spencerbeggs/effected/pull/1000
+
+## 0.18.0
+
+### Breaking Changes
+
+- `CheckRunRef.status` is now the `CheckRunStatus` literal set, not `string`. A double that builds a ref from an arbitrary string no longer type-checks.
+- A response whose status or conclusion falls outside the documented sets now fails `create`, `get` and `findByExternalId` with a `decode` `GitHubError` instead of passing an unknown string through. [#997][#997]
+
+### Features
+
+#### A full check-run read model
+
+- `CheckRunRef` now carries what GitHub reports about a run. Every new field is optional, so a double built with `CheckRunRef.make({ id, name, url, status })` stays valid.
+
+- `headSha`, `nodeId`, `startedAt`, `completedAt`, `detailsUrl` and `checkSuiteId`.
+
+- `conclusion`, typed by the new `ReportedCheckConclusion`: the write set plus `stale`, which only GitHub sets.
+
+- `output`, a new `ReportedCheckRunOutput` with `title`, `summary` and `annotationsCount`. It never carries the long-form text.
+
+- `apiUrl` (the REST URL) and `htmlUrl` (the web URL with GitHub's `null` kept). `url` still means the web URL, `""` when GitHub sent none.
+
+#### Returning variants and a commit listing on `CheckRun`
+
+- `updateRef` and `completeRef` send the same PATCH as `update` and `complete` and answer the decoded `CheckRunRef`. `update` and `complete` still discard the response, so doubles that stub them with `Effect.void` keep compiling.
+- `list(ref, { checkName?, appId?, status?, filter?, page? })` reads the check runs on a commit, filtered on GitHub's side and paginated.
+
+#### `AuthenticatedApp`
+
+- A new resource service for the app-level routes, provided over `GitHubApp.appClientLayer`:
+
+- `get()` reads `GET /app` into `AppInfo` (`id`, `slug`, `name`, `nodeId`, `clientId`, `htmlUrl`).
+
+- `deliveries({ status?, page? })` is a lazy `Stream<DeliveryAttempt>` over the webhook delivery log, so `Stream.takeWhile` stops it without fetching further pages.
+
+- `delivery(id)`, `redeliver(id)` and `uninstall(installationId)`.
+
+- Delivery, installation and repository ids decode as safe integers. An id past 2^53 fails the read with a `decode` error instead of being rounded to a different id.
+
+#### `GitHubApp.botUser`
+
+- `botUser({ slug, installationToken? })` reads the app's bot user into `BotUser` (`id`, `login`). Where `identity` leaves out the id when the lookup fails, `botUser` fails with `kind: "identity"`.
+
+### Dependencies
+
+| Dependency | Type | Action | From | To |
+| --- | --- | --- | --- | --- |
+| @effected/github-references | dependency | updated | 0.7.0 | 0.7.1 |
+| @effected/jwt | dependency | updated | 0.1.0 | 0.1.1 |
+| @effected/semver | dependency | updated | 0.11.0 | 0.11.1 |
+
+### Thanks
+
+Thanks to [@spencerbeggs](https://github.com/spencerbeggs) for their contributions!
+
+[#997]: https://github.com/spencerbeggs/effected/pull/997
+
+## 0.17.0
+
+### Features
+
+#### `WorkflowDispatch.dispatchWithRun`
+
+- Dispatches a workflow and reports the run it created, using GitHub's `return_run_details` request field. It answers `Option<DispatchedRun>`, where `DispatchedRun` (newly exported) carries `runId`, `runUrl` and `htmlUrl`.
+
+- A 204 is `Option.none()`, not a failure. That is what a GitHub Enterprise Server that predates the field answers.
+
+- A 200 body that is not run details fails with a `decode` `GitHubError`.
+
+- Request errors such as 404 and 422 pass through unchanged.
+
+- `dispatch` is unchanged and never sends `return_run_details`.
+
+#### `dispatchAndWait` follows the exact run
+
+- When GitHub reports the run id, `dispatchAndWait` polls that run directly, so concurrent dispatches of the same workflow on the same ref can no longer be confused. On a 204 it falls back to the previous search by time, branch and path. [#986][#986]
+
+### Thanks
+
+Thanks to [@spencerbeggs](https://github.com/spencerbeggs) for their contributions!
+
+[#986]: https://github.com/spencerbeggs/effected/pull/986
+
+## 0.16.0
+
+### Breaking Changes
+
+- `CheckRunShape` changed: the `update` output is optional, `complete` takes options, and `findByExternalId` is new. `WorkflowDispatchShape` gained `cancelRun`. Hand-written implementations of these shapes must be updated; calls through `CheckRun` and `WorkflowDispatch` are source-compatible.
+- RSA App private keys under 2048 bits are refused with a `GitHubAppError` of `kind` `"jwt"`.
+- `getFile` fails with a typed `decode` error when the content is not standard padded base64, and a check-run response missing required fields fails as a typed `decode` error.
+
+### Features
+
+#### App authentication
+
+- `GitHubApp.appClientLayer` builds a client authenticated as the App itself, for endpoints that take the App JWT rather than an installation token.
+- `GitHubApp.cachedToken` and `GitHubApp.cachedClientLayer` cache installation tokens, backed by the new `InstallationTokenStore` seam.
+- `Installation` gains `suspendedAt`, `accountType`, `accountId` and `updatedAt`. They are read leniently, so a response without them still decodes.
+
+#### Actions OIDC verification
+
+- `ActionsOidc.verify` checks a GitHub Actions OIDC token against GitHub's published keys and returns the decoded `ActionsOidcClaims`.
+
+#### Errors and fixtures
+
+- `GitHubError.fromResponse` classifies an HTTP response into a `GitHubError`. It requires `nowMillis`.
+- `GitHubFixtures.failure` scripts a failing call in tests.
+
+#### Check runs and workflow runs
+
+- `CheckRun.create`, `update` and `complete` take richer options, and `CheckRun.findByExternalId` finds a check run by its external id.
+- `WorkflowDispatch.cancelRun` cancels a workflow run.
+
+### Bug Fixes
+
+- PKCS#1 App keys now work on every runtime, and keys with escaped `\n` line breaks are accepted.
+- Concurrent credential rotation now rotates once instead of once per caller.
+
+### Build System
+
+- The App JWT is now signed by `@effected/jwt`, and no `Buffer` is used on the request path, so `nodejs_compat` is no longer needed on Cloudflare Workers. [#984][#984]
+
+### Dependencies
+
+| Dependency | Type | Action | From | To |
+| --- | --- | --- | --- | --- |
+| universal-github-app-jwt | dependency | removed | ^2.2.2 | — |
+| @effected/jwt | dependency | added | — | 0.1.0 |
+
+[#984][#984]
+
+### Thanks
+
+Thanks to [@spencerbeggs](https://github.com/spencerbeggs) for their contributions!
+
+[#984]: https://github.com/spencerbeggs/effected/pull/984
+
+## 0.15.1
+
+### Dependencies
+
+| Dependency | Type | Action | From | To |
+| --- | --- | --- | --- | --- |
+| @octokit/plugin-paginate-rest | dependency | updated | ^15.0.0 | ^16.0.0 |
+
+[#933][#933]
+
+### Thanks
+
+Thanks to [@spencerbeggs](https://github.com/spencerbeggs) for their contributions!
+
+[#933]: https://github.com/spencerbeggs/effected/pull/933
+
+## 0.15.0
+
+### Breaking Changes
+
+- The kit now builds on and peers stable `effect` `^4.0.0`, in place of an exact release-candidate pin. Move `effect` and every `@effect/*` package to the same `4.x` version in one install: Effect releases them together at one version. A package from this release cannot share an install with an `effect` release candidate. The peer is a caret range, so later `4.x` releases of Effect satisfy the kit without a kit release.
+- Kit exports are unchanged. A consumer moving to stable `effect` meets these changes in its own code:
+  - `Array`, `Chunk`, `Effect` and `Record` `partition`, their `separate` helpers and `Option.partitionMap` return `[successes, failures]`. Where both sides share a type, the reversed destructuring still compiles, so search for every call.
+  - `Schema.brand` takes one identifier and is type-only: the identifier is not stored on the AST and does not survive `SchemaRepresentation`. Compose distinct brands by applying `brand` more than once.
+  - `TestSchema`'s round-trip assertion is `verifyRoundTrip`, with Effect forms `succeedEffect`, `failEffect` and `verifyRoundTripEffect`.
+  - Effect marks some APIs `@stability unstable`: those may change in a minor Effect release. Untagged APIs follow semver.
+
+### Documentation
+
+- Every exported construct's TSDoc was reviewed against the current API. Summaries open with what the construct does, error channels and requirements are stated, examples use real imports and compile, and links resolve. Comments that described options, errors or defaults the code does not have were corrected. [#910][#910]
+
+### Dependencies
+
+| Dependency | Type | Action | From | To |
+| --- | --- | --- | --- | --- |
+| @effected/github-references | dependency | updated | 0.6.0 | 0.7.0 |
+| @effected/semver | dependency | updated | 0.10.1 | 0.11.0 |
+
+### Thanks
+
+Thanks to [@spencerbeggs](https://github.com/spencerbeggs) for their contributions!
+
+[#910]: https://github.com/spencerbeggs/effected/pull/910
+
+## 0.14.0
+
+### Breaking Changes
+
+- The kit now builds on and peers `effect` `4.0.0-rc.118`, pinned exactly. Consumers must move `effect` and every `@effect/*` package to `4.0.0-rc.118` in the same install. Effect removed the `effect/unstable/*` export paths in this release, so an `@effected` package built on rc.118 cannot share an install with `effect` rc.117.
+
+- Moving the pin also closes a fresh-install failure on rc.117. `@effect/platform-node@4.0.0-rc.117` depends on `@effect/platform-node-shared` with a caret, so an install without a lockfile paired the rc.118 shared package with `effect` rc.117 and failed at startup with `ERR_MODULE_NOT_FOUND`.
+
+- Consumers moving to this release: effect removed the `effect/unstable/*` export paths (imports become `effect/<module>`), moved `Arbitrary` to `effect`, split `effect/Encoding` into `effect/encoding/Base64`, `Base64Url` and `Hex`, and renamed the `Schema` range and string checks (`isLengthBetween` → `isBetweenLength`, `isStartsWith` → `isStartingWith`, and so on). Kit exports are otherwise unchanged; the kit's own imports moved onto the new paths. [#864][#864]
+
+### Dependencies
+
+| Dependency | Type | Action | From | To |
+| --- | --- | --- | --- | --- |
+| @effected/github-references | dependency | updated | 0.5.0 | 0.6.0 |
+| @effected/semver | dependency | updated | 0.9.0 | 0.10.0 |
+
+### Thanks
+
+Thanks to [@spencerbeggs](https://github.com/spencerbeggs) for their contributions!
+
+[#864]: https://github.com/spencerbeggs/effected/pull/864
+
+## 0.13.0
+
+### Features
+
+#### Structured 422 validation entries
+
+- `GitHubError` now carries GitHub's validation entries, so a caller can branch on a 422's cause without matching `reason` text.
+
+- `validation` holds each `data.errors[]` entry as a `GitHubValidationEntry` (`resource`, `field`, `code`, `message`, all optional). It is absent when GitHub sent no `errors` array.
+
+- `GitHubValidationCode` lists the six codes GitHub documents: `missing`, `missing_field`, `invalid`, `already_exists`, `unprocessable` and `custom`. A code outside that set is still carried.
+
+- `GitHubError.hasValidationCode(...codes)` is a predicate for `Effect.catchIf`, alongside `hasKind`.
+
+```ts
+import { GitHubError } from "@effected/github";
+import { Effect } from "effect";
+
+declare const create: Effect.Effect<void, GitHubError>;
+
+const tolerant = create.pipe(
+  Effect.catchIf(GitHubError.hasValidationCode("missing_field"), () => Effect.void),
+);
+```
+
+- `already_exists` is the only code with its own `kind`; the other five classify as `rejected`. `missing` refers to a resource the request pointed at, such as a commit SHA, not the resource being acted on, so it stays out of `notFound`.
+
+### Bug Fixes
+
+- A 422 or 409 whose validation entries carry `code: "already_exists"` now classifies as `alreadyExists` even when no message says so. Creating a release for a tag that already has one returns exactly that shape. It was classified as `rejected`, so `catchIf(GitHubError.hasKind("alreadyExists"), ...)` fallbacks never ran. [#825][#825]
+
+### Thanks
+
+Thanks to [@spencerbeggs](https://github.com/spencerbeggs) for their contributions!
+
+[#825]: https://github.com/spencerbeggs/effected/pull/825
+
+## 0.12.0
+
+### Features
+
+- Upgrades core Effect to `rc-117` [#812][#812]
+
+### Dependencies
+
+| Dependency | Type | Action | From | To |
+| --- | --- | --- | --- | --- |
+| @effected/github-references | dependency | updated | 0.4.0 | 0.5.0 |
+| @effected/semver | dependency | updated | 0.8.0 | 0.9.0 |
+
+### Thanks
+
+Thanks to [@spencerbeggs](https://github.com/spencerbeggs) for their contributions!
+
+[#812]: https://github.com/spencerbeggs/effected/pull/812
+
+## 0.11.0
+
+### Breaking Changes
+
+#### The whole kit tracks Effect `4.0.0-rc.116`
+
+- Every package's `effect` peer moves from `4.0.0-rc.115` to `4.0.0-rc.116`. The kit uses exact prerelease pins rather than a caret, so a consumer must move with it. No `@effected` API changes shape on this advance; the kit itself needed one edit (`Stream.scan` now takes a lazy initial state, met once in `@effected/jsonl`'s `Journal.projection`). A consumer that upgrades meets the rc.116 renames on its own code:
+
+- `SchemaTransformation.make` is `makeTransformation`, and `Transformation#compose` is the dual standalone `SchemaTransformation.composeTransformation`.
+
+- `SchemaGetter.Getter` is a tagged union exposing only `pipe`: `new SchemaGetter.Getter`, `onSome` and `onNone` are gone in favour of `SchemaGetter.map` / `compose` / `run` and `transformEffect` / `transformOptionalEffect`.
+
+- `Stream.scan` and `Stream.scanEffect` take `() => initial`; `Stream.partition` returns `[passes, fails]`; `Stream.mapBoth` takes `onElement` / `onError`.
+
+- `Effect.orElseSucceed` passes the error to its fallback and `Effect.isEffect` narrows to `Effect<unknown, unknown, unknown>`.
+
+- `ByteSize.Input` string literals are checked at compile time; parse external strings with `ByteSize.fromString`.
+
+- Arbitrary shrinking changed, so property-test replay tokens recorded at rc.115 no longer reproduce.
+
+### Documentation
+
+#### The Claude Code and Copilot plugins teach the rc.116 surface
+
+- The `effect-v4-schema` transformation reference composes transformations with `SchemaTransformation.composeTransformation` and describes the `Getter` surface rc.116 left behind; the source-lookup and testing skills report rc.116 as the kit's pin and the two-copy lockfile shape the bridge now produces (`rc.115` for the toolchain, `rc.116` for the kit); the session-start briefing reports rc.116.
+
+### Dependencies
+
+| Dependency | Type | Action | From | To |
+| --- | --- | --- | --- | --- |
+| @effected/github-references | dependency | updated | 0.3.1 | 0.4.0 |
+| @effected/semver | dependency | updated | 0.7.1 | 0.8.0 |
+| @effect/platform-node | devDependency | updated | 4.0.0-rc.115 | 4.0.0-rc.116 |
+| @effect/vitest | devDependency | updated | 4.0.0-rc.115 | 4.0.0-rc.116 |
+| effect | devDependency | updated | 4.0.0-rc.115 | 4.0.0-rc.116 |
+| effect | peerDependency | updated | 4.0.0-rc.115 | 4.0.0-rc.116 |
+
+### Maintenance
+
+#### The rc.115 `packageExtensions` bridge is retired
+
+- The toolchain (`@savvy-web/tsdown-plugins`, `rolldown-pnpm-config`, `@vitest-agent/*`) has republished declaring `effect` and its `@effected/*` inputs as regular dependencies, so the workspace no longer needs the `packageExtensions` block that pinned them by hand. Its ten keys named versions no longer installed and the lockfile diff on removal was the checksum line alone. Nothing published changes; this is the workspace's own install shape. [#792][#792]
+
+### Thanks
+
+Thanks to [@spencerbeggs](https://github.com/spencerbeggs) for their contributions!
+
+[#792]: https://github.com/spencerbeggs/effected/pull/792
+
+## 0.10.2
+
+### Bug Fixes
+
+- Fixes closure issues in all packages.
+
+### Dependencies
+
+| Dependency | Type | Action | From | To |
+| --- | --- | --- | --- | --- |
+| @effected/github-references | dependency | updated | 0.3.0 | 0.3.1 |
+| @effected/semver | dependency | updated | 0.7.0 | 0.7.1 |
+
+### Thanks
+
+Thanks to [@spencerbeggs](https://github.com/spencerbeggs) for their contributions!
+
+## 0.10.1
+
+### Dependencies
+
+| Dependency | Type | Action | From | To |
+| --- | --- | --- | --- | --- |
+| @octokit/types | dependency | updated | ^17.0.0 | ^18.0.0 |
+
+[#699][#699]
+
+### Thanks
+
+Thanks to [@spencerbeggs](https://github.com/spencerbeggs) for their contributions!
+
+[#699]: https://github.com/spencerbeggs/effected/pull/699
+
+## 0.10.0
+
+### Breaking Changes
+
+#### The whole kit tracks Effect `4.0.0-rc.115`
+
+- Every package's `effect` peer moves from `4.0.0-rc.112` to `4.0.0-rc.115`. The kit uses exact prerelease pins rather than a caret, so a consumer must move with it. This advance is the first whose Effect changes are not source-compatible with the previous pin, so a consumer that upgrades meets the same renames the kit did:
+
+- `SchemaTransformation.transformOrFail` and `SchemaGetter.transformOrFail` are `transformEffect`.
+
+- The `Config` constructors are PascalCase (`Config.String`, `Config.Redacted`, `Config.Int`, `Config.Boolean`, …) and `Config.mapOrFail` is `Config.mapEffect`.
+
+- `FileSystem.Size` and `FileSystem.SizeInput` are gone in favour of the `ByteSize` module: `File.Info.size` is a `ByteSize`, `File.seek` takes a `bigint`, `read`/`write` return a `number`.
+
+- The fast-check bridge (`effect/testing/FastCheck`, `Schema.toArbitrary`, the `fastCheck` property-test option) is removed in favour of `effect/unstable/arbitrary/Arbitrary`; `it.effect.prop` takes `arbitrary: { runs, size, seed, … }`.
+
+#### `@effected/schemastore` documents are open unless told otherwise
+
+- `Schema.ToJsonSchemaOptions.additionalProperties` became `onExcessProperty: "ignore" | "error"` upstream, and its default now mirrors the decoder's: generated object schemas carry `additionalProperties: true` unless `jsonSchema: { onExcessProperty: "error" }` is passed. `StoreDocument.fromSchema` passes the option through unchanged, so a document that was closed by default at rc.112 is open by default now. Pass `onExcessProperty: "error"` to keep a closed document; a generator that silently disagreed with the decoder it is paired with would be the worse default.
+
+#### `@effected/memfs` seeks before the start of a file fail
+
+- `File.seek` gained a `PlatformError` channel upstream, and memfs now matches Node: a seek whose resulting position would be negative fails with `BadArgument` ("Cannot seek before the start of the file") and leaves the cursor unchanged, where it previously stored the negative position and failed on the next read. No memfs-declared type changes; the `File`/`File.Info` shape changes are Effect's own, reaching consumers through the peer.
+
+### Documentation
+
+#### A `Schema.Class` root is annotated on the `Struct` it wraps
+
+- [Effect-TS/effect#8084](https://github.com/Effect-TS/effect/issues/8084), which the rc.112 notes carried as an open limitation, was closed upstream as by design: annotations passed as `Schema.Class`'s second argument sit on the class node, while the `$defs` entry is generated from the encoded fields `Struct`. Annotate that `Struct` — `Schema.Class<X>("X")(Schema.Struct({ … }).annotate({ title, description, "x-taplo": … }))` — and every key reaches the document. `@effected/schemastore`'s design doc and context files now state the rule instead of the limitation.
+
+#### The Claude Code and Copilot plugins teach the rc.115 surface
+
+- The `effect-v4-schema`, `effect-v4-testing` and `effect-v4-module-index` skills describe the native `Arbitrary` module in place of the fast-check bridge, including the migration traps met on this advance: the `size` clamp (default 10) that silently shrinks a property's string and array domains, the `-0` the generator's near-zero bias emits for an unbounded `Schema.Int` or any `Schema.Number`, which JSON and YAML cannot round-trip, and the absence of `oneof`/`constantFrom`/`array` combinators. `ByteSize` has a module-index row, the `Config` and CLI constructors are shown in their PascalCase spellings, and the session-start briefing reports rc.115 as the kit's pin. [#686][#686]
+
+### Dependencies
+
+| Dependency | Type | Action | From | To |
+| --- | --- | --- | --- | --- |
+| @effected/github-references | dependency | updated | 0.2.0 | 0.3.0 |
+| @effected/semver | dependency | updated | 0.6.0 | 0.7.0 |
+| @effect/platform-node | devDependency | updated | 4.0.0-rc.112 | 4.0.0-rc.115 |
+| @effect/tsgo | devDependency | updated | 0.41.0 | 0.45.0 |
+| @effect/vitest | devDependency | updated | 4.0.0-rc.112 | 4.0.0-rc.115 |
+| effect | devDependency | updated | 4.0.0-rc.112 | 4.0.0-rc.115 |
+| effect | peerDependency | updated | 4.0.0-rc.112 | 4.0.0-rc.115 |
+
+### Thanks
+
+Thanks to [@spencerbeggs](https://github.com/spencerbeggs) for their contributions!
+
+[#686]: https://github.com/spencerbeggs/effected/pull/686
+
 ## 0.9.0
 
 ### Breaking Changes
@@ -431,7 +939,8 @@ Thanks to [@spencerbeggs](https://github.com/spencerbeggs) for their contributio
   ### `ArtifactMetadata.createStorageRecord` no longer takes a positional `org`
   The organization is now resolved from `Repo`'s `owner`, the same way every
   other resource on this surface reads it — `createStorageRecord` was the one
-  method that took `org` positionally instead. `Repo` is required in `R`;&#10;`Repo.provide` covers the cross-org case.
+  method that took `org` positionally instead. `Repo` is required in `R`;
+  `Repo.provide` covers the cross-org case.
   ```ts
   // Before
   yield* artifactMetadata.createStorageRecord(org, input);
@@ -447,7 +956,8 @@ Thanks to [@spencerbeggs](https://github.com/spencerbeggs) for their contributio
   data. Commits created through the Git Data API bypass `git commit -s`, so
   the trailer has no porcelain to come from, and a hand-built one that is
   subtly wrong surfaces late as a red DCO check on someone else's pull
-  request. Whether a missing identity falls back to&#10;`BotIdentity.githubActions` stays the caller's policy.
+  request. Whether a missing identity falls back to
+  `BotIdentity.githubActions` stays the caller's policy.
 
 ### Bug Fixes
 
@@ -464,11 +974,15 @@ Thanks to [@spencerbeggs](https://github.com/spencerbeggs) for their contributio
 - `GitBranch.upsert`'s remarks now warn about a live incident: resetting a
   branch to its pull request's base makes that PR's head equal its base for a
   window, and GitHub **auto-closes a PR whose diff is empty**. A consumer that
-  means to end at "target head plus a commit" should build the commit first —&#10;`GitCommit.get` the target for its tree sha, `createTree`, `createCommit`&#10;with the target as parent — and `upsert` once, straight to the finished sha.
+  means to end at "target head plus a commit" should build the commit first —
+  `GitCommit.get` the target for its tree sha, `createTree`, `createCommit`
+  with the target as parent — and `upsert` once, straight to the finished sha.
 
   `GitCommit.commitFiles`'s remarks now state plainly that it commits onto a
-  branch you own, not a rebase, and spell out the atomic composition — `get`,&#10;`createTree`, `createCommit`, `upsert` — that moves the ref once with no
-  observable intermediate state. Sequencing `upsert(branch, targetHead)`&#10;followed by `commitFiles` is the hazardous two-step above written a
+  branch you own, not a rebase, and spell out the atomic composition — `get`,
+  `createTree`, `createCommit`, `upsert` — that moves the ref once with no
+  observable intermediate state. Sequencing `upsert(branch, targetHead)`
+  followed by `commitFiles` is the hazardous two-step above written a
   different way: an open pull request from that branch sees an empty diff in
   the window between the two calls and GitHub can close it out from under a
   run that otherwise reports success. [#191][#191]
@@ -501,9 +1015,14 @@ Thanks to [@spencerbeggs](https://github.com/spencerbeggs) for their contributio
   through `requestDecoded(route, params, schema)`, where the schema is
   mandatory. One paginating engine backs every paginated read.
   ### Resource services
-  `GitBranch.upsert`, `GitTag.latestSemver` / `.upsert`, `CheckRun.withCheckRun`&#10;(with `conclude`), `PullRequest` / `PullRequestComment` upserts,&#10;`GitHubRelease`, `ArtifactMetadata`, `Attestation`, `GitHubCommit`,&#10;`GitHubContent`, `GitHubIssue`, `GitHubRepository` and `WorkflowDispatch`&#10;round out the typed surface over the raw request primitive.
+  `GitBranch.upsert`, `GitTag.latestSemver` / `.upsert`, `CheckRun.withCheckRun`
+  (with `conclude`), `PullRequest` / `PullRequestComment` upserts,
+  `GitHubRelease`, `ArtifactMetadata`, `Attestation`, `GitHubCommit`,
+  `GitHubContent`, `GitHubIssue`, `GitHubRepository` and `WorkflowDispatch`
+  round out the typed surface over the raw request primitive.
   ### Errors and auth
-  One `GitHubError` covers every REST resource, with a `kind` for routing and&#10;`hasKind` for narrowing; `kind: "alreadyExists"` is what makes an upsert
+  One `GitHubError` covers every REST resource, with a `kind` for routing and
+  `hasKind` for narrowing; `kind: "alreadyExists"` is what makes an upsert
   implementable without a second existence check. `GitHubGraphQLError` covers
   GraphQL, and `GitHubApp` mints installation tokens (`GitHubAppError` on
   failure) without pulling in `@octokit/auth-app`'s OAuth machinery. [#180][#180]

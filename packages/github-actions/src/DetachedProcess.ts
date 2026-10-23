@@ -1,12 +1,14 @@
 import { spawn as spawnChild } from "node:child_process";
 import { closeSync, openSync } from "node:fs";
 import type { Duration } from "effect";
-import { Effect, Schema } from "effect";
-import { HttpClient } from "effect/unstable/http";
-import { ChildProcessSpawner } from "effect/unstable/process";
+import { Effect, Schedule, Schema } from "effect";
+import { HttpClient } from "effect/http";
+import { ChildProcessSpawner } from "effect/process";
+import { isErrno } from "./internal/fsProbe.js";
+import { unstubbed } from "./internal/unstubbed.js";
 
 /**
- * Raised when a detached child cannot be started, waited for, or reaped.
+ * Raised when the log file for a detached child's output cannot be opened.
  *
  * @public
  */
@@ -179,14 +181,31 @@ export interface DetachedSpawnOptions {
 	/** The working directory. */
 	readonly cwd?: string | undefined;
 	/**
+	 * The environment the child inherits, before `env` is merged over it.
+	 *
+	 * @remarks
+	 * Defaults to the parent's `process.env` — **the one sanctioned ambient
+	 * fallback in this module**, the same class of default as
+	 * `ActionInput.provider`'s `env = process.env`, and an exception to the
+	 * package rule stated on `ChildEnv` (ambient process state is never read
+	 * behind a caller's back) precisely because passing a value here is how a
+	 * caller opts out of it. Supply it to give the child a controlled block —
+	 * a test proving exactly what a worker sees, or a worker that must not
+	 * inherit the action's secrets — remembering that a base without `PATH`
+	 * costs the child its runtime. An `undefined` value is dropped by Node's
+	 * spawn, never stringified.
+	 */
+	readonly base?: Readonly<Record<string, string | undefined>> | undefined;
+	/**
 	 * Environment additions.
 	 *
 	 * @remarks
-	 * **Merged over the parent's environment, not substituted for it.** A bare
-	 * environment costs the child `PATH`, which usually means it cannot find its
-	 * own runtime and dies before writing a word to the log — a failure that
-	 * looks like a spawn bug and is not. Secrets belong here only via
-	 * `Secret.forChildEnv`, which masks them on the way out.
+	 * **Merged over `base` (the parent's environment by default), not
+	 * substituted for it.** A bare environment costs the child `PATH`, which
+	 * usually means it cannot find its own runtime and dies before writing a
+	 * word to the log — a failure that looks like a spawn bug and is not.
+	 * Secrets belong here only via `Secret.forChildEnv`, which masks them on
+	 * the way out.
 	 */
 	readonly env?: Readonly<Record<string, string>> | undefined;
 }
@@ -237,16 +256,8 @@ export interface DetachedProcessOps {
 	readonly reap: (pid: number, signal?: NodeJS.Signals) => Effect.Effect<boolean, DetachedProcessError>;
 }
 
-/** Whether a thrown value is a Node errno error with the given code. */
-const isErrno = (cause: unknown, code: string): boolean =>
-	typeof cause === "object" && cause !== null && (cause as { code?: unknown }).code === code;
-
 /** See {@link DetachedProcess.makeTestOps}: an unstubbed member dies naming itself. */
-const unimplemented = (member: string): never => {
-	throw new Error(
-		`DetachedProcess.makeTestOps: ${member}() was called but not stubbed — pass a \`${member}\` override.`,
-	);
-};
+const dies = unstubbed("DetachedProcess.makeTestOps");
 
 /**
  * A long-lived child that outlives the phase that started it.
@@ -302,7 +313,7 @@ export class DetachedProcess {
 				try {
 					const child = spawnChild(options.command, [...(options.args ?? [])], {
 						...(options.cwd === undefined ? {} : { cwd: options.cwd }),
-						env: { ...process.env, ...options.env },
+						env: { ...(options.base ?? process.env), ...options.env },
 						detached: true,
 						stdio: ["ignore", descriptor, descriptor],
 					});
@@ -337,8 +348,7 @@ export class DetachedProcess {
 	 * @remarks
 	 * A domain predicate rather than a sleep: "the server answers" is the thing
 	 * being waited for, and any fixed delay is simultaneously too long on a fast
-	 * runner and too short on a slow one. Two consumers hand-rolled this, one of
-	 * them around an `Effect.suspend` footgun it had to explain in a comment.
+	 * runner and too short on a slow one.
 	 *
 	 * A probe *failure* is propagated rather than treated as "not ready" — a
 	 * probe that cannot run is a different situation from a child that is not up
@@ -349,19 +359,17 @@ export class DetachedProcess {
 		probe: Effect.Effect<boolean, E, R>,
 		options?: ReadinessOptions,
 	) {
-		const interval = options?.interval ?? "150 millis";
-		const attempts = options?.attempts ?? 40;
-		const poll = (remaining: number): Effect.Effect<void, E | DetachedProcessError, R> =>
-			Effect.flatMap(probe, (ready) => {
-				if (ready) {
-					return Effect.void;
-				}
-				if (remaining <= 0) {
-					return Effect.fail(new DetachedNotReadyError({}));
-				}
-				return Effect.flatMap(Effect.sleep(interval), () => poll(remaining - 1));
-			});
-		return yield* poll(attempts);
+		// One initial probe plus `attempts` spaced retries, stopping early the
+		// moment one answers ready; the last answer is what remains when the
+		// budget runs out.
+		const ready = yield* Effect.repeat(probe, {
+			schedule: Schedule.spaced(options?.interval ?? "150 millis"),
+			times: options?.attempts ?? 40,
+			until: (answer) => answer,
+		});
+		if (!ready) {
+			return yield* Effect.fail(new DetachedNotReadyError({}));
+		}
 	});
 
 	/**
@@ -370,11 +378,9 @@ export class DetachedProcess {
 	 * @remarks
 	 * The probe {@link DetachedProcess.awaitReady} almost always wants: an HTTP
 	 * `GET` at a port the child is still binding, where connection-refused *is*
-	 * "not up yet". The consumers that hand-rolled the polling wrote exactly
-	 * this probe around it, and each had to discover the same subtlety — the
-	 * probe's error channel must stay empty, because `awaitReady` deliberately
-	 * propagates probe failures, and a refused connection is not a failure of
-	 * the probe.
+	 * "not up yet". The probe's error channel must stay empty, because
+	 * `awaitReady` deliberately propagates probe failures, and a refused
+	 * connection is not a failure of the probe.
 	 *
 	 * So this probe never fails: a refused connection, any other transport
 	 * error and a non-2xx answer all collapse to `false`, leaving
@@ -383,9 +389,9 @@ export class DetachedProcess {
 	 * only sound because every failure an HTTP readiness check can see means
 	 * the same thing here. The cost is the documented one: a *misconfigured*
 	 * probe — a typo'd port, a wrong path — is indistinguishable from a child
-	 * that never came up, and reports as `notReady` only after the full budget.
-	 * A probe whose failures are meaningfully distinct should stay a
-	 * hand-written effect with those failures in `E`.
+	 * that never came up, and reports as {@link DetachedNotReadyError} only after
+	 * the full budget. A probe whose failures are meaningfully distinct should
+	 * stay a hand-written effect with those failures in `E`.
 	 *
 	 * The request goes through core's `HttpClient` — `Action.run` provides it
 	 * ambiently — rather than a bare `fetch`, per the package rule that
@@ -462,9 +468,9 @@ export class DetachedProcess {
 	 * production form signals a real pid.
 	 */
 	static readonly makeTestOps = (overrides: Partial<DetachedProcessOps> = {}): DetachedProcessOps => ({
-		spawn: () => Effect.sync(() => unimplemented("spawn")),
-		awaitReady: () => Effect.sync(() => unimplemented("awaitReady")),
-		reap: () => Effect.sync(() => unimplemented("reap")),
+		spawn: () => dies("spawn"),
+		awaitReady: () => dies("awaitReady"),
+		reap: () => dies("reap"),
 		...overrides,
 	});
 }

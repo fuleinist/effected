@@ -1,0 +1,281 @@
+---
+name: effect-v4-observability
+description: Use when adding logging, metrics, tracing/spans, or OpenTelemetry to Effect v4 code — covers Effect.fn named spans, the Effect.log* family, custom loggers (Logger.make for the format, Logger.withConsoleLog/withConsoleError for the route — never a hand-written Console.log call), Metric counters/gauges/histograms with Metric.withAttributes (NOT the removed Metric.tagged), and wiring OpenTelemetry export at the app edge (core OTLP layers in effect/observability, Tracer.externalSpan and HttpTraceContext for inbound context, HttpClient.TracerPropagationEnabled for outbound, @effect/opentelemetry only as an optional SDK bridge). Encodes the house rule that pure-tier libraries instrument public fallible boundaries only and stay telemetry-agnostic, while apps compose OTel at the infrastructure layer.
+---
+
+# Effect v4 observability
+
+Every Effect-core name below was verified to exist against the vendored
+Effect source, and every claimed absence verified absent there.
+Core's own OTLP exporters (`effect/observability`) are verified the same way.
+`@effect/opentelemetry` is **not installed** in this monorepo, so this skill
+names none of its members; verify any you use against the installed package.
+When an API is not listed here, confirm it against the source or a
+type-checked probe before writing code. Module routing (what
+`Tracer`, `Logger`, `References` are) lives in `effect-v4-module-index`.
+
+## The house rule (this is the whole point)
+
+> Observability is composed **once, at the infrastructure/edge layer**. Domain
+> operations stay telemetry-agnostic. Libraries never import an exporter —
+> neither `effect/observability` nor `@effect/opentelemetry`.
+
+The official Effect observability guide endorses this exactly: "business code
+stays observability-agnostic; OpenTelemetry is introduced at the infrastructure
+layer, not inside domain operations." Our pure-tier libraries (semver, jsonc,
+yaml) are a *specialization* of that guide, not a deviation.
+
+**Our specialization for pure-tier parser/engine libraries:** instrument
+**public fallible boundaries only** with named `Effect.fn("Name.op")` spans.
+**No per-node / hot-path spans.** No metrics on internal helpers. Apps compose an
+exporter (core's `Otlp` layers) at their edge and get traces/metrics/logs from the
+library for free — because the library only emits named spans at the operations
+a user actually calls.
+
+**Coverage is uniform, not selective.** "Boundaries only" is a ceiling (don't go
+below the public boundary), not a filter for picking the interesting ones. Every
+public fallible method of a service gets a named span — if one is traced, all of
+them are. Partial coverage is worse than none: a user tracing their app sees one
+method light up but not its equally-public siblings and reasonably concludes
+those never ran or cannot fail. The blind spot reads as signal.
+
+## Tracing — `Effect.fn` is the v4 idiom
+
+`Effect.fn`, `Effect.fnUntraced`, `Effect.withSpan`, `Effect.withSpanScoped`,
+`Effect.withParentSpan`, `Effect.annotateCurrentSpan`, `Effect.withLogSpan` — all
+still exported from `Effect.ts`.
+
+```ts
+import { Effect } from "effect"
+
+// Named span — our default at PUBLIC FALLIBLE boundaries (Yaml.parse, SemVer.compare).
+const parse = Effect.fn("Yaml.parse")(function* (input: string) {
+  yield* Effect.annotateCurrentSpan({ length: input.length }) // stable IDs / small values ONLY
+  return yield* runEngine(input)
+})
+
+// Bare Effect.fn (NO name) — the guide's middle ground: keeps stack frames for
+// better traces WITHOUT emitting a named span. Use for reusable internal ops
+// where you want stack-frame ergonomics but not span identity.
+const normalize = Effect.fn(function* (raw: string) {
+  return raw.trim()
+})
+
+// fnUntraced — measured hot low-level internals ONLY; throws away observability.
+const tightHelper = Effect.fnUntraced(function* (x: string) {
+  return x
+})
+```
+
+Draw the line by *purpose*: **named span = tracing identity** (public fallible
+boundary only); **bare `Effect.fn` = stack-frame ergonomics** (fine internally);
+**`fnUntraced` = hot path, no frames**. "Boundaries only" governs *named* spans —
+it does not forbid bare `Effect.fn` inside an engine.
+
+**Pure `Result`-returning siblings of a spanned boundary carry no span.** This
+is the kit's **Result-parity rule** — ratified kit-wide policy, not a package
+idiosyncrasy (authoritative statement: the effected repo's
+`formatter-convention.md`, decision 6). Scope test: a public boundary returning
+`Effect` with `R = never`, no async step and no IO — where the wrapper carries
+nothing but a span and the error channel — must expose the sync form as the
+primitive, spelled `*Result` (`Fmt.parseResult` pure, `Fmt.parse` spanned).
+Never `*Sync`: the Effect form is also synchronous, and the kit uses `*Sync`
+for genuinely-blocking-IO facades returning nullables. Interface/adapter seams
+are out of scope — the policy applies to the engine, not every adapter over it
+(a codec implementing an `Effect`-shaped interface stays as it is). The sync
+variant is not an Effect and gets no span, no log, no metric; do not wrap it
+in one to "keep coverage uniform" — the uniform-coverage rule governs the
+*Effect* surface. Two obligations instead: the Effect variant is defined **in
+terms of** the Result variant behind its named span (so tracing sees every
+Effect-path call and the two can never diverge), and the sync variant's TSDoc
+points Effect consumers at the spanned variant. A sync twin whose Effect
+sibling lacks a span, or that quietly grows its own logging, is a review
+finding — as is an in-scope boundary with no `*Result` twin at all.
+
+Explicit / nested / edge spans:
+
+```ts
+const sync = Effect.fn("User.sync")(function* (id: string) {
+  const p = yield* fetchProfile(id).pipe(Effect.withSpan("fetchProfile"))
+  return yield* persist(p).pipe(Effect.withSpan("persist"))
+})
+// withSpanScoped   → span open for a Scope's lifetime (resource / streaming ops)
+// withParentSpan   → continue an externally-created parent span (framework edge only)
+// annotateCurrentSpan({ key }) → stable IDs / small structured values; never
+//                    giant payloads, secrets, or noisy transient data
+```
+
+## Structured logging
+
+`Effect.log`, `logTrace`, `logDebug`, `logInfo`, `logWarning`, `logError`,
+`logFatal`, `annotateLogs` — all still exported. They flow through the
+current fiber: span context, annotations, and log spans attach automatically.
+
+```ts
+yield* Effect.logInfo("starting sync", { userId })   // structured 2nd arg — verified
+// Logical label without a full tracing span:
+const program = Effect.logInfo("starting sync").pipe(Effect.withLogSpan("user-sync"))
+```
+
+Guide rules: log at business boundaries, not every helper; structured values over
+concatenated strings; high-signal only; no duplicate logs at every layer. Rely on
+spans plus a few well-placed logs. For libraries this means: don't scatter logs
+through the engine — a public boundary may log, the hot path does not.
+
+### Custom loggers — format with `Logger.make`, route with `withConsoleLog`
+
+A `Logger<Message, Output>` is one method, `log(options): Output` (`Logger.ts:66`).
+Keep **formatting** and **routing** as two loggers, because core already ships
+the routing half:
+
+```ts
+const format = Logger.make((o) => `${o.logLevel}: ${String(o.message)}`)   // Logger<unknown, string>
+const toStdout = Logger.withConsoleLog(format)                            // Logger<unknown, void>
+const toStderr = Logger.withConsoleError(format)
+program.pipe(Effect.provide(Logger.layer([toStdout])))
+```
+
+`Logger.withConsoleLog` / `withConsoleError` (`Logger.ts:273,314`) read the
+`Console` service off the fiber and call `console.log` / `console.error` with
+`self.log(options)` — which is also how you **reuse a logger inside another**:
+call `inner.log(options)`, never re-render. The trap is writing that routing
+line by hand — `Logger.make((o) => o.fiber.getRef(Console.Console).log(render(o)))`
+— which duplicates core and drifts from it (two such sites had accreted in
+`github-actions` before #769). The built-ins are the same composition:
+`consoleLogFmt` / `consoleStructured` / `consoleJson` are
+`withConsoleLog(formatLogFmt | formatStructured | formatJson)` (`Logger.ts:942-992`),
+and `Logger.map(logger, f)` post-processes an output. Because the route goes
+through the `Console` service, `TestConsole` captures it: probed,
+`Effect.logInfo("hello")` under `Logger.layer([withConsoleLog(format)])` lands
+in `TestConsole.logLines` as `["Info: hello"]` and the `withConsoleError` twin in
+`errorLines` — the `ConsoleRef` coupling `effect-v4-testing` warns about is the
+same mechanism, and here it works for you.
+
+## Metrics
+
+The `Metric` surface: `counter`, `gauge`, `histogram`, `frequency`,
+`summary`, `timer`, `withAttributes`, `withConstantInput`, `linearBoundaries`,
+`exponentialBoundaries`, `boundariesFromIterable` — all exported from
+`Metric.ts`.
+
+```ts
+import { Effect, Metric } from "effect"
+
+const requests = Metric.counter("user_load_requests").pipe(
+  Metric.withConstantInput(1)
+)
+
+// Attach a metric at a boundary via Effect.track — the post-processing arg to
+// Effect.fn. Verified: Effect.fn("name")(gen, Effect.track(metric)) typechecks and runs.
+const loadUser = Effect.fn("loadUser")(
+  function* (userId: string) {
+    return { id: userId }
+  },
+  Effect.track(requests)
+)
+```
+
+**Names that are easy to reach for and do not exist** (each absence verified
+absent in the source):
+
+- There is no `Metric.tagged` / `Metric.taggedWithLabels`. Use
+  `Metric.withAttributes({ ... })`; ambient attributes ride on
+  `Metric.CurrentMetricAttributes` (`Metric.ts:1623`) — a **`Context.Reference`**,
+  and there is no `FiberRef`, so read and scope it the way `effect-v4-idioms`
+  describes for any reference: `yield*` it to read, `Effect.provideService` to
+  scope a value.
+- Histogram boundaries: `Metric.linearBoundaries`, `Metric.exponentialBoundaries`,
+  `Metric.boundariesFromIterable` — there is no `MetricBoundaries.*` module on the
+  `Metric` surface. `Metric.timer` exists; `timerWithBoundaries` does not.
+- `Effect.track` bolts a metric onto an effect / `Effect.fn`.
+
+Guide rule: metrics belong on **boundaries** — endpoint/queue/job handlers,
+repository ops, external-API calls, retries — never on every internal helper. For
+pure-tier libraries the honest default is **no metrics at all**; let the app meter
+its call to the library.
+
+## OpenTelemetry — at the app edge only
+
+Libraries never touch this. An **application** composes one telemetry layer at
+its top level.
+
+### Core OTLP export (`effect/observability`)
+
+Core ships vendor-neutral OTLP exporters, so most apps need no SDK at all.
+`Otlp.layer` installs the OTLP logger, metrics exporter and tracer exporter from
+one configuration, posting to `/v1/logs`, `/v1/metrics` and `/v1/traces` under
+`baseUrl`. It needs an `HttpClient`, and an `OtlpSerialization` that
+`layerJson` / `layerProtobuf` already provide:
+
+```ts
+import { Layer } from "effect"
+import { FetchHttpClient } from "effect/http"
+import { Otlp, OtlpSerialization } from "effect/observability"
+
+// Explicit endpoint, JSON encoding.
+const TelemetryLayer = Otlp.layerJson({
+  baseUrl: "http://localhost:4318",
+  resource: { serviceName: "todo-service", serviceVersion: "1.0.0" }
+}).pipe(Layer.provide(FetchHttpClient.layer))
+
+// Or from the standard OTEL_* environment (OTEL_SDK_DISABLED,
+// OTEL_EXPORTER_OTLP_*, OTEL_BSP_*); this form takes the serialization explicitly.
+const TelemetryFromEnv = Otlp.layerFromConfig({ resource: { serviceName: "todo-service" } }).pipe(
+  Layer.provide(OtlpSerialization.layerJson),
+  Layer.provide(FetchHttpClient.layer)
+)
+
+const AppLayer = Layer.mergeAll(DomainLayer, HttpLayer).pipe(Layer.provide(TelemetryLayer))
+```
+
+- `layer` / `layerJson` / `layerProtobuf` / `layerFromConfig` are the four
+  entry points; the per-signal modules (`OtlpTracer`, `OtlpLogger`,
+  `OtlpMetrics`) exist for an app exporting only one signal.
+- The layers own export batching and shutdown (`shutdownTimeout`) — **never
+  flush or shut an exporter down from business code.**
+
+### Bridging trace context
+
+- **Inbound**, at the HTTP/RPC/queue adapter only: `HttpTraceContext.fromHeaders`
+  (`effect/http`) reads `traceparent`/`b3` into an `Option<Tracer.ExternalSpan>`;
+  for any other carrier build one with `Tracer.externalSpan({ spanId, traceId })`.
+  Parent the handler on it with `Effect.withSpan(name, { parent })` or
+  `Effect.withParentSpan(span)`.
+- **Outbound**, core's `HttpClient` writes `b3` and `traceparent` on every
+  request by default. That is right inside your own system and wrong toward a
+  third party, which then receives your trace and span ids. Turn it off per
+  client with the `HttpClient.TracerPropagationEnabled` reference; the client
+  span is still recorded locally:
+
+  ```ts
+  const http = HttpClient.transform(yield* HttpClient.HttpClient, (effect) =>
+    Effect.provideService(effect, HttpClient.TracerPropagationEnabled, false)
+  )
+  ```
+
+  The kit's example is `@effected/github-actions`' S3 `BlobStore`, which signs
+  requests to a third-party object store and sends it no trace context.
+
+### `@effect/opentelemetry` (optional SDK bridge)
+
+Reach for it only when the app must run the OpenTelemetry JS SDK itself (its
+span processors, an exporter core does not ship, or another library already
+instrumented through the SDK). It is not vendored in this kit, so **verify
+every name against the installed package** before writing it; do not take one
+from memory or from older guides.
+
+**Anti-patterns:** constructing OTel SDK clients inside services; wiring
+exporters in domain code; scattering shutdown logic; per-subsystem telemetry
+config instead of one top-level layer; propagating trace headers to a
+third-party API.
+
+## How to verify quickly
+
+```bash
+cd packages/yaml && node --input-type=module -e "
+import * as Metric from 'effect/Metric';
+console.log(typeof Metric.withAttributes, typeof Metric.tagged);
+"   # → function undefined
+```
+
+One runtime probe beats an hour of guessing whether a name exists.

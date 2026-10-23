@@ -1,6 +1,6 @@
 import type { Effect } from "effect";
 import { Context, Effect as Eff, Layer, Option, Schema } from "effect";
-import { ChildProcess } from "effect/unstable/process";
+import { ChildProcess } from "effect/process";
 
 /**
  * The package managers whose project-local exec argv this package knows.
@@ -166,11 +166,10 @@ export interface LocalExecShape {
  * **This is an inverted contract.** Tool discovery needs package-manager
  * detection and workspace-root resolution, both of which live in the
  * integrated-tier `@effected/workspaces`. Depending on it directly would make
- * this package integrated too — and, through the planned `@effected/npm` edge,
- * would drag `npm`, `lockfiles` and `package-json` up a tier with it. So this
- * package declares the narrow contract and `@effected/workspaces` ships the
- * layer that implements it, exactly as `@effected/npm` owns `CatalogResolver`
- * and workspaces implements that.
+ * this package integrated too, pulling its transitive dependencies up a tier
+ * with it. So this package declares the narrow contract and
+ * `@effected/workspaces` ships the layer that implements it, the same shape as
+ * `@effected/npm`'s `CatalogResolver`, which workspaces also implements.
  *
  * A consumer with no monorepo never needs that implementation:
  * {@link LocalExec.layerNone} (global-only) and {@link LocalExec.layerFor}

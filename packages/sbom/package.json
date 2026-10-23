@@ -1,6 +1,6 @@
 {
 	"name": "@effected/sbom",
-	"version": "0.5.0",
+	"version": "0.15.0",
 	"private": true,
 	"description": "CycloneDX 1.6 SBOM construction, SLSA provenance, NTIA validation and Sigstore signing as typed services.",
 	"keywords": ["sbom", "cyclonedx", "sigstore", "slsa", "provenance", "ntia", "effect", "effected"],
@@ -32,6 +32,7 @@
 		"types:check": "tsc --noEmit"
 	},
 	"dependencies": {
+		"@effected/oidc": "workspace:^",
 		"@effected/package-json": "workspace:^",
 		"@effected/spdx": "workspace:^",
 		"@sigstore/bundle": "^5.0.0",
@@ -40,7 +41,7 @@
 	"devDependencies": {
 		"@effect/platform-node": "catalog:effect",
 		"@effect/vitest": "catalog:effect",
-		"@savvy-web/bundler": "^2.3.1",
+		"@savvy-web/bundler": "^2.6.0",
 		"@types/node": "catalog:build",
 		"effect": "catalog:effect",
 		"typescript": "catalog:build"

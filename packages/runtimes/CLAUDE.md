@@ -4,13 +4,13 @@ Resolve semver-compatible Node.js, Bun and Deno versions from the live release f
 
 Three resolver services (`NodeResolver`, `BunResolver`, `DenoResolver`), each in three cache strategies, over one parameterized internal engine. The `runtime-resolver` binary lives in its own external repo, not this workspace, and is not this package's problem.
 
-**Design doc:** `@../../.claude/design/effected/packages/runtimes.md` — load before changing the strategies, the error ladder or the release index.
+**Design doc:** `@./okf/modules/runtimes.md` — load before changing the strategies, the error ladder or the release index.
 
 ## Tier: boundary
 
 `peerDependencies` is `effect` alone; `dependencies` is `@effected/semver` (`workspace:^`) and nothing else. **No external runtime dependency, and it must stay that way** — that is the whole reason the `runtime-resolver` binary ships from a separate external repo rather than living here, so this library's consumers never pull in `@effect/platform-node`.
 
-IO goes through `HttpClient` from `effect/unstable/http`, which arrives via the `R` channel; the consumer provides `FetchHttpClient.layer` at the edge, and that layer has no requirements of its own. `layerOffline` requires nothing at all.
+IO goes through `HttpClient` from `effect/http`, which arrives via the `R` channel; the consumer provides `FetchHttpClient.layer` at the edge, and that layer has no requirements of its own. `layerOffline` requires nothing at all.
 
 **Octokit is gone.** `octokit` + `@octokit/auth-app` were the v3 library's entire runtime-dependency weight, funding exactly two REST GETs. R1 forbids them here outright. The seam they abstracted is now `FetchHttpClient.Fetch`, a `Context.Reference<typeof globalThis.fetch>` a test overrides with a fake `fetch`.
 

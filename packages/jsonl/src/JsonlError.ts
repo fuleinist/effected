@@ -1,12 +1,9 @@
-/**
- * The `@effected/jsonl` error taxonomy.
- *
- * Every tag names a distinct recovery a caller would actually make, and every
- * cause is carried structurally rather than stringified. Core's `PlatformError`
- * passes through untranslated rather than being wrapped.
- *
- * @since 0.1.0
- */
+// The `@effected/jsonl` error taxonomy.
+//
+// Every tag names a distinct recovery a caller would actually make, and every
+// cause is carried structurally rather than stringified. Core's `PlatformError`
+// passes through untranslated rather than being wrapped.
+
 import { Option, Schema } from "effect";
 import { LineSlice } from "./LineSlice.js";
 
@@ -20,6 +17,9 @@ import { LineSlice } from "./LineSlice.js";
  * and expected types — instead of flattening it to a string at the boundary.
  */
 const SchemaErrorFromSelf = Schema.declare(Schema.isSchemaError);
+
+/** The ` at byte offset N` suffix, when there is a line to locate. */
+const at = (line: LineSlice | undefined): string => (line === undefined ? "" : ` at byte offset ${line.offset}`);
 
 /**
  * A journal line that is not valid JSON.
@@ -69,15 +69,15 @@ export class MalformedLine extends Schema.TaggedError<MalformedLine>()("Malforme
  * @public
  */
 export class UnknownEvent extends Schema.TaggedError<UnknownEvent>()("UnknownEvent", {
-	/** The offending line, with its byte offsets into the source. */
-	line: LineSlice,
+	/** The offending line, with its byte offsets into the source. Absent on the encode path. */
+	line: Schema.optionalKey(LineSlice),
 	/** The unrecognized tag as it appeared on the envelope. */
 	event: Schema.String,
 	/** The tags this journal's registry does define. */
 	known: Schema.Array(Schema.String),
 }) {
 	override get message(): string {
-		return `unknown JSONL event ${JSON.stringify(this.event)} at byte offset ${this.line.offset}`;
+		return `unknown JSONL event ${JSON.stringify(this.event)}${at(this.line)}`;
 	}
 }
 
@@ -96,8 +96,11 @@ export class UnknownEvent extends Schema.TaggedError<UnknownEvent>()("UnknownEve
  * @public
  */
 export class InvalidData extends Schema.TaggedError<InvalidData>()("InvalidData", {
-	/** The offending line, with its byte offsets into the source. */
-	line: LineSlice,
+	/**
+	 * The offending line, with its byte offsets into the source. Absent when the
+	 * failure came from encoding a payload for append, which has no line yet.
+	 */
+	line: Schema.optionalKey(LineSlice),
 	/**
 	 * The event tag whose payload schema rejected the data, or `none` when it
 	 * was the envelope frame itself that failed.
@@ -108,7 +111,7 @@ export class InvalidData extends Schema.TaggedError<InvalidData>()("InvalidData"
 }) {
 	override get message(): string {
 		const where = Option.isSome(this.event) ? `payload for event ${JSON.stringify(this.event.value)}` : "envelope";
-		return `invalid JSONL ${where} at byte offset ${this.line.offset}: ${this.error.message}`;
+		return `invalid JSONL ${where}${at(this.line)}: ${this.error.message}`;
 	}
 }
 
@@ -137,8 +140,8 @@ export class TerminalViolation extends Schema.TaggedError<TerminalViolation>()("
  *
  * A missing journal is a **legal state** — building the layer over a path that
  * does not exist yet succeeds, and the watcher activates once the file appears.
- * What is not legal is materializing it implicitly: `append`, `query` and
- * `latest` fail with this rather than creating the file, so a typo in a path
+ * What is not legal is materializing it implicitly: `append` and `query` fail
+ * with this (and `latest` reads as empty) rather than creating the file, so a typo in a path
  * cannot quietly produce a second, empty journal that looks like a working
  * system with no history. Creation is always explicit, via `create`.
  *
@@ -179,7 +182,7 @@ export class UnserializableData extends Schema.TaggedError<UnserializableData>()
 	/** The event tag whose payload could not be serialized. */
 	event: Schema.String,
 	/** The value `JSON.stringify` threw, carried structurally. */
-	cause: Schema.Unknown,
+	cause: Schema.Defect(),
 }) {
 	override get message(): string {
 		// Deliberately does not render `cause`: it may be the very cyclic value
@@ -255,6 +258,14 @@ export class JournalResync extends Schema.TaggedError<JournalResync>()("JournalR
 		return `journal ${this.reason} beneath the reader at ${this.path}: consumed ${this.expected}, file is now ${this.actual}`;
 	}
 }
+
+/**
+ * Why one line could not be decoded into an envelope: not JSON, not an
+ * envelope (or a bad payload), or a tag the registry does not define.
+ *
+ * @public
+ */
+export type DecodeError = MalformedLine | InvalidData | UnknownEvent;
 
 /**
  * Every error this package raises from the pure core and the journal service.

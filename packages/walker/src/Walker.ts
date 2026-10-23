@@ -45,6 +45,11 @@ export interface AscendOptions {
 	 * still the lexical one derived from `start`, unrewritten. A ceiling naming
 	 * no ancestor of `start` never matches and the ascent runs to the
 	 * filesystem root.
+	 *
+	 * **Lexical, never physical.** A ceiling spelled with symlinks resolved —
+	 * `Git.repoRoot`'s answer is one — does not match a chain reached through a
+	 * symlink, and the ascent runs to the filesystem root. Use
+	 * {@link Walker.ascendWithin} for a physical ceiling.
 	 */
 	readonly stopAt?: string;
 	/** Hard cap on chain length. Defaults to 256. */
@@ -61,7 +66,7 @@ const ascend = (start: string, options?: AscendOptions): Effect.Effect<ReadonlyA
 		}
 		// A relative CEILING dies, exactly as an invalid maxDepth does — same
 		// category, same construct. `start` is deliberately unconstrained: a
-		// relative start still ascends to the relative root, exactly as before.
+		// relative start still ascends to the relative root.
 		if (options?.stopAt !== undefined && !path.isAbsolute(options.stopAt)) {
 			return yield* Effect.die(
 				new Error(
@@ -86,6 +91,47 @@ const ascend = (start: string, options?: AscendOptions): Effect.Effect<ReadonlyA
 			current = parent;
 		}
 		return dirs;
+	});
+
+// Implementation of Walker.ascendWithin; the public contract lives on the static.
+const ascendWithin = (
+	start: string,
+	ceiling: Option.Option<string>,
+	options?: Pick<AscendOptions, "maxDepth">,
+): Effect.Effect<ReadonlyArray<string>, never, FileSystem.FileSystem | Path.Path> =>
+	Effect.gen(function* () {
+		// Absence is explicit: `Option.none()` is the only way to ask for an
+		// unbounded walk, so a stray `undefined` cannot become one by accident.
+		if (Option.isNone(ceiling)) return yield* ascend(start, options);
+		return yield* ascendToPhysical(start, ceiling.value, options);
+	});
+
+// ascendWithin with a ceiling present: the lexical chain, stopped physically.
+const ascendToPhysical = (
+	start: string,
+	ceiling: string,
+	options?: Pick<AscendOptions, "maxDepth">,
+): Effect.Effect<ReadonlyArray<string>, never, FileSystem.FileSystem | Path.Path> =>
+	Effect.gen(function* () {
+		const fs = yield* FileSystem.FileSystem;
+		const path = yield* Path.Path;
+		if (!path.isAbsolute(ceiling)) {
+			return yield* Effect.die(
+				new Error(
+					`Walker.ascendWithin: ceiling must be an absolute path, received ${JSON.stringify(ceiling)} (ascending from ${JSON.stringify(start)})`,
+				),
+			);
+		}
+		// The lexical pass first: a ceiling the chain already spells needs no I/O.
+		const dirs = yield* ascend(start, { ...options, stopAt: ceiling });
+		const last = dirs.at(-1);
+		if (last !== undefined && path.resolve(last) === path.resolve(ceiling)) return dirs;
+		// A ceiling that cannot be resolved names nothing physical to match; the
+		// lexical answer stands, exactly as `ascend` would give it.
+		const physical = yield* Effect.option(fs.realPath(ceiling));
+		if (Option.isNone(physical)) return dirs;
+		const hit = yield* findRoot(dirs, (dir) => Effect.map(fs.realPath(dir), (real) => real === physical.value));
+		return Option.isSome(hit) ? dirs.slice(0, dirs.indexOf(hit.value) + 1) : dirs;
 	});
 
 // Implementation of Walker.firstMatch; the public contract lives on the static.
@@ -120,7 +166,8 @@ const findRoot = <E, R>(
 ): Effect.Effect<Option.Option<string>, never, R> => firstMatch(dirs, isRoot);
 
 /**
- * Upward path traversal primitives.
+ * Upward path traversal primitives: the directory chain from a start path to the
+ * root, and first-match scans over it.
  *
  * @public
  */
@@ -141,15 +188,56 @@ export class Walker {
 	 * a pathological `Path` implementation that never reaches one.
 	 *
 	 * `stopAt` is compared in normalized form — see {@link AscendOptions.stopAt}.
-	 * Raw string equality made the ceiling fail OPEN: an unnormalized ceiling
-	 * matched nothing and the ascent ran silently to the filesystem root, which is
-	 * the unbounded walk the option exists to prevent, with no error to notice it
-	 * by. A relative ceiling **dies** for the same reason — resolving one against
-	 * `process.cwd()` would reintroduce the silent-wrong-walk failure through a
-	 * different door. See {@link AscendOptions.stopAt} for why that is a defect
-	 * rather than a typed error; the error channel stays `never`.
+	 * Comparing raw strings would let an unnormalized ceiling match nothing and
+	 * the ascent run silently to the filesystem root, which is the unbounded walk
+	 * the option exists to prevent. A relative ceiling **dies** for the same
+	 * reason — resolving one against `process.cwd()` would reintroduce the
+	 * silent-wrong-walk failure through a different door. See
+	 * {@link AscendOptions.stopAt} for why that is a defect rather than a typed
+	 * error; the error channel stays `never`.
+	 *
+	 * @example
+	 * ```ts
+	 * import { Walker } from "@effected/walker";
+	 * import { Effect } from "effect";
+	 *
+	 * const program = Effect.gen(function* () {
+	 * 	// => ["/repo/packages/app", "/repo/packages", "/repo"]
+	 * 	return yield* Walker.ascend("/repo/packages/app", { stopAt: "/repo" });
+	 * });
+	 * // Requires `Path` from the platform layer.
+	 * ```
 	 */
 	static readonly ascend = ascend;
+
+	/**
+	 * {@link Walker.ascend} bounded by a PHYSICAL ceiling: stops at the nearest
+	 * directory whose real path is the ceiling's real path, inclusive.
+	 *
+	 * @remarks
+	 * Use this when the ceiling came from something that resolves symlinks —
+	 * `Git.repoRoot` (`git rev-parse --show-toplevel`) above all. `ascend`
+	 * compares `stopAt` lexically, so when `start` is reached through a symlink
+	 * (every macOS tmpdir: `/var` → `/private/var`; any symlinked checkout) the
+	 * chain never spells git's root, the ceiling never matches, and the walk
+	 * runs silently to the filesystem root.
+	 *
+	 * The chain is still the lexical one derived from `start`, exactly as
+	 * `ascend` yields it; only the stopping test is physical. A ceiling the
+	 * chain already spells stops without touching the filesystem. Otherwise each
+	 * ancestor's `realPath` is compared with the ceiling's, and a failed probe
+	 * is absorbed as "not the ceiling", as {@link Walker.firstMatch} absorbs
+	 * one. A ceiling that names no ancestor, or cannot itself be resolved,
+	 * leaves the chain running to the filesystem root, as `ascend` does.
+	 *
+	 * The ceiling is an `Option` so "no ceiling" is spelled explicitly:
+	 * `Option.none()` ascends to the filesystem root exactly as `ascend(start)`
+	 * does, which is the natural answer outside any repository —
+	 * `Walker.ascendWithin(start, yield* Effect.option(git.repoRoot(start)))`.
+	 * A present ceiling must be absolute; a relative one **dies**, for the
+	 * reasons {@link AscendOptions.stopAt} gives.
+	 */
+	static readonly ascendWithin = ascendWithin;
 
 	/**
 	 * The first candidate whose `predicate` reports true, or `Option.none()`.

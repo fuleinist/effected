@@ -6,7 +6,7 @@ const thrown = (options: {
 	status?: number;
 	message?: string;
 	headers?: Record<string, unknown>;
-	errors?: ReadonlyArray<{ message?: string }>;
+	errors?: ReadonlyArray<unknown>;
 }): unknown => ({
 	name: "HttpError",
 	message: options.message ?? "boom",
@@ -137,6 +137,34 @@ describe("GitHubError.fromOctokit", () => {
 		assert.strictEqual(error.kind, "alreadyExists");
 	});
 
+	it("reads already-exists off a structured already_exists code with no message", () => {
+		// The exact body POST /repos/{owner}/{repo}/releases answers for a tag that
+		// already has a release: no errors[].message, only the documented code.
+		const error = GitHubError.fromOctokit(
+			"Release.create",
+			thrown({
+				status: 422,
+				message: "Validation Failed",
+				errors: [{ resource: "Release", code: "already_exists", field: "tag_name" }],
+			}),
+			NOW,
+		);
+		assert.strictEqual(error.kind, "alreadyExists");
+	});
+
+	it("classifies a 422 whose structured code is something else as rejected", () => {
+		const error = GitHubError.fromOctokit(
+			"x",
+			thrown({
+				status: 422,
+				message: "Validation Failed",
+				errors: [{ resource: "Release", code: "invalid", field: "tag_name" }],
+			}),
+			NOW,
+		);
+		assert.strictEqual(error.kind, "rejected");
+	});
+
 	it("classifies a 409 saying so as alreadyExists", () => {
 		const error = GitHubError.fromOctokit("x", thrown({ status: 409, message: "Ref already exists" }), NOW);
 		assert.strictEqual(error.kind, "alreadyExists");
@@ -150,6 +178,46 @@ describe("GitHubError.fromOctokit", () => {
 		);
 		assert.strictEqual(error.kind, "rejected");
 		assert.isFalse(error.retryable);
+	});
+
+	it("carries each validation entry, skipping ones with nothing GitHub-shaped in them", () => {
+		const error = GitHubError.fromOctokit(
+			"x",
+			thrown({
+				status: 422,
+				message: "Validation Failed",
+				errors: [
+					{ resource: "Label", code: "invalid", field: "color" },
+					{ code: "custom", message: "name is reserved" },
+					"not an object",
+					{},
+					{ code: 7 },
+				],
+			}),
+			NOW,
+		);
+		assert.deepStrictEqual(
+			error.validation?.map((entry) => ({ ...entry })),
+			[
+				{ resource: "Label", field: "color", code: "invalid" },
+				{ code: "custom", message: "name is reserved" },
+			],
+		);
+	});
+
+	it("omits validation when GitHub sent no errors array", () => {
+		const error = GitHubError.fromOctokit("x", thrown({ status: 422, message: "Update is not a fast forward" }), NOW);
+		assert.isUndefined(error.validation);
+	});
+
+	it("classifies an undocumented code as rejected rather than failing to build the error", () => {
+		const error = GitHubError.fromOctokit(
+			"x",
+			thrown({ status: 422, message: "Validation Failed", errors: [{ code: "too_many" }] }),
+			NOW,
+		);
+		assert.strictEqual(error.kind, "rejected");
+		assert.strictEqual(error.validation?.[0]?.code, "too_many");
 	});
 
 	it("replaces an HTML error page with a sentence", () => {
@@ -216,6 +284,17 @@ describe("GitHubError statics", () => {
 		assert.isFalse(predicate(GitHubError.rejected("x", 422, "no")));
 	});
 
+	it("hasValidationCode matches any listed code and is false without validation", () => {
+		const error = GitHubError.fromOctokit(
+			"x",
+			thrown({ status: 422, message: "Validation Failed", errors: [{ code: "missing_field", field: "tag_name" }] }),
+			NOW,
+		);
+		assert.isTrue(GitHubError.hasValidationCode("invalid", "missing_field")(error));
+		assert.isFalse(GitHubError.hasValidationCode("missing")(error));
+		assert.isFalse(GitHubError.hasValidationCode("missing_field")(GitHubError.rejected("x", 422, "no")));
+	});
+
 	it("is a tagged error whose tag is stable", () => {
 		assert.strictEqual(GitHubError.notFound("x", "y")._tag, "GitHubError");
 	});
@@ -254,5 +333,108 @@ describe("readRateLimitHeaders", () => {
 			}),
 			undefined,
 		);
+	});
+});
+
+describe("GitHubError.fromResponse", () => {
+	/** The #823 body: a duplicate release, which carries the code and no prose. */
+	const DUPLICATE_RELEASE = {
+		message: "Validation Failed",
+		errors: [{ resource: "Release", code: "already_exists", field: "tag_name" }],
+	};
+
+	it("classifies raw responses through the same table as fromOctokit", () => {
+		const cases: ReadonlyArray<{
+			status: number;
+			headers?: Record<string, string>;
+			body?: unknown;
+			kind: string;
+			retryAfterMillis?: number;
+		}> = [
+			{ status: 503, kind: "transport" },
+			{ status: 429, kind: "rateLimited" },
+			{ status: 403, headers: { "retry-after": "30" }, kind: "rateLimited", retryAfterMillis: 30_000 },
+			{ status: 403, kind: "unauthorized" },
+			{ status: 404, kind: "notFound" },
+			{ status: 422, body: DUPLICATE_RELEASE, kind: "alreadyExists" },
+			{ status: 422, body: { message: "Validation Failed", errors: [{ code: "invalid" }] }, kind: "rejected" },
+			// Prose only: /git/refs says so in words, with no structured code.
+			{ status: 422, body: { message: "Reference already exists" }, kind: "alreadyExists" },
+		];
+		for (const entry of cases) {
+			const error = GitHubError.fromResponse("op", entry, NOW);
+			const label = `${entry.status} ${JSON.stringify(entry.headers ?? {})}`;
+			assert.strictEqual(error.kind, entry.kind, label);
+			assert.strictEqual(error.status, entry.status, label);
+			assert.strictEqual(error.operation, "op", label);
+			assert.strictEqual(error.retryAfterMillis, entry.retryAfterMillis, label);
+			// The same facts through octokit's shape classify identically: one classifier.
+			const viaOctokit = GitHubError.fromOctokit(
+				"op",
+				{
+					status: entry.status,
+					// octokit's message is the body's message, which the prose check reads.
+					message: (entry.body as { message?: string } | undefined)?.message ?? "x",
+					response: { headers: entry.headers ?? {}, data: entry.body ?? {} },
+				},
+				NOW,
+			);
+			assert.strictEqual(viaOctokit.kind, error.kind, `${label} matches fromOctokit`);
+		}
+	});
+
+	it("reads the reason from body.message, else the status, and keeps the validation entries", () => {
+		const duplicate = GitHubError.fromResponse("op", { status: 422, body: DUPLICATE_RELEASE }, NOW);
+		assert.strictEqual(duplicate.reason, "Validation Failed");
+		assert.deepStrictEqual(
+			duplicate.validation?.map((entry) => ({ ...entry })),
+			[{ resource: "Release", code: "already_exists", field: "tag_name" }],
+		);
+		assert.strictEqual(GitHubError.fromResponse("op", { status: 502 }, NOW).reason, "HTTP 502");
+		assert.strictEqual(
+			GitHubError.fromResponse("op", { status: 502, body: "<html>oops</html>" }, NOW).reason,
+			"HTTP 502",
+		);
+	});
+
+	it("sanitizes the body message exactly as fromOctokit sanitizes octokit's", () => {
+		const html = GitHubError.fromResponse("op", { status: 500, body: { message: "<!DOCTYPE html><p>down</p>" } }, NOW);
+		assert.strictEqual(html.reason, "GitHub returned an HTML error page instead of a JSON response");
+		const long = GitHubError.fromResponse("op", { status: 500, body: { message: "x".repeat(2000) } }, NOW);
+		assert.isBelow(long.reason.length, 600);
+	});
+
+	it("reads headers in any case", () => {
+		const titled = GitHubError.fromResponse("op", { status: 403, headers: { "Retry-After": "5" } }, NOW);
+		assert.strictEqual(titled.kind, "rateLimited");
+		assert.strictEqual(titled.retryAfterMillis, 5_000);
+		const reset = GitHubError.fromResponse(
+			"op",
+			{ status: 403, headers: { "X-RateLimit-Remaining": "0", "X-RateLimit-Reset": String(NOW / 1000 + 60) } },
+			NOW,
+		);
+		assert.strictEqual(reset.kind, "rateLimited");
+		assert.strictEqual(reset.retryAfterMillis, 60_000);
+	});
+
+	it("turns a rate-limit reset into a delay relative to the now it is given", () => {
+		// An absolute epoch-second reset, 90 s after NOW. Measured from the epoch
+		// instead, it would be a delay of decades.
+		const error = GitHubError.fromResponse(
+			"op",
+			{ status: 403, headers: { "x-ratelimit-remaining": "0", "x-ratelimit-reset": String(NOW / 1000 + 90) } },
+			NOW,
+		);
+		assert.strictEqual(error.kind, "rateLimited");
+		assert.strictEqual(error.retryAfterMillis, 90_000);
+		const later = GitHubError.fromResponse(
+			"op",
+			{ status: 403, headers: { "x-ratelimit-remaining": "0", "x-ratelimit-reset": String(NOW / 1000 + 90) } },
+			NOW + 30_000,
+		);
+		assert.strictEqual(later.retryAfterMillis, 60_000);
+		// `now` is required, so a call that forgets it does not type-check.
+		// @ts-expect-error -- nowMillis is required
+		assert.strictEqual(GitHubError.fromResponse("op", { status: 404 }).kind, "notFound");
 	});
 });

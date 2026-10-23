@@ -1,8 +1,4 @@
-import type { ErrorObject } from "ajv";
-import { Ajv } from "ajv";
 import { Context, Effect, Layer, Schema } from "effect";
-import { MAX_NESTING_DEPTH } from "./internal/limits.js";
-import { KeywordFamilies } from "./KeywordFamilies.js";
 
 /**
  * Indicates that the validation engine behind the {@link SchemaValidator}
@@ -75,44 +71,6 @@ export interface SchemaValidatorShape {
 	) => Effect.Effect<ReadonlyArray<ValidationFinding>, SchemaValidatorError>;
 }
 
-// ajv strict mode rejects any keyword it does not know, which would fail
-// every document carrying a declared language-server family — exactly the
-// keywords `DocumentLint` deliberately allows. Registering them keeps the
-// engine's verdict consistent with the owned lint's, through the same
-// `KeywordFamilies` predicate, so the two cannot drift.
-const collectDeclaredKeywords = (node: unknown, into: Set<string>, depth: number): void => {
-	if (depth >= MAX_NESTING_DEPTH || typeof node !== "object" || node === null) {
-		return;
-	}
-	if (Array.isArray(node)) {
-		for (const element of node) {
-			collectDeclaredKeywords(element, into, depth + 1);
-		}
-		return;
-	}
-	for (const [key, value] of Object.entries(node)) {
-		if (KeywordFamilies.isDeclared(key)) {
-			into.add(key);
-		}
-		// Deliberate: we descend into a declared key's OWN value too (e.g. an
-		// `x-ai-hint` payload), not just past it. Registering the OUTER keyword
-		// is already enough on its own — ajv does not strict-check inside a
-		// registered keyword's value — so a declared keyword found nested in a
-		// payload is harmless over-registration of a no-op ajv keyword, not
-		// load-bearing.
-		collectDeclaredKeywords(value, into, depth + 1);
-	}
-};
-
-const findingFromAjvError = (error: ErrorObject): ValidationFinding =>
-	ValidationFinding.make({
-		// ajv's `instancePath` is already a JSON pointer into the value it
-		// validated — here, the flat document itself.
-		path: error.instancePath,
-		message: error.message ?? "schema is not valid",
-		keyword: error.keyword,
-	});
-
 /** The default for an unstubbed {@link SchemaValidator.makeTest} member. */
 const notStubbed = (method: string) => () =>
 	Effect.die(
@@ -122,22 +80,22 @@ const notStubbed = (method: string) => () =>
 	);
 
 /**
- * Real-engine JSON Schema document validation, closed by default over ajv —
- * the engine SchemaStore's own gate is defined in terms of.
+ * The JSON Schema document validation contract — the engine SchemaStore's
+ * own gate is defined in terms of, as a service the pipeline requires in
+ * `R` and never owns.
  *
- * {@link SchemaValidator.layer} is the shipped implementation: provide it and
- * validation works, with no adapter to write. The service stays an interface
- * so a test can swap it ({@link SchemaValidator.layerTest}) or skip it
- * ({@link SchemaValidator.noop}), and so a consumer standardized on a
- * different engine can substitute one — but writing an adapter is no longer
- * the price of admission. `DocumentLint` remains the owned, engine-free
- * structural half of the validation story, and answers questions ajv does
- * not (SchemaStore's own hygiene conventions).
- *
- * The shipped layer registers every declared {@link KeywordFamilies} keyword
- * present in the document before compiling, so ajv strict mode does not
- * reject the language-server families `DocumentLint` deliberately allows —
- * one predicate governs both verdicts.
+ * This package ships the contract and its doubles only: skip validation
+ * with {@link SchemaValidator.noop}, stub it with
+ * {@link SchemaValidator.layerTest}. The one real implementation is
+ * `@effected/schemastore-cli`'s `AjvValidator.layer` — ajv strict mode over
+ * the declared `KeywordFamilies` and the standard `ajv-formats`
+ * vocabulary — which the `schemastore` command composes for you and which
+ * that package also exports for a program that drives `SchemaPipeline`
+ * itself. Keeping the engine there keeps `ajv` out of every application that
+ * imports this package at runtime (to read a `HostedSchema`, say) and out of
+ * its bundle. `DocumentLint` is the owned, engine-free structural half of the
+ * validation story, and answers questions ajv does not (SchemaStore's own
+ * hygiene conventions).
  *
  * @example
  * ```ts
@@ -149,7 +107,9 @@ const notStubbed = (method: string) => () =>
  *   return yield* validator.validate({ type: "object" });
  * });
  *
- * Effect.runPromise(Effect.provide(program, SchemaValidator.layer));
+ * // Provide the engine at the edge — the CLI does this for you:
+ * //   Effect.provide(program, AjvValidator.layer)   (from @effected/schemastore-cli)
+ * Effect.runPromise(Effect.provide(program, SchemaValidator.noop));
  * // => []
  * ```
  *
@@ -159,66 +119,10 @@ export class SchemaValidator extends Context.Service<SchemaValidator, SchemaVali
 	"@effected/schemastore/SchemaValidator",
 ) {
 	/**
-	 * The shipped ajv implementation — the default a consumer provides.
-	 *
-	 * `validate` checks the document against the Draft-07 meta-schema and
-	 * then compiles it, reporting BOTH as {@link ValidationFinding} values:
-	 * meta-schema failures keep ajv's structured `instancePath` and
-	 * `keyword`, while a rejection ajv raises by *throwing* becomes a
-	 * root-pathed finding — both a strict-mode compile failure and a
-	 * declared keyword whose NAME ajv's own grammar
-	 * (`/^[a-z_$][a-z0-9_$:-]*$/i`) refuses, such as an `x-ai-*` key
-	 * carrying a dot or a space. The error channel stays reserved for the
-	 * engine failing as a mechanism.
-	 *
-	 * `strict` defaults to `true` — SchemaStore's gate. Each call builds its
-	 * own ajv instance, so documents sharing an `$id` never collide.
-	 */
-	static readonly layer: Layer.Layer<SchemaValidator> = Layer.succeed(SchemaValidator, {
-		validate: (document, options) =>
-			Effect.try({
-				try: () => {
-					const ajv = new Ajv({ strict: options?.strict ?? true, allErrors: true });
-					const declared = new Set<string>();
-					collectDeclaredKeywords(document, declared, 0);
-					try {
-						// `addKeyword` sits inside the try, beside `compile`, on
-						// purpose: ajv holds a keyword NAME to
-						// `/^[a-z_$][a-z0-9_$:-]*$/i`, so a declared key carrying a
-						// dot, a space or an `@` makes it throw. That is the engine
-						// rejecting the DOCUMENT, not the engine failing as a
-						// mechanism — outside the try it escaped as a
-						// `SchemaValidatorError` and aborted the totality of
-						// `SchemaPipeline.check`.
-						for (const keyword of declared) {
-							ajv.addKeyword({ keyword });
-						}
-						if (!ajv.validateSchema(document)) {
-							return (ajv.errors ?? []).map(findingFromAjvError);
-						}
-						ajv.compile(document);
-					} catch (cause) {
-						// Strict mode and the keyword-name check both report by
-						// throwing; the message is all the structure ajv gives us
-						// on this path.
-						return [
-							ValidationFinding.make({
-								path: "",
-								message: cause instanceof Error ? cause.message : String(cause),
-							}),
-						];
-					}
-					return [];
-				},
-				catch: (cause) => SchemaValidatorError.make({ cause }),
-			}),
-	});
-
-	/**
 	 * No-op: `validate` always succeeds with no findings, never consulting an
 	 * engine. A pure `Layer.succeed`, bound to a const so the layer memoizes
 	 * by reference. Use it to switch validation off deliberately — for the
-	 * real engine, provide {@link SchemaValidator.layer}.
+	 * real engine, provide `AjvValidator.layer` from `@effected/schemastore-cli`.
 	 */
 	static readonly noop: Layer.Layer<SchemaValidator> = Layer.succeed(SchemaValidator, {
 		validate: () => Effect.succeed([]),

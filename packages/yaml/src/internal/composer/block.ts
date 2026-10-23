@@ -116,7 +116,12 @@ function composeBlockMapInner(
 			? (externalFirstKey as YamlScalar).offset
 			: blockMapCst.offset
 		: blockMapCst.offset;
-	const end = blockMapCst.offset + blockMapCst.length;
+	const end = trimDisownedTrailingComments(
+		state.text,
+		offset,
+		blockMapCst.offset + blockMapCst.length,
+		state.escapedComments,
+	);
 	const length = end - offset;
 
 	const mapComment =
@@ -137,6 +142,57 @@ function composeBlockMapInner(
 
 	if (meta?.anchor) registerAnchor(map, meta.anchor, state, offset);
 	return map;
+}
+
+/**
+ * Narrow a block collection's raw CST span so it stops before any trailing
+ * comment line the collection's own comment model has already DISOWNED.
+ *
+ * The CST length of a block map/seq runs to the end of the last physical line
+ * the parser consumed, which includes a floating comment sitting at a column
+ * shallower than the collection's content. The comment model deliberately
+ * does not give that comment to the collection — `buildPairs` and the block-seq
+ * terminal partition push it onto `state.escapedComments`, where the enclosing
+ * scope re-attributes it (see `EscapedComment` in `comments.ts`: "it belongs to
+ * an outer scope"). The span was the one place that disagreed, reporting an
+ * `offset`/`length` whose end lay past a comment the node does not own — so a
+ * caller splicing text at the end of the collection inserted AFTER the comment.
+ *
+ * The disowned set is the input rather than a re-derived column test, so the
+ * span and the comment model cannot drift apart: whatever the partition threw
+ * out, the span excludes.
+ *
+ * Blank lines immediately above a trimmed run go with the run, not with the
+ * last entry — but only when something was trimmed, so a collection whose span
+ * merely ends in blank lines keeps the end it has always reported.
+ *
+ * Composition is bottom-up, so a nested collection's own span has already been
+ * trimmed by the time its parent's items are read.
+ */
+function trimDisownedTrailingComments(
+	text: string,
+	offset: number,
+	end: number,
+	disowned: ReadonlyArray<EscapedComment>,
+): number {
+	let cut = end;
+	for (const ec of disowned) {
+		// Only comments disowned by THIS collection: `state.escapedComments` is a
+		// shared channel, so an entry outside the span belongs to another node.
+		if (ec.offset < offset || ec.offset >= cut) continue;
+		const lineStart = text.lastIndexOf("\n", ec.offset - 1) + 1;
+		// A collection never shrinks past its own first line.
+		if (lineStart <= offset || lineStart >= cut) continue;
+		cut = lineStart;
+	}
+	if (cut === end) return end;
+	while (cut > offset && text[cut - 1] === "\n") {
+		const prevLineStart = text.lastIndexOf("\n", cut - 2) + 1;
+		if (prevLineStart <= offset) break;
+		if (text.slice(prevLineStart, cut - 1).trim() !== "") break;
+		cut = prevLineStart;
+	}
+	return cut;
 }
 
 export interface SemanticItem {
@@ -808,7 +864,7 @@ export function flattenBlockMapChildren(
  * Pattern: node, value-sep (no node) produces a key:null pair.
  * Pattern: value-sep, node produces a null:value pair.
  *
- * Comment attribution (#127): a comment on the same line as the end of the
+ * Comment attribution: a comment on the same line as the end of the
  * previous pair attaches to it as the trailing `comment`; an own-line
  * comment attaches FORWARD to the next pair as `commentBefore` (consecutive
  * lines join with `\n`); a blank line before a pair (or before its
@@ -1114,7 +1170,7 @@ function consumeValueNode(
 	// Peek past comments to the first node WITHOUT consuming anything: a node
 	// on a LATER line than our `:` that is immediately followed by its own
 	// value-sep is the next pair's KEY, not this pair's value — the pending
-	// pair's value is empty/null (#339: `key:\nother: 1` composed `other` as
+	// pair's value is empty/null (`key:\nother: 1` composed `other` as
 	// the value of `key` and then paired the orphaned `:` with an empty key).
 	// Same-line nodes stay consumed so `a: b: c: d` keeps its original,
 	// error-flagged pairing (ZCZ6). Mirrors consumeValueNodeForNullKey (S3PD).
@@ -1163,7 +1219,7 @@ function consumeValueNode(
 		}
 		break;
 	}
-	// #348: no value node follows, so these own-line comments never had a value
+	// No value node follows, so these own-line comments never had a value
 	// to lead — they belong to the enclosing mapping (its terminal comment run,
 	// or the next pair's `commentBefore`). Consuming them here dropped them on
 	// the floor, because the caller can only attach `leadingComments` to a value
@@ -1193,7 +1249,7 @@ function consumeValueNodeForNullKey(
 ): { node: YamlNode | null; nextIdx: number } | null {
 	let i = startIdx;
 	// Index of the first OWN-LINE comment after the `:` — the rewind point when
-	// no value node follows (#348; mirrors consumeValueNode, and matters here
+	// no value node follows (mirrors consumeValueNode, and matters here
 	// for the empty-key document `:\n# c\n`).
 	let firstOwnLineIdx = -1;
 	while (i < items.length) {
@@ -1222,7 +1278,7 @@ function consumeValueNodeForNullKey(
 		break;
 	}
 	// No value node followed: leave the own-line comments to the caller's own
-	// attribution rather than consuming them into nothing (#348).
+	// attribution rather than consuming them into nothing.
 	if (firstOwnLineIdx >= 0) return { node: null, nextIdx: firstOwnLineIdx };
 	return i > startIdx ? { node: null, nextIdx: i } : null;
 }
@@ -1657,7 +1713,7 @@ function composeBlockSeqInner(cst: CstNode, state: ComposerState, meta?: NodeMet
 	// mirrors the outer/inner meta split in flattenBlockMapChildren.
 	let sawNewlineSincePending = false;
 
-	// Comment attribution (#127), mirroring buildPairs: own-line comments
+	// Comment attribution, mirroring buildPairs: own-line comments
 	// attach forward to the next item as `commentBefore`; a comment on the
 	// same line as the end of the previous item attaches as its trailing
 	// `comment`; a blank line before an item sets `spaceBefore`; terminal
@@ -1975,11 +2031,12 @@ function composeBlockSeqInner(cst: CstNode, state: ComposerState, meta?: NodeMet
 				? `${meta.comment}\n${seqTrailing}`
 				: meta.comment
 			: seqTrailing;
+	const seqEnd = trimDisownedTrailingComments(state.text, cst.offset, cst.offset + cst.length, state.escapedComments);
 	const seq = new YamlSeq({
 		items: rawItems,
 		style: "block" as CollectionStyle,
 		offset: cst.offset,
-		length: cst.length,
+		length: seqEnd - cst.offset,
 		...(meta?.tag !== undefined ? { tag: meta.tag } : {}),
 		...(meta?.anchor !== undefined ? { anchor: meta.anchor } : {}),
 		...(seqComment !== undefined ? { comment: seqComment } : {}),
@@ -2017,7 +2074,12 @@ export function composeFlatBlockMap(
 	checkMultilineImplicitKeys(pairs, state);
 
 	const offset = "offset" in externalFirstKey ? (externalFirstKey as YamlScalar).offset : parentCst.offset;
-	const end = parentCst.offset + parentCst.length;
+	const end = trimDisownedTrailingComments(
+		state.text,
+		offset,
+		parentCst.offset + parentCst.length,
+		state.escapedComments,
+	);
 
 	const mapComment =
 		meta?.comment !== undefined

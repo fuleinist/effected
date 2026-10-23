@@ -1,14 +1,25 @@
 import { execFileSync } from "node:child_process";
 import { createHash } from "node:crypto";
-import { chmodSync, existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, statSync, writeFileSync } from "node:fs";
+import {
+	chmodSync,
+	existsSync,
+	mkdirSync,
+	mkdtempSync,
+	readFileSync,
+	readdirSync,
+	rmSync,
+	statSync,
+	writeFileSync,
+} from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { NodeServices } from "@effect/platform-node";
 import { assert, describe, it } from "@effect/vitest";
-import { PackageManagerPin } from "@effected/npm";
+import type { IntegrityHashBrand } from "@effected/npm";
+import { CorepackIntegrityHash, IntegrityHash, PackageManagerPin } from "@effected/npm";
 import { Effect, Layer, Logger, Option, PlatformError, Schema, Stream } from "effect";
-import { FetchHttpClient } from "effect/unstable/http";
-import { ChildProcess, ChildProcessSpawner } from "effect/unstable/process";
+import { FetchHttpClient } from "effect/http";
+import { ChildProcess, ChildProcessSpawner } from "effect/process";
 import {
 	ActionEnvironment,
 	AmbientPackageManager,
@@ -19,6 +30,13 @@ import {
 	ToolInstaller,
 	ToolInstallerError,
 } from "../src/index.js";
+
+/**
+ * The tool cache's arch segment under `ActionEnvironment.layerTest`, which
+ * seeds `RUNNER_ARCH: "X64"`: the installer reads the runner's answer, not
+ * the host's `process.arch`.
+ */
+const SEEDED_ARCH = "x64";
 
 /** A scratch tool-cache root, removed by the test that made it. */
 const scratch = () => mkdtempSync(join(tmpdir(), "effected-pminstall-"));
@@ -48,7 +66,14 @@ const live = (root: string, fetch: typeof globalThis.fetch = alwaysFails, env: R
 		NodeServices.layer,
 		FetchHttpClient.layer.pipe(Layer.provide(Layer.succeed(FetchHttpClient.Fetch)(fetch))),
 	);
-	return PackageManagerInstaller.layer.pipe(Layer.provideMerge(ToolInstaller.layer), Layer.provide(platform));
+	// Loggers are cleared: the "no integrity hash" warning every unsigned pin
+	// emits is asserted once, by the test that records it, and leaks through
+	// the reporter everywhere else.
+	return PackageManagerInstaller.layer.pipe(
+		Layer.provideMerge(ToolInstaller.layer),
+		Layer.provideMerge(Logger.layer([])),
+		Layer.provide(platform),
+	);
 };
 
 const withRoot = <A, E>(
@@ -82,6 +107,10 @@ const makeManagerTarball = (
 		readonly binFileContents?: string | undefined;
 		readonly extraFiles?: ReadonlyArray<string> | undefined;
 		readonly omitManifest?: boolean | undefined;
+		/** Files written verbatim (path → contents), for bins whose bytes matter. */
+		readonly files?: Readonly<Record<string, string>> | undefined;
+		/** Extra manifest fields, e.g. pnpm 12's `optionalDependencies`. */
+		readonly manifest?: Readonly<Record<string, unknown>> | undefined;
 	},
 ): string => {
 	const safeName = options.name.replaceAll("/", "-");
@@ -91,8 +120,17 @@ const makeManagerTarball = (
 	if (options.omitManifest !== true) {
 		writeFileSync(
 			join(packageDir, "package.json"),
-			JSON.stringify({ name: options.name, version: options.version, ...(options.bin ? { bin: options.bin } : {}) }),
+			JSON.stringify({
+				name: options.name,
+				version: options.version,
+				...(options.bin ? { bin: options.bin } : {}),
+				...options.manifest,
+			}),
 		);
+	}
+	for (const [file, contents] of Object.entries(options.files ?? {})) {
+		mkdirSync(join(packageDir, file, ".."), { recursive: true });
+		writeFileSync(join(packageDir, file), contents);
 	}
 	for (const file of options.binFiles ?? []) {
 		mkdirSync(join(packageDir, file, ".."), { recursive: true });
@@ -123,6 +161,89 @@ const tgzResponse = (archive: string) => () => new Response(new Uint8Array(readF
 
 const sha512Hex = (file: string): string => createHash("sha512").update(readFileSync(file)).digest("hex");
 
+/** The registry's SRI spelling of a file's sha512 (`sha512-<base64>`). */
+const sha512Sri = (file: string): string =>
+	`sha512-${createHash("sha512").update(readFileSync(file)).digest("base64")}`;
+
+/** Every target pnpm 12.4.2 publishes an `@pnpm/exe.*` package for, as its wrapper's `optionalDependencies`. */
+const PNPM_EXE_TARGETS = [
+	"win32-x64",
+	"win32-arm64",
+	"darwin-x64",
+	"darwin-arm64",
+	"linux-x64",
+	"linux-arm64",
+	"linux-riscv64",
+	"linux-ppc64",
+	"linux-s390x",
+	"linux-x64-musl",
+	"linux-arm64-musl",
+	"freebsd-x64",
+	"android-arm64",
+	"android-x64",
+] as const;
+
+/** The shebang-less placeholder the pnpm 12 wrapper ships as its `pnpm` bin (probed against pnpm@12.4.2). */
+const PNPM_PLACEHOLDER =
+	"# pnpm's native binary replaces this file during installation (see\n# ./install.js). Until then this hands over to ./bin/pnpm.mjs.\n";
+
+/** A `#!/bin/sh` alias bin the way the wrapper ships `pn`/`pnpx`/`pnx`: exec the sibling `pnpm`. */
+const pnpmAlias = (name: string): string => `#!/bin/sh\n# ${name} is pnpm\nexec "$(dirname "$0")/pnpm" "$@"\n`;
+
+/**
+ * A pnpm 12-shaped wrapper tarball: `pnpm` a placeholder, `pn`/`pnpx`/`pnx`
+ * shell aliases, `bin/pnpm.mjs` (corepack's entry, which the installer must
+ * NOT pick) and `optionalDependencies` naming every `@pnpm/exe.*` target.
+ */
+const makePnpm12Wrapper = (
+	directory: string,
+	version: string,
+	options: { readonly targets?: ReadonlyArray<string> | undefined; readonly nativeVersion?: string | undefined } = {},
+): string =>
+	makeManagerTarball(directory, {
+		name: "pnpm",
+		version,
+		bin: { pnpm: "pnpm", pn: "pn", pnpx: "pnpx", pnx: "pnx" },
+		files: {
+			pnpm: PNPM_PLACEHOLDER,
+			pn: pnpmAlias("pn"),
+			pnpx: pnpmAlias("pnpx"),
+			pnx: pnpmAlias("pnx"),
+			"bin/pnpm.mjs": "console.log('corepack entry — must not be used')\n",
+		},
+		manifest: {
+			optionalDependencies: Object.fromEntries(
+				(options.targets ?? PNPM_EXE_TARGETS).map((target) => [
+					`@pnpm/exe.${target}`,
+					options.nativeVersion ?? version,
+				]),
+			),
+		},
+	});
+
+/** An `@pnpm/exe.<target>`-shaped tarball: `package/pnpm` (a runnable stand-in for the executable) plus its manifest. */
+const makePnpmExeTarball = (
+	directory: string,
+	target: string,
+	version: string,
+	options: { readonly omitBinary?: boolean | undefined } = {},
+): string =>
+	makeManagerTarball(directory, {
+		name: `@pnpm/exe.${target}`,
+		version,
+		...(options.omitBinary === true ? {} : { files: { pnpm: `#!/bin/sh\necho "native-pnpm ${version} $*"\n` } }),
+	});
+
+/** The pnpm 12 registry conversation: wrapper tarball, exe packument, exe tarball. */
+const pnpm12Urls = (version: string, target: string, registry = "https://registry.npmjs.org") => ({
+	wrapper: `${registry}/pnpm/-/pnpm-${version}.tgz`,
+	packument: `${registry}/@pnpm/exe.${target}/${version}`,
+	exe: `${registry}/@pnpm/exe.${target}/-/exe.${target}-${version}.tgz`,
+});
+
+const jsonResponse = (body: unknown) => () =>
+	new Response(JSON.stringify(body), { status: 200, headers: { "content-type": "application/json" } });
+
 /** A spawner whose `string` is scripted and whose other members die loudly. */
 const scriptedSpawner = (
 	string: () => Effect.Effect<string, PlatformError.PlatformError>,
@@ -136,13 +257,18 @@ const scriptedSpawner = (
 		string,
 	});
 
-/** A stub-backed layer for the short-circuit tests: no download path exists unless stubbed. */
+/**
+ * A stub-backed layer for the short-circuit tests: no download path exists
+ * unless stubbed. Loggers are cleared for the same reason `live` clears them —
+ * an unsigned pin's "no integrity hash" warning would leak through the reporter.
+ */
 const stubbed = (options: {
 	readonly installer?: Parameters<typeof ToolInstaller.layerTest>[0] | undefined;
 	readonly spawner?: Layer.Layer<ChildProcessSpawner.ChildProcessSpawner> | undefined;
 	readonly env?: Record<string, string> | undefined;
 }) =>
 	PackageManagerInstaller.layer.pipe(
+		Layer.provideMerge(Logger.layer([])),
 		Layer.provide(
 			Layer.mergeAll(
 				ActionEnvironment.layerTest(options.env ?? {}),
@@ -161,8 +287,19 @@ const pin = (spec: string): PackageManagerPin => {
 	return parsed.success;
 };
 
-const install = (spec: string, options?: { requireIntegrity?: boolean; registry?: string; allowAmbient?: boolean }) =>
-	Effect.flatMap(PackageManagerInstaller, (installer) => installer.install(pin(spec), options));
+const install = (
+	spec: string,
+	options?: {
+		requireIntegrity?: boolean;
+		registry?: string;
+		allowAmbient?: boolean;
+		integrity?: IntegrityHashBrand | undefined;
+		nativeIntegrity?: Readonly<Record<string, string>>;
+	},
+) => Effect.flatMap(PackageManagerInstaller, (installer) => installer.install(pin(spec), options));
+
+/** A corepack `<algo>.<hex>` integrity, decoded through the same schema a pin's tail is. */
+const corepack = (value: string): IntegrityHashBrand => Schema.decodeUnknownSync(CorepackIntegrityHash)(value);
 
 /** Narrow to the tool-cache variant or fail the test loudly. */
 const cachedOf = (installed: InstalledPackageManager): CachedPackageManager => {
@@ -180,7 +317,7 @@ describe("PackageManagerInstaller", () => {
 					// The entry has no `.bin` — a foreign writer (runner image, setup-*
 					// action, or the previous version of this module) cached it — so
 					// the shims must be regenerated into the entry.
-					const cached = ToolInstaller.cachePath({ root, tool: "pnpm", version: "7.7.7", arch: process.arch });
+					const cached = ToolInstaller.cachePath({ root, tool: "pnpm", version: "7.7.7", arch: SEEDED_ARCH });
 					mkdirSync(join(cached, "bin"), { recursive: true });
 					writeFileSync(join(cached, "package.json"), JSON.stringify({ bin: { pnpm: "bin/pnpm.cjs" } }));
 					writeFileSync(join(cached, "bin", "pnpm.cjs"), "console.log('pnpm')");
@@ -204,7 +341,7 @@ describe("PackageManagerInstaller", () => {
 				Effect.gen(function* () {
 					// The tool cache is SHARED: another writer's shim must not be
 					// rewritten out from under it.
-					const cached = ToolInstaller.cachePath({ root, tool: "pnpm", version: "7.7.9", arch: process.arch });
+					const cached = ToolInstaller.cachePath({ root, tool: "pnpm", version: "7.7.9", arch: SEEDED_ARCH });
 					mkdirSync(join(cached, "bin"), { recursive: true });
 					mkdirSync(join(cached, ".bin"), { recursive: true });
 					writeFileSync(join(cached, "package.json"), JSON.stringify({ bin: { pnpm: "bin/pnpm.cjs" } }));
@@ -217,10 +354,38 @@ describe("PackageManagerInstaller", () => {
 			),
 		);
 
+		it.live("on Windows a cache hit regenerates the missing Git Bash sibling and leaves the .cmd untouched", () =>
+			withRoot(
+				(root) =>
+					Effect.gen(function* () {
+						// An entry a previous writer cached on Windows: the `.cmd` exists,
+						// the extensionless Git Bash sibling does not. Regeneration adds
+						// the missing file only — the `.cmd` the previous writer owns
+						// survives verbatim.
+						const cached = ToolInstaller.cachePath({ root, tool: "pnpm", version: "7.8.1", arch: SEEDED_ARCH });
+						mkdirSync(join(cached, "bin"), { recursive: true });
+						mkdirSync(join(cached, ".bin"), { recursive: true });
+						writeFileSync(join(cached, "package.json"), JSON.stringify({ bin: { pnpm: "bin/pnpm.cjs" } }));
+						writeFileSync(join(cached, "bin", "pnpm.cjs"), "console.log('pnpm')");
+						const sentinel = "@echo off\r\nrem sentinel: a previous writer's .cmd\r\n";
+						writeFileSync(join(cached, ".bin", "pnpm.cmd"), sentinel);
+
+						const installed = cachedOf(yield* install("pnpm@7.8.1"));
+						assert.strictEqual(installed.directory, cached);
+						assert.strictEqual(readFileSync(join(cached, ".bin", "pnpm.cmd"), "utf8"), sentinel);
+						assert.strictEqual(
+							readFileSync(join(cached, ".bin", "pnpm"), "utf8"),
+							`#!/bin/sh\nexec node "${join(cached, "bin", "pnpm.cjs").replaceAll("\\", "/")}" "$@"\n`,
+						);
+					}),
+				{ env: { RUNNER_OS: "Windows", RUNNER_ARCH: "X64" } },
+			),
+		);
+
 		it.live("a shim that cannot be regenerated is a typed cacheFailed", () =>
 			withRoot((root) =>
 				Effect.gen(function* () {
-					const cached = ToolInstaller.cachePath({ root, tool: "pnpm", version: "7.8.0", arch: process.arch });
+					const cached = ToolInstaller.cachePath({ root, tool: "pnpm", version: "7.8.0", arch: SEEDED_ARCH });
 					mkdirSync(join(cached, "bin"), { recursive: true });
 					writeFileSync(join(cached, "package.json"), JSON.stringify({ bin: { pnpm: "bin/pnpm.cjs" } }));
 					writeFileSync(join(cached, "bin", "pnpm.cjs"), "console.log('pnpm')");
@@ -236,11 +401,37 @@ describe("PackageManagerInstaller", () => {
 		it.live("reports a corrupted cache entry as layoutUnexpected rather than answering with it", () =>
 			withRoot((root) =>
 				Effect.gen(function* () {
-					const cached = ToolInstaller.cachePath({ root, tool: "pnpm", version: "7.7.8", arch: process.arch });
+					const cached = ToolInstaller.cachePath({ root, tool: "pnpm", version: "7.7.8", arch: SEEDED_ARCH });
 					mkdirSync(cached, { recursive: true }); // present, but empty — no manifest
 					const error = yield* Effect.flip(install("pnpm@7.7.8"));
 					assert.instanceOf(error, PackageManagerInstallerError);
 					assert.strictEqual(error.reason, "layoutUnexpected");
+				}),
+			),
+		);
+
+		it.live("a manifest that is not a JSON object is layoutUnexpected, never a defect", () =>
+			withRoot((root) =>
+				Effect.gen(function* () {
+					// `null` parses as JSON; reading `.bin` off it once threw a TypeError
+					// that escaped as a defect. Not JSON at all is the control.
+					const subjects = yield* Effect.forEach(
+						[
+							["7.7.10", "null"],
+							["7.7.11", "{ not json"],
+						] as const,
+						([version, manifest]) =>
+							Effect.gen(function* () {
+								const cached = ToolInstaller.cachePath({ root, tool: "pnpm", version, arch: SEEDED_ARCH });
+								mkdirSync(cached, { recursive: true });
+								writeFileSync(join(cached, "package.json"), manifest);
+								const error = yield* Effect.flip(install(`pnpm@${version}`));
+								assert.instanceOf(error, PackageManagerInstallerError);
+								assert.strictEqual(error.reason, "layoutUnexpected");
+								return error.subject;
+							}),
+					);
+					assert.deepStrictEqual(subjects, ["unparseable package.json", "unparseable package.json"]);
 				}),
 			),
 		);
@@ -253,7 +444,7 @@ describe("PackageManagerInstaller", () => {
 					// pass, a shim would be written invoking it, and `bins` would
 					// publish a path the artifact never legitimately owned. Only the
 					// containment guard can refuse this one.
-					const cached = ToolInstaller.cachePath({ root, tool: "pnpm", version: "7.9.0", arch: process.arch });
+					const cached = ToolInstaller.cachePath({ root, tool: "pnpm", version: "7.9.0", arch: SEEDED_ARCH });
 					mkdirSync(cached, { recursive: true });
 					writeFileSync(join(cached, "package.json"), JSON.stringify({ bin: { pnpm: "../../../evil.js" } }));
 					// `<root>/pnpm/7.9.0/<arch>/../../../evil.js` is `<root>/evil.js`.
@@ -304,7 +495,7 @@ describe("PackageManagerInstaller", () => {
 				mkdirSync(join(extracted, "bin"), { recursive: true });
 				writeFileSync(join(extracted, "package.json"), JSON.stringify({ bin: { npm: "bin/npm-cli.js" } }));
 				writeFileSync(join(extracted, "bin", "npm-cli.js"), "console.log('npm')");
-				const destination = ToolInstaller.cachePath({ root, tool: "npm", version: "9.9.9", arch: process.arch });
+				const destination = ToolInstaller.cachePath({ root, tool: "npm", version: "9.9.9", arch: SEEDED_ARCH });
 
 				const probes: Array<string> = [];
 				const installed = cachedOf(
@@ -350,6 +541,54 @@ describe("PackageManagerInstaller", () => {
 			),
 		);
 
+		it.live("a same-major near miss (ambient 12.0.1 for a 12.0.2 pin) goes to the tool cache", () =>
+			// The match is exact-string, never "close enough": a Node 26 runner
+			// whose bundled npm is 12.0.1 must not answer a 12.0.2 pin, or the
+			// consumer's pin bump would be a silent no-op. The scripted probe
+			// answers the near miss; the dist path must run.
+			Effect.gen(function* () {
+				const root = scratch();
+				const extracted = join(root, "extracted", "package");
+				mkdirSync(join(extracted, "bin"), { recursive: true });
+				writeFileSync(
+					join(extracted, "package.json"),
+					JSON.stringify({ bin: { npm: "bin/npm-cli.js", npx: "bin/npx-cli.js" } }),
+				);
+				writeFileSync(join(extracted, "bin", "npm-cli.js"), "console.log('npm')");
+				writeFileSync(join(extracted, "bin", "npx-cli.js"), "console.log('npx')");
+				const destination = ToolInstaller.cachePath({ root, tool: "npm", version: "12.0.2", arch: SEEDED_ARCH });
+
+				const probes: Array<string> = [];
+				const installed = cachedOf(
+					yield* install("npm@12.0.2").pipe(
+						Effect.provide(
+							stubbed({
+								env: { RUNNER_TOOL_CACHE: root },
+								spawner: scriptedSpawner(() =>
+									Effect.suspend(() => {
+										probes.push("npm --version");
+										return Effect.succeed("12.0.1\n");
+									}),
+								),
+								installer: {
+									find: () => Effect.succeed(Option.none()),
+									download: () => Effect.succeed(join(root, "unused-archive")),
+									extractTar: () => Effect.succeed(join(root, "extracted")),
+									cacheDir: () => Effect.succeed(destination),
+								},
+							}),
+						),
+						Effect.ensuring(Effect.sync(() => rmSync(root, { recursive: true, force: true }))),
+					),
+				);
+				assert.deepStrictEqual(probes, ["npm --version"], "the ambient probe ran and was rejected");
+				assert.strictEqual(installed.source, "tool-cache");
+				assert.strictEqual(installed.version, "12.0.2");
+				assert.strictEqual(installed.bins.npm, join(destination, "bin", "npm-cli.js"));
+				assert.strictEqual(installed.bins.npx, join(destination, "bin", "npx-cli.js"));
+			}),
+		);
+
 		it.live("falls through to the dist path when the probe answers a different version", () =>
 			Effect.gen(function* () {
 				const root = scratch();
@@ -384,7 +623,7 @@ describe("PackageManagerInstaller", () => {
 
 				// The stub answers with the destination the module derives, so the
 				// divergence guard passes and the record comes back tool-cache.
-				const destination = ToolInstaller.cachePath({ root, tool: "npm", version: "1.2.3", arch: process.arch });
+				const destination = ToolInstaller.cachePath({ root, tool: "npm", version: "1.2.3", arch: SEEDED_ARCH });
 				const installed = cachedOf(
 					yield* install("npm@1.2.3").pipe(
 						Effect.provide(
@@ -439,6 +678,8 @@ describe("PackageManagerInstaller", () => {
 					`#!/bin/sh\nexec node "${join(installed.directory, "bin", "pnpx.cjs")}" "$@"\n`,
 				);
 				assert.notStrictEqual(statSync(join(installed.binDir, "pnpm")).mode & 0o111, 0, "shims must be executable");
+				// POSIX gets exactly one file per bin — no Windows-style siblings.
+				assert.deepStrictEqual(readdirSync(installed.binDir).sort(), ["pnpm", "pnpx"]);
 				rmSync(root, { recursive: true, force: true });
 			}),
 		);
@@ -487,8 +728,46 @@ describe("PackageManagerInstaller", () => {
 				const error = yield* Effect.flip(install("pnpm@5.0.2").pipe(Effect.provide(live(root, script.fetch))));
 				assert.instanceOf(error, PackageManagerInstallerError);
 				assert.strictEqual(error.reason, "cacheFailed");
-				const destination = ToolInstaller.cachePath({ root, tool: "pnpm", version: "5.0.2", arch: process.arch });
+				const destination = ToolInstaller.cachePath({ root, tool: "pnpm", version: "5.0.2", arch: SEEDED_ARCH });
 				assert.isFalse(existsSync(destination), "a failed shim write must not leave a cached entry behind");
+				rmSync(root, { recursive: true, force: true });
+			}),
+		);
+
+		it.live("on Windows every bin gets the .cmd wrapper AND an extensionless Git Bash sibling", () =>
+			Effect.gen(function* () {
+				// RUNNER_OS drives the Windows branch from any host; the filesystem
+				// is real. Git Bash does not apply PATHEXT, so the `.cmd` alone is
+				// invisible to a `shell: bash` step — the sibling is what it runs.
+				// The scratch prefix carries a space so the sibling's quoting is
+				// pinned by the assertion, not assumed.
+				const root = mkdtempSync(join(tmpdir(), "effected-pminstall 947 "));
+				const archive = makeManagerTarball(root, {
+					name: "pnpm",
+					version: "5.0.3",
+					bin: { pnpm: "bin/pnpm.cjs" },
+					binFiles: ["bin/pnpm.cjs"],
+				});
+				const script = scriptedFetch({ "https://registry.npmjs.org/pnpm/-/pnpm-5.0.3.tgz": tgzResponse(archive) });
+				const installed = cachedOf(
+					yield* install("pnpm@5.0.3").pipe(
+						Effect.provide(live(root, script.fetch, { RUNNER_OS: "Windows", RUNNER_ARCH: "X64" })),
+					),
+				);
+				const target = join(installed.directory, "bin", "pnpm.cjs");
+				assert.isTrue(target.includes(" "), "the scratch root must carry a space for this pin");
+				assert.deepStrictEqual(readdirSync(installed.binDir).sort(), ["pnpm", "pnpm.cmd"]);
+				assert.strictEqual(
+					readFileSync(join(installed.binDir, "pnpm.cmd"), "utf8"),
+					`@echo off\r\nnode "${target}" %*\r\n`,
+				);
+				// The sibling is the POSIX body with the target rendered in forward
+				// slashes, quoted so the space survives, and the same node-vs-direct
+				// rule the `.cmd` applies (a `.cjs` target runs under node).
+				assert.strictEqual(
+					readFileSync(join(installed.binDir, "pnpm"), "utf8"),
+					`#!/bin/sh\nexec node "${target.replaceAll("\\", "/")}" "$@"\n`,
+				);
 				rmSync(root, { recursive: true, force: true });
 			}),
 		);
@@ -546,7 +825,7 @@ describe("PackageManagerInstaller", () => {
 					}).message,
 					"Could not verify the integrity",
 				);
-				const destination = ToolInstaller.cachePath({ root, tool: "pnpm", version: "1.0.1", arch: process.arch });
+				const destination = ToolInstaller.cachePath({ root, tool: "pnpm", version: "1.0.1", arch: SEEDED_ARCH });
 				assert.isFalse(existsSync(destination), "a failed verification must not leave anything in the cache");
 				rmSync(root, { recursive: true, force: true });
 			}),
@@ -568,8 +847,10 @@ describe("PackageManagerInstaller", () => {
 						entries.push({ level: options.logLevel, message: options.message });
 					}),
 				]);
+				// Provided inside `live`, so the recorder overrides the cleared loggers.
 				const installed = yield* install("pnpm@1.0.2").pipe(
-					Effect.provide(Layer.mergeAll(live(root, script.fetch), recorder)),
+					Effect.provide(recorder),
+					Effect.provide(live(root, script.fetch)),
 					Effect.ensuring(Effect.sync(() => rmSync(root, { recursive: true, force: true }))),
 				);
 				assert.strictEqual(installed.source, "tool-cache");
@@ -585,6 +866,181 @@ describe("PackageManagerInstaller", () => {
 				// about the pin and must be decided before the cache is even consulted.
 				const error = yield* Effect.flip(install("npm@9.9.9", { requireIntegrity: true }));
 				assert.instanceOf(error, PackageManagerInstallerError);
+				assert.strictEqual(error.reason, "integrityMissing");
+			}).pipe(Effect.provide(stubbed({}))),
+		);
+	});
+
+	describe("the integrity option", () => {
+		/** A pnpm 1.x-shaped tarball served at its registry url, plus a fetch that records requests. */
+		const served = (root: string, version: string) => {
+			const archive = makeManagerTarball(root, {
+				name: "pnpm",
+				version,
+				bin: { pnpm: "bin/pnpm.cjs" },
+				binFiles: ["bin/pnpm.cjs"],
+			});
+			const url = `https://registry.npmjs.org/pnpm/-/pnpm-${version}.tgz`;
+			return { archive, url, script: scriptedFetch({ [url]: tgzResponse(archive) }) };
+		};
+		const wrong = corepack(`sha512.${"0".repeat(128)}`);
+
+		it.live("verifies a bare pin's tarball against the option, with no unverified-download warning", () =>
+			Effect.gen(function* () {
+				const root = scratch();
+				const { archive, script } = served(root, "1.1.0");
+				const entries: Array<{ level: string; message: unknown }> = [];
+				const recorder = Logger.layer([
+					Logger.make((options) => {
+						entries.push({ level: options.logLevel, message: options.message });
+					}),
+				]);
+				const installed = yield* install("pnpm@1.1.0", { integrity: corepack(`sha512.${sha512Hex(archive)}`) }).pipe(
+					Effect.provide(recorder),
+					Effect.provide(live(root, script.fetch)),
+					Effect.ensuring(Effect.sync(() => rmSync(root, { recursive: true, force: true }))),
+				);
+				assert.strictEqual(installed.source, "tool-cache");
+				assert.isUndefined(
+					entries.find((entry) => entry.level === "Warn"),
+					"a download verified against the option is not an unverified one",
+				);
+			}),
+		);
+
+		it.live("a bare pin whose tarball does not hash to the option fails closed and caches nothing", () =>
+			Effect.gen(function* () {
+				const root = scratch();
+				const { archive, script } = served(root, "1.1.1");
+				const error = yield* Effect.flip(
+					install("pnpm@1.1.1", { integrity: wrong }).pipe(Effect.provide(live(root, script.fetch))),
+				);
+				assert.instanceOf(error, PackageManagerInstallerError);
+				assert.strictEqual(error.reason, "integrityMismatch");
+				assert.strictEqual(error.expected, wrong);
+				assert.strictEqual(error.actual, `sha512.${sha512Hex(archive)}`);
+				const destination = ToolInstaller.cachePath({ root, tool: "pnpm", version: "1.1.1", arch: SEEDED_ARCH });
+				assert.isFalse(existsSync(destination), "a failed verification must not leave anything in the cache");
+				rmSync(root, { recursive: true, force: true });
+			}),
+		);
+
+		it.live("a pin and an option that agree verify once and install", () =>
+			Effect.gen(function* () {
+				const root = scratch();
+				const { archive, url, script } = served(root, "1.1.2");
+				const hex = sha512Hex(archive);
+				const installed = yield* install(`pnpm@1.1.2+sha512.${hex}`, { integrity: corepack(`sha512.${hex}`) }).pipe(
+					Effect.provide(live(root, script.fetch)),
+					Effect.ensuring(Effect.sync(() => rmSync(root, { recursive: true, force: true }))),
+				);
+				assert.strictEqual(installed.source, "tool-cache");
+				assert.deepStrictEqual(script.calls, [url]);
+			}),
+		);
+
+		it.live("a pin and an option that disagree fail before any download, whichever one is right", () =>
+			Effect.gen(function* () {
+				// Both directions, each with a real tarball the RIGHT value would
+				// verify: a mutant that silently prefers either side installs in one
+				// of them instead of failing.
+				const attempt = (version: string, side: "pin-right" | "option-right") =>
+					Effect.gen(function* () {
+						const root = scratch();
+						const { archive, script } = served(root, version);
+						const right = `sha512.${sha512Hex(archive)}`;
+						const pinned = side === "pin-right" ? right : wrong;
+						const option = corepack(side === "pin-right" ? wrong : right);
+						const error = yield* Effect.flip(
+							install(`pnpm@${version}+${pinned}`, { integrity: option }).pipe(
+								Effect.provide(live(root, script.fetch)),
+								Effect.ensuring(Effect.sync(() => rmSync(root, { recursive: true, force: true }))),
+							),
+						);
+						assert.instanceOf(error, PackageManagerInstallerError);
+						assert.strictEqual(error.reason, "integrityMismatch");
+						assert.strictEqual(error.expected, option);
+						assert.isUndefined(error.actual, "nothing was measured");
+						assert.include(error.subject ?? "", pinned);
+						assert.include(error.message, pinned);
+						assert.include(error.message, "Could not verify the integrity");
+						assert.deepStrictEqual(script.calls, [], "the conflict is refused before anything is fetched");
+					});
+				yield* attempt("1.1.3", "pin-right");
+				yield* attempt("1.1.4", "option-right");
+			}),
+		);
+
+		it.live("an SRI-form option fails typed before any download, even when it names the right bytes", () =>
+			Effect.gen(function* () {
+				const root = scratch();
+				const { archive, script } = served(root, "1.1.5");
+				// The tarball's CORRECT digest, in the SRI spelling a lockfile records:
+				// the form is refused, not the value.
+				const sri = Schema.decodeUnknownSync(IntegrityHash)(sha512Sri(archive));
+				const error = yield* Effect.flip(
+					install("pnpm@1.1.5", { integrity: sri }).pipe(
+						Effect.provide(live(root, script.fetch)),
+						Effect.ensuring(Effect.sync(() => rmSync(root, { recursive: true, force: true }))),
+					),
+				);
+				assert.instanceOf(error, PackageManagerInstallerError);
+				assert.strictEqual(error.reason, "integrityMismatch");
+				assert.isUndefined(error.expected);
+				assert.isUndefined(error.actual);
+				assert.include(error.subject ?? "", "not a corepack");
+				assert.include(error.subject ?? "", sri);
+				assert.include(error.message, "Could not verify the integrity");
+				assert.deepStrictEqual(script.calls, [], "the malformed option is refused before anything is fetched");
+			}),
+		);
+
+		it.live("a garbage option fails typed before the tool cache can answer", () =>
+			withRoot((root) =>
+				Effect.gen(function* () {
+					// A cached entry the install would otherwise answer from: an
+					// unvalidated option would be laundered by the cache hit.
+					const cached = ToolInstaller.cachePath({ root, tool: "pnpm", version: "7.8.1", arch: SEEDED_ARCH });
+					mkdirSync(join(cached, "bin"), { recursive: true });
+					writeFileSync(join(cached, "package.json"), JSON.stringify({ bin: { pnpm: "bin/pnpm.cjs" } }));
+					writeFileSync(join(cached, "bin", "pnpm.cjs"), "console.log('pnpm')");
+					// Control: the same pin with no option IS answered from the cache.
+					assert.strictEqual(cachedOf(yield* install("pnpm@7.8.1")).directory, cached);
+					// An untyped caller can hand anything across; the option's type is
+					// not its validation.
+					const garbage = "not-an-integrity" as IntegrityHashBrand;
+					const error = yield* Effect.flip(install("pnpm@7.8.1", { integrity: garbage }));
+					assert.strictEqual(error.reason, "integrityMismatch");
+					assert.isUndefined(error.expected);
+					assert.include(error.subject ?? "", "not a corepack");
+				}),
+			),
+		);
+
+		it.live("the option satisfies requireIntegrity, and a cache hit is answered as for an integrity pin", () =>
+			withRoot((root) =>
+				Effect.gen(function* () {
+					// The fetch always fails, so the only way to answer is the cache.
+					const cached = ToolInstaller.cachePath({ root, tool: "pnpm", version: "7.8.0", arch: SEEDED_ARCH });
+					mkdirSync(join(cached, "bin"), { recursive: true });
+					writeFileSync(join(cached, "package.json"), JSON.stringify({ bin: { pnpm: "bin/pnpm.cjs" } }));
+					writeFileSync(join(cached, "bin", "pnpm.cjs"), "console.log('pnpm')");
+					// Control: the same bare pin without the option is still refused
+					// before the cache is consulted.
+					const refused = yield* Effect.flip(install("pnpm@7.8.0", { requireIntegrity: true }));
+					assert.strictEqual(refused.reason, "integrityMissing");
+					assert.include(refused.message, "requireIntegrity");
+					const installed = cachedOf(
+						yield* install("pnpm@7.8.0", { requireIntegrity: true, integrity: corepack(`sha512.${"a".repeat(128)}`) }),
+					);
+					assert.strictEqual(installed.directory, cached);
+				}),
+			),
+		);
+
+		it.effect("requireIntegrity with neither a pin integrity nor the option still fails before anything runs", () =>
+			Effect.gen(function* () {
+				const error = yield* Effect.flip(install("npm@9.9.8", { requireIntegrity: true, integrity: undefined }));
 				assert.strictEqual(error.reason, "integrityMissing");
 			}).pipe(Effect.provide(stubbed({}))),
 		);
@@ -724,6 +1180,574 @@ describe("PackageManagerInstaller", () => {
 		);
 	});
 
+	describe("pnpm 12 native binary", () => {
+		// RUNNER_OS/RUNNER_ARCH decide the target, so the fixture names are
+		// literals — deterministic on any host, like the bun tests.
+		const darwinArm = { RUNNER_OS: "macOS", RUNNER_ARCH: "ARM64" };
+
+		it.live(
+			"overlays the host's native binary onto the placeholder, verified against the registry, and shims it direct",
+			() =>
+				Effect.gen(function* () {
+					const root = scratch();
+					const version = "12.0.0";
+					const wrapper = makePnpm12Wrapper(root, version);
+					const exe = makePnpmExeTarball(root, "darwin-arm64", version);
+					const urls = pnpm12Urls(version, "darwin-arm64");
+					const script = scriptedFetch({
+						[urls.wrapper]: tgzResponse(wrapper),
+						[urls.packument]: jsonResponse({ name: "@pnpm/exe.darwin-arm64", dist: { integrity: sha512Sri(exe) } }),
+						[urls.exe]: tgzResponse(exe),
+					});
+					const program = Effect.gen(function* () {
+						const installed = cachedOf(yield* install(`pnpm@${version}`));
+						// Exactly the three registry conversations, for the HOST's target.
+						assert.deepStrictEqual(script.calls, [urls.wrapper, urls.packument, urls.exe]);
+						const binary = join(installed.directory, "pnpm");
+						assert.strictEqual(installed.bins.pnpm, binary);
+						// The placeholder is gone: what sits at `pnpm` is the exe tarball's
+						// binary, executable, with `dist/` and the aliases beside it.
+						assert.include(readFileSync(binary, "utf8"), "native-pnpm");
+						assert.notInclude(readFileSync(binary, "utf8"), "placeholder");
+						assert.notStrictEqual(statSync(binary).mode & 0o111, 0, "the overlaid binary must be executable");
+						for (const alias of ["pn", "pnpx", "pnx"]) {
+							assert.notStrictEqual(
+								statSync(join(installed.directory, alias)).mode & 0o111,
+								0,
+								`${alias} must be executable`,
+							);
+						}
+						// The shim execs the binary DIRECTLY — no `node` — and so do the
+						// aliases'. `bin/pnpm.mjs` (corepack's entry) is never shimmed.
+						assert.strictEqual(
+							readFileSync(join(installed.binDir, "pnpm"), "utf8"),
+							`#!/bin/sh\nexec "${binary}" "$@"\n`,
+						);
+						for (const alias of ["pn", "pnpx", "pnx"]) {
+							assert.strictEqual(
+								readFileSync(join(installed.binDir, alias), "utf8"),
+								`#!/bin/sh\nexec "${join(installed.directory, alias)}" "$@"\n`,
+							);
+						}
+						assert.isFalse(existsSync(join(installed.binDir, "pnpm.mjs")));
+						// Run for real through the shim AND through an alias, which execs
+						// its sibling `pnpm` relative to itself — the layout the binary
+						// needs (the wrapper's own directory) is the layout that was cached.
+						const spawner = yield* ChildProcessSpawner.ChildProcessSpawner;
+						const direct = yield* spawner.string(ChildProcess.make(join(installed.binDir, "pnpm"), ["--version"]));
+						assert.strictEqual(direct.trim(), `native-pnpm ${version} --version`);
+						const viaAlias = yield* spawner.string(ChildProcess.make(join(installed.binDir, "pnx"), ["a b"]));
+						assert.strictEqual(viaAlias.trim(), `native-pnpm ${version} a b`);
+					});
+					yield* program.pipe(
+						Effect.provide(Layer.mergeAll(live(root, script.fetch, darwinArm), NodeServices.layer)),
+						Effect.ensuring(Effect.sync(() => rmSync(root, { recursive: true, force: true }))),
+					);
+				}),
+		);
+
+		it.live("the pnpm 11 layout is untouched: a Node entry point, an `exec node` shim, and no exe download", () =>
+			Effect.gen(function* () {
+				const root = scratch();
+				const archive = makeManagerTarball(root, {
+					name: "pnpm",
+					version: "11.0.0",
+					bin: { pnpm: "bin/pnpm.mjs", pnpx: "bin/pnpx.mjs" },
+					binFiles: ["bin/pnpm.mjs", "bin/pnpx.mjs"],
+				});
+				const url = "https://registry.npmjs.org/pnpm/-/pnpm-11.0.0.tgz";
+				const script = scriptedFetch({ [url]: tgzResponse(archive) });
+				const installed = cachedOf(
+					yield* install("pnpm@11.0.0").pipe(Effect.provide(live(root, script.fetch, darwinArm))),
+				);
+				assert.deepStrictEqual(script.calls, [url], "no @pnpm/exe.* conversation may happen for pnpm 11");
+				assert.strictEqual(installed.bins.pnpm, join(installed.directory, "bin", "pnpm.mjs"));
+				assert.strictEqual(
+					readFileSync(join(installed.binDir, "pnpm"), "utf8"),
+					`#!/bin/sh\nexec node "${join(installed.directory, "bin", "pnpm.mjs")}" "$@"\n`,
+				);
+				rmSync(root, { recursive: true, force: true });
+			}),
+		);
+
+		it.live("the shim rule is decided by the target's extension, not by the manager", () =>
+			Effect.gen(function* () {
+				// The discriminating pair for the node-vs-direct rule inside ONE
+				// entry: a `.cjs` and a `.mjs` bin run under node, an extensionless
+				// bin is exec'd directly — inverting the rule fails both halves.
+				const root = scratch();
+				const archive = makeManagerTarball(root, {
+					name: "pnpm",
+					version: "11.0.1",
+					bin: { pnpm: "bin/pnpm.mjs", helper: "bin/helper.cjs", tool: "bin/tool" },
+					binFiles: ["bin/pnpm.mjs", "bin/helper.cjs", "bin/tool"],
+				});
+				const script = scriptedFetch({ "https://registry.npmjs.org/pnpm/-/pnpm-11.0.1.tgz": tgzResponse(archive) });
+				const installed = cachedOf(
+					yield* install("pnpm@11.0.1").pipe(Effect.provide(live(root, script.fetch, darwinArm))),
+				);
+				const shim = (name: string) => readFileSync(join(installed.binDir, name), "utf8");
+				assert.strictEqual(
+					shim("pnpm"),
+					`#!/bin/sh\nexec node "${join(installed.directory, "bin", "pnpm.mjs")}" "$@"\n`,
+				);
+				assert.strictEqual(
+					shim("helper"),
+					`#!/bin/sh\nexec node "${join(installed.directory, "bin", "helper.cjs")}" "$@"\n`,
+				);
+				assert.strictEqual(shim("tool"), `#!/bin/sh\nexec "${join(installed.directory, "bin", "tool")}" "$@"\n`);
+				rmSync(root, { recursive: true, force: true });
+			}),
+		);
+
+		it.live("a host with no @pnpm/exe.* candidate is unsupportedPlatform, before any exe download", () =>
+			Effect.gen(function* () {
+				const version = "12.0.1";
+				// Two ways to have no candidate: a platform pnpm never publishes for,
+				// and a wrapper whose optionalDependencies omit the host's target.
+				const solarisRoot = scratch();
+				const solarisWrapper = makePnpm12Wrapper(solarisRoot, version);
+				const solaris = scriptedFetch({ [pnpm12Urls(version, "x").wrapper]: tgzResponse(solarisWrapper) });
+				const solarisError = yield* Effect.flip(
+					install(`pnpm@${version}`).pipe(
+						Effect.provide(live(solarisRoot, solaris.fetch, { RUNNER_OS: "Solaris", RUNNER_ARCH: "X64" })),
+						Effect.ensuring(Effect.sync(() => rmSync(solarisRoot, { recursive: true, force: true }))),
+					),
+				);
+				assert.instanceOf(solarisError, PackageManagerInstallerError);
+				assert.strictEqual(solarisError.reason, "unsupportedPlatform");
+				assert.strictEqual(solarisError.subject, "Solaris/x64");
+				assert.deepStrictEqual(solaris.calls, [pnpm12Urls(version, "x").wrapper]);
+
+				const omittedRoot = scratch();
+				const omittedWrapper = makePnpm12Wrapper(omittedRoot, version, { targets: ["linux-x64", "darwin-x64"] });
+				const omitted = scriptedFetch({ [pnpm12Urls(version, "x").wrapper]: tgzResponse(omittedWrapper) });
+				const omittedError = yield* Effect.flip(
+					install(`pnpm@${version}`).pipe(
+						Effect.provide(live(omittedRoot, omitted.fetch, darwinArm)),
+						Effect.ensuring(Effect.sync(() => rmSync(omittedRoot, { recursive: true, force: true }))),
+					),
+				);
+				assert.strictEqual(omittedError.reason, "unsupportedPlatform");
+				assert.strictEqual(omittedError.subject, "macOS/arm64");
+				assert.deepStrictEqual(omitted.calls, [pnpm12Urls(version, "x").wrapper]);
+			}),
+		);
+
+		it.live(
+			"a wrapper pinning its native package at another version is layoutUnexpected, before any exe download",
+			() =>
+				Effect.gen(function* () {
+					// The manifest is attacker-supplied and this string is spliced into
+					// two registry urls, so only the pin's own version is ever used there.
+					const root = scratch();
+					const version = "12.0.1";
+					const wrapper = makePnpm12Wrapper(root, version, { nativeVersion: "../../evil" });
+					const scripted = scriptedFetch({ [pnpm12Urls(version, "x").wrapper]: tgzResponse(wrapper) });
+					const error = yield* Effect.flip(
+						install(`pnpm@${version}`).pipe(
+							Effect.provide(live(root, scripted.fetch, darwinArm)),
+							Effect.ensuring(Effect.sync(() => rmSync(root, { recursive: true, force: true }))),
+						),
+					);
+					assert.instanceOf(error, PackageManagerInstallerError);
+					assert.strictEqual(error.reason, "layoutUnexpected");
+					assert.strictEqual(error.subject, "@pnpm/exe.darwin-arm64 is pinned at ../../evil, not the wrapper's 12.0.1");
+					assert.deepStrictEqual(scripted.calls, [pnpm12Urls(version, "x").wrapper]);
+				}),
+		);
+
+		it.live(
+			"an exe tarball that does not hash to the registry's dist.integrity is integrityMismatch, and caches nothing",
+			() =>
+				Effect.gen(function* () {
+					const root = scratch();
+					const version = "12.0.2";
+					const wrapper = makePnpm12Wrapper(root, version);
+					const exe = makePnpmExeTarball(root, "darwin-arm64", version);
+					const urls = pnpm12Urls(version, "darwin-arm64");
+					// A well-formed SRI that is simply not this tarball's — sha512 of "".
+					const wrongSri = `sha512-${createHash("sha512").update("").digest("base64")}`;
+					const wrongHex = createHash("sha512").update("").digest("hex");
+					const script = scriptedFetch({
+						[urls.wrapper]: tgzResponse(wrapper),
+						[urls.packument]: jsonResponse({ dist: { integrity: wrongSri } }),
+						[urls.exe]: tgzResponse(exe),
+					});
+					const error = yield* Effect.flip(
+						install(`pnpm@${version}`).pipe(Effect.provide(live(root, script.fetch, darwinArm))),
+					);
+					assert.instanceOf(error, PackageManagerInstallerError);
+					assert.strictEqual(error.reason, "integrityMismatch");
+					assert.strictEqual(error.expected, `sha512.${wrongHex}`);
+					assert.strictEqual(error.actual, `sha512.${sha512Hex(exe)}`);
+					assert.strictEqual(error.subject, urls.exe);
+					assert.include(error.message, "Integrity mismatch");
+					const destination = ToolInstaller.cachePath({ root, tool: "pnpm", version, arch: "arm64" });
+					assert.isFalse(existsSync(destination), "a failed verification must not leave anything in the cache");
+					rmSync(root, { recursive: true, force: true });
+				}),
+		);
+
+		it.live(
+			"a packument without dist.integrity cannot vouch for the tarball: integrityMismatch, could-not-verify arm",
+			() =>
+				Effect.gen(function* () {
+					const version = "12.0.3";
+					const urls = pnpm12Urls(version, "darwin-arm64");
+					const attempt = (packument: () => Response) =>
+						Effect.gen(function* () {
+							const root = scratch();
+							const wrapper = makePnpm12Wrapper(root, version);
+							const script = scriptedFetch({ [urls.wrapper]: tgzResponse(wrapper), [urls.packument]: packument });
+							const error = yield* Effect.flip(
+								install(`pnpm@${version}`).pipe(
+									Effect.provide(live(root, script.fetch, darwinArm)),
+									Effect.ensuring(Effect.sync(() => rmSync(root, { recursive: true, force: true }))),
+								),
+							);
+							assert.instanceOf(error, PackageManagerInstallerError);
+							assert.strictEqual(error.reason, "integrityMismatch");
+							assert.isUndefined(error.expected);
+							assert.isUndefined(error.actual);
+							assert.strictEqual(error.subject, urls.packument);
+							assert.include(error.message, "Could not verify the integrity");
+							// Fail-closed BEFORE the tarball is fetched: nothing to verify it against.
+							assert.deepStrictEqual(script.calls, [urls.wrapper, urls.packument]);
+						});
+					yield* attempt(jsonResponse({ dist: { tarball: urls.exe } }));
+					yield* attempt(jsonResponse({ dist: { integrity: "md5-AAAA" } })); // no usable algorithm
+					yield* attempt(() => new Response("<html>not json</html>", { status: 200 }));
+				}),
+		);
+
+		describe("caller-supplied nativeIntegrity", () => {
+			// A mirror that serves tarballs only: the packument route is never
+			// scripted, so any request for it answers 404 and fails the install.
+			const mirror = "https://mirror.example/npm";
+			/** sha512 of "" — a well-formed SRI that is no tarball's. */
+			const wrongSri = `sha512-${createHash("sha512").update("").digest("base64")}`;
+			const wrongHex = createHash("sha512").update("").digest("hex");
+
+			it.live("verifies the host's exe tarball against the supplied SRI and never asks for the packument", () =>
+				Effect.gen(function* () {
+					const root = scratch();
+					const version = "12.1.0";
+					const wrapper = makePnpm12Wrapper(root, version);
+					const exe = makePnpmExeTarball(root, "darwin-arm64", version);
+					const urls = pnpm12Urls(version, "darwin-arm64", mirror);
+					const script = scriptedFetch({ [urls.wrapper]: tgzResponse(wrapper), [urls.exe]: tgzResponse(exe) });
+					const installed = cachedOf(
+						yield* install(`pnpm@${version}`, {
+							registry: mirror,
+							// Every platform, as a lockfile records them; only the host's is read.
+							nativeIntegrity: { "@pnpm/exe.linux-x64": wrongSri, "@pnpm/exe.darwin-arm64": sha512Sri(exe) },
+						}).pipe(Effect.provide(live(root, script.fetch, darwinArm))),
+					);
+					assert.deepStrictEqual(script.calls, [urls.wrapper, urls.exe], "the packument must not be requested");
+					assert.include(readFileSync(installed.bins.pnpm ?? "", "utf8"), "native-pnpm");
+					rmSync(root, { recursive: true, force: true });
+				}),
+			);
+
+			it.live("a tarball that does not hash to the supplied SRI is integrityMismatch naming the tarball url", () =>
+				Effect.gen(function* () {
+					// The discriminating input: identical to the success case except the
+					// HOST's entry is wrong. The packument is scripted with the CORRECT
+					// SRI and a sibling key carries it too, so a mutant that consults
+					// the packument, or reads a key other than the host's, installs.
+					const root = scratch();
+					const version = "12.1.1";
+					const wrapper = makePnpm12Wrapper(root, version);
+					const exe = makePnpmExeTarball(root, "darwin-arm64", version);
+					const urls = pnpm12Urls(version, "darwin-arm64");
+					const script = scriptedFetch({
+						[urls.wrapper]: tgzResponse(wrapper),
+						[urls.packument]: jsonResponse({ dist: { integrity: sha512Sri(exe) } }),
+						[urls.exe]: tgzResponse(exe),
+					});
+					const error = yield* Effect.flip(
+						install(`pnpm@${version}`, {
+							nativeIntegrity: { "@pnpm/exe.darwin-x64": sha512Sri(exe), "@pnpm/exe.darwin-arm64": wrongSri },
+						}).pipe(Effect.provide(live(root, script.fetch, darwinArm))),
+					);
+					assert.instanceOf(error, PackageManagerInstallerError);
+					assert.strictEqual(error.reason, "integrityMismatch");
+					assert.strictEqual(error.subject, urls.exe);
+					assert.strictEqual(error.expected, `sha512.${wrongHex}`);
+					assert.strictEqual(error.actual, `sha512.${sha512Hex(exe)}`);
+					assert.include(error.message, "Integrity mismatch");
+					assert.deepStrictEqual(script.calls, [urls.wrapper, urls.exe]);
+					const destination = ToolInstaller.cachePath({ root, tool: "pnpm", version, arch: "arm64" });
+					assert.isFalse(existsSync(destination), "a failed verification must not leave anything in the cache");
+					rmSync(root, { recursive: true, force: true });
+				}),
+			);
+
+			it.live("a map with no entry for the host's package is integrityMissing naming it, before any exe download", () =>
+				Effect.gen(function* () {
+					const version = "12.1.2";
+					const urls = pnpm12Urls(version, "darwin-arm64");
+					const attempt = (nativeIntegrity: Readonly<Record<string, string>>) =>
+						Effect.gen(function* () {
+							const root = scratch();
+							const wrapper = makePnpm12Wrapper(root, version);
+							const script = scriptedFetch({ [urls.wrapper]: tgzResponse(wrapper) });
+							const error = yield* Effect.flip(
+								install(`pnpm@${version}`, { nativeIntegrity }).pipe(
+									Effect.provide(live(root, script.fetch, darwinArm)),
+									Effect.ensuring(Effect.sync(() => rmSync(root, { recursive: true, force: true }))),
+								),
+							);
+							assert.instanceOf(error, PackageManagerInstallerError);
+							assert.strictEqual(error.reason, "integrityMissing");
+							assert.strictEqual(error.subject, "@pnpm/exe.darwin-arm64");
+							assert.include(error.message, "@pnpm/exe.darwin-arm64");
+							assert.deepStrictEqual(script.calls, [urls.wrapper]);
+						});
+					yield* attempt({});
+					yield* attempt({ "@pnpm/exe.linux-x64": wrongSri, "@pnpm/exe.darwin-x64": wrongSri });
+					// An inherited member is not a recorded checksum.
+					yield* attempt(Object.create({ "@pnpm/exe.darwin-arm64": wrongSri }) as Record<string, string>);
+				}),
+			);
+
+			it.live("an entry with no usable SRI is the could-not-verify arm, before any exe download", () =>
+				Effect.gen(function* () {
+					const root = scratch();
+					const version = "12.1.3";
+					const urls = pnpm12Urls(version, "darwin-arm64");
+					const wrapper = makePnpm12Wrapper(root, version);
+					const script = scriptedFetch({ [urls.wrapper]: tgzResponse(wrapper) });
+					const error = yield* Effect.flip(
+						install(`pnpm@${version}`, { nativeIntegrity: { "@pnpm/exe.darwin-arm64": "md5-AAAA" } }).pipe(
+							Effect.provide(live(root, script.fetch, darwinArm)),
+							Effect.ensuring(Effect.sync(() => rmSync(root, { recursive: true, force: true }))),
+						),
+					);
+					assert.instanceOf(error, PackageManagerInstallerError);
+					assert.strictEqual(error.reason, "integrityMismatch");
+					assert.strictEqual(error.subject, "@pnpm/exe.darwin-arm64");
+					assert.isUndefined(error.expected);
+					assert.include(error.message, "Could not verify the integrity");
+					assert.deepStrictEqual(script.calls, [urls.wrapper]);
+				}),
+			);
+
+			it.live("a pin with no native overlay ignores the map, even one that would fail an overlay", () =>
+				Effect.gen(function* () {
+					const root = scratch();
+					const archive = makeManagerTarball(root, {
+						name: "pnpm",
+						version: "11.2.0",
+						bin: { pnpm: "bin/pnpm.mjs" },
+						binFiles: ["bin/pnpm.mjs"],
+					});
+					const url = "https://registry.npmjs.org/pnpm/-/pnpm-11.2.0.tgz";
+					const script = scriptedFetch({ [url]: tgzResponse(archive) });
+					const installed = cachedOf(
+						yield* install("pnpm@11.2.0", { nativeIntegrity: {} }).pipe(
+							Effect.provide(live(root, script.fetch, darwinArm)),
+							Effect.ensuring(Effect.sync(() => rmSync(root, { recursive: true, force: true }))),
+						),
+					);
+					assert.deepStrictEqual(script.calls, [url]);
+					assert.strictEqual(installed.bins.pnpm, join(installed.directory, "bin", "pnpm.mjs"));
+				}),
+			);
+		});
+
+		it.live("an exe tarball missing package/pnpm is layoutUnexpected", () =>
+			Effect.gen(function* () {
+				const root = scratch();
+				const version = "12.0.4";
+				const wrapper = makePnpm12Wrapper(root, version);
+				const exe = makePnpmExeTarball(root, "darwin-arm64", version, { omitBinary: true });
+				const urls = pnpm12Urls(version, "darwin-arm64");
+				const script = scriptedFetch({
+					[urls.wrapper]: tgzResponse(wrapper),
+					[urls.packument]: jsonResponse({ dist: { integrity: sha512Sri(exe) } }),
+					[urls.exe]: tgzResponse(exe),
+				});
+				const error = yield* Effect.flip(
+					install(`pnpm@${version}`).pipe(
+						Effect.provide(live(root, script.fetch, darwinArm)),
+						Effect.ensuring(Effect.sync(() => rmSync(root, { recursive: true, force: true }))),
+					),
+				);
+				assert.instanceOf(error, PackageManagerInstallerError);
+				assert.strictEqual(error.reason, "layoutUnexpected");
+				assert.include(error.subject ?? "", "package/pnpm");
+				assert.include(error.subject ?? "", "@pnpm/exe.darwin-arm64");
+			}),
+		);
+
+		it.live("the exe conversation follows the wrapper's registry override", () =>
+			Effect.gen(function* () {
+				const root = scratch();
+				const version = "12.0.5";
+				const registry = "https://mirror.example.test";
+				const wrapper = makePnpm12Wrapper(root, version);
+				const exe = makePnpmExeTarball(root, "darwin-arm64", version);
+				const urls = pnpm12Urls(version, "darwin-arm64", registry);
+				const script = scriptedFetch({
+					[urls.wrapper]: tgzResponse(wrapper),
+					[urls.packument]: jsonResponse({ dist: { integrity: sha512Sri(exe) } }),
+					[urls.exe]: tgzResponse(exe),
+				});
+				const installed = yield* install(`pnpm@${version}`, { registry: `${registry}/` }).pipe(
+					Effect.provide(live(root, script.fetch, darwinArm)),
+					Effect.ensuring(Effect.sync(() => rmSync(root, { recursive: true, force: true }))),
+				);
+				assert.strictEqual(installed.source, "tool-cache");
+				assert.deepStrictEqual(script.calls, [urls.wrapper, urls.packument, urls.exe]);
+			}),
+		);
+
+		it.live("a cache hit still holding the placeholder is reinstalled over, stale `exec node` shim included", () =>
+			Effect.gen(function* () {
+				// The entry an OLDER version of this module wrote for pnpm 12: the
+				// wrapper as extracted (placeholder intact, never overlaid) plus a
+				// shim that hands the placeholder to node — the production failure.
+				const root = scratch();
+				const version = "12.0.6";
+				const cached = ToolInstaller.cachePath({ root, tool: "pnpm", version, arch: "arm64" });
+				mkdirSync(join(cached, ".bin"), { recursive: true });
+				mkdirSync(join(cached, "bin"), { recursive: true });
+				writeFileSync(
+					join(cached, "package.json"),
+					JSON.stringify({
+						name: "pnpm",
+						version,
+						bin: { pnpm: "pnpm", pn: "pn", pnpx: "pnpx", pnx: "pnx" },
+						optionalDependencies: { "@pnpm/exe.darwin-arm64": version },
+					}),
+				);
+				writeFileSync(join(cached, "pnpm"), PNPM_PLACEHOLDER);
+				for (const alias of ["pn", "pnpx", "pnx"]) {
+					writeFileSync(join(cached, alias), pnpmAlias(alias));
+				}
+				writeFileSync(join(cached, ".bin", "pnpm"), `#!/bin/sh\nexec node "${join(cached, "pnpm")}" "$@"\n`);
+				writeFileSync(join(cached, "foreign-marker"), "written by the old entry");
+
+				const wrapper = makePnpm12Wrapper(root, version);
+				const exe = makePnpmExeTarball(root, "darwin-arm64", version);
+				const urls = pnpm12Urls(version, "darwin-arm64");
+				const script = scriptedFetch({
+					[urls.wrapper]: tgzResponse(wrapper),
+					[urls.packument]: jsonResponse({ dist: { integrity: sha512Sri(exe) } }),
+					[urls.exe]: tgzResponse(exe),
+				});
+				const installed = cachedOf(
+					yield* install(`pnpm@${version}`).pipe(Effect.provide(live(root, script.fetch, darwinArm))),
+				);
+				// The hit was NOT answered: the whole conversation ran…
+				assert.deepStrictEqual(script.calls, [urls.wrapper, urls.packument, urls.exe]);
+				// …the entry was replaced wholesale (the swap, not an in-place patch)…
+				assert.strictEqual(installed.directory, cached);
+				assert.isFalse(existsSync(join(cached, "foreign-marker")), "the old entry must be swapped out, not patched");
+				// …the placeholder is now the binary, and the stale shim was rewritten.
+				assert.include(readFileSync(join(cached, "pnpm"), "utf8"), "native-pnpm");
+				assert.strictEqual(
+					readFileSync(join(cached, ".bin", "pnpm"), "utf8"),
+					`#!/bin/sh\nexec "${join(cached, "pnpm")}" "$@"\n`,
+				);
+				rmSync(root, { recursive: true, force: true });
+			}),
+		);
+
+		it.live("a cache hit whose pnpm is already an executable is answered without downloading", () =>
+			Effect.gen(function* () {
+				// Both things a non-placeholder `pnpm` can be: executable magic (the
+				// real Mach-O/ELF binary) and a `#!` script. Only a `#`-led NON-shebang
+				// file is the placeholder; treating a shebang as one would reinstall
+				// a perfectly good entry on every run.
+				const heads: ReadonlyArray<readonly [string, Buffer | string]> = [
+					["12.0.7", Buffer.from([0x7f, 0x45, 0x4c, 0x46, 0x02, 0x01])],
+					["12.0.9", "#!/bin/sh\necho pnpm\n"],
+				];
+				for (const [version, head] of heads) {
+					const root = scratch();
+					const cached = ToolInstaller.cachePath({ root, tool: "pnpm", version, arch: "arm64" });
+					mkdirSync(cached, { recursive: true });
+					writeFileSync(
+						join(cached, "package.json"),
+						JSON.stringify({
+							bin: { pnpm: "pnpm", pn: "pn" },
+							optionalDependencies: { "@pnpm/exe.darwin-arm64": version },
+						}),
+					);
+					writeFileSync(join(cached, "pnpm"), head);
+					writeFileSync(join(cached, "pn"), pnpmAlias("pn"));
+					// No .bin at all — a foreign writer; the fetch always fails, so an
+					// answer proves nothing was downloaded and the shims were regenerated
+					// with the direct-exec body.
+					const installed = cachedOf(
+						yield* install(`pnpm@${version}`).pipe(Effect.provide(live(root, alwaysFails, darwinArm))),
+					);
+					assert.strictEqual(installed.directory, cached);
+					assert.strictEqual(installed.bins.pnpm, join(cached, "pnpm"));
+					assert.strictEqual(
+						readFileSync(join(cached, ".bin", "pnpm"), "utf8"),
+						`#!/bin/sh\nexec "${join(cached, "pnpm")}" "$@"\n`,
+					);
+					assert.strictEqual(
+						readFileSync(join(cached, ".bin", "pn"), "utf8"),
+						`#!/bin/sh\nexec "${join(cached, "pn")}" "$@"\n`,
+					);
+					rmSync(root, { recursive: true, force: true });
+				}
+			}),
+		);
+
+		it.live(
+			"on Windows the binary lands as <name>.exe for every wrapper bin, and both shim flavours target the .exe",
+			() =>
+				Effect.gen(function* () {
+					// The Windows branch reached from any host: RUNNER_OS decides the file
+					// names, the shim flavour and the chmod skip; the filesystem is real.
+					const root = scratch();
+					const version = "12.0.8";
+					const wrapper = makePnpm12Wrapper(root, version);
+					const exeStaging = join(root, "exe-staging", "package");
+					mkdirSync(exeStaging, { recursive: true });
+					writeFileSync(join(exeStaging, "package.json"), JSON.stringify({ name: "@pnpm/exe.win32-x64", version }));
+					writeFileSync(join(exeStaging, "pnpm.exe"), "MZ-native-pnpm-win32");
+					const exe = join(root, "exe-win32-x64.tgz");
+					execFileSync("tar", ["czf", exe, "-C", join(root, "exe-staging"), "package"]);
+					const urls = pnpm12Urls(version, "win32-x64");
+					const script = scriptedFetch({
+						[urls.wrapper]: tgzResponse(wrapper),
+						[urls.packument]: jsonResponse({ dist: { integrity: sha512Sri(exe) } }),
+						[urls.exe]: tgzResponse(exe),
+					});
+					const installed = cachedOf(
+						yield* install(`pnpm@${version}`).pipe(
+							Effect.provide(live(root, script.fetch, { RUNNER_OS: "Windows", RUNNER_ARCH: "X64" })),
+						),
+					);
+					assert.deepStrictEqual(script.calls, [urls.wrapper, urls.packument, urls.exe]);
+					for (const name of ["pnpm", "pn", "pnpx", "pnx"]) {
+						assert.strictEqual(installed.bins[name], join(installed.directory, `${name}.exe`));
+						assert.strictEqual(readFileSync(join(installed.directory, `${name}.exe`), "utf8"), "MZ-native-pnpm-win32");
+						assert.strictEqual(readFileSync(join(installed.directory, name), "utf8"), "MZ-native-pnpm-win32");
+						assert.strictEqual(
+							readFileSync(join(installed.binDir, `${name}.cmd`), "utf8"),
+							`@echo off\r\n"${join(installed.directory, `${name}.exe`)}" %*\r\n`,
+						);
+						// The Git Bash sibling execs the same native binary directly,
+						// forward-slash rendered — the same distinction the `.cmd`
+						// applies, from the same target.
+						assert.strictEqual(
+							readFileSync(join(installed.binDir, name), "utf8"),
+							`#!/bin/sh\nexec "${join(installed.directory, `${name}.exe`).replaceAll("\\", "/")}" "$@"\n`,
+						);
+					}
+					rmSync(root, { recursive: true, force: true });
+				}),
+		);
+	});
+
 	describe("the error reasons that remain", () => {
 		it.live("downloadFailed carries the ToolInstaller failure as cause", () =>
 			Effect.gen(function* () {
@@ -826,33 +1850,45 @@ describe("PackageManagerInstaller", () => {
 			}),
 		);
 
-		it.live("a cache entry that lands away from the derived shim target is a typed cacheFailed", () =>
+		it.live("the shims name whatever the installer's cachePath answers, not a second derivation", () =>
 			Effect.gen(function* () {
-				// The divergence guard: the shims name a destination this module
-				// derived; if ToolInstaller's swap lands the entry anywhere else the
-				// shims point at nothing, and that must be loud, not latent.
+				// The shim target is ToolInstaller's own answer — the same closure
+				// `cacheDir` lands at — so there is no second resolution of the
+				// cache root or arch in this module to diverge from it. A stubbed
+				// installer answering a sentinel path proves the shims read it.
 				const root = scratch();
 				const extracted = join(root, "extracted", "package");
+				const target = join(root, "sentinel-target");
 				mkdirSync(join(extracted, "bin"), { recursive: true });
 				writeFileSync(join(extracted, "package.json"), JSON.stringify({ bin: { pnpm: "bin/pnpm.cjs" } }));
 				writeFileSync(join(extracted, "bin", "pnpm.cjs"), "console.log('pnpm')");
-				const error = yield* Effect.flip(
-					install("pnpm@2.0.6").pipe(
+				const asked: Array<string> = [];
+				const installed = cachedOf(
+					yield* install("pnpm@2.0.6").pipe(
 						Effect.provide(
 							stubbed({
 								installer: {
 									find: () => Effect.succeed(Option.none()),
 									download: () => Effect.succeed(join(root, "unused-archive")),
 									extractTar: () => Effect.succeed(join(root, "extracted")),
-									cacheDir: () => Effect.succeed(join(root, "somewhere-else")),
+									cachePath: (tool, version) => {
+										asked.push(`${tool}@${version}`);
+										return target;
+									},
+									// The stub does not move the tree, so the shims stay readable
+									// where they were written — in the STAGED package directory.
+									cacheDir: () => Effect.succeed(target),
 								},
 							}),
 						),
 					),
 				);
-				assert.instanceOf(error, PackageManagerInstallerError);
-				assert.strictEqual(error.reason, "cacheFailed");
-				assert.include(error.subject ?? "", "diverged");
+				assert.deepStrictEqual(asked, ["pnpm@2.0.6"]);
+				assert.strictEqual(installed.directory, target);
+				assert.strictEqual(
+					readFileSync(join(extracted, ".bin", "pnpm"), "utf8"),
+					`#!/bin/sh\nexec node "${join(target, "bin", "pnpm.cjs")}" "$@"\n`,
+				);
 				rmSync(root, { recursive: true, force: true });
 			}),
 		);

@@ -17,6 +17,15 @@ export class InvalidRepoRefError extends Schema.TaggedError<InvalidRepoRefError>
 /**
  * Which repository an operation acts on.
  *
+ * @remarks
+ * **`RepoRef.make` validates at construction and throws** on an empty `owner`
+ * or `repo`, so inside an `Effect` a bad value dies rather than failing. That
+ * is right for a coordinate the program itself spells out, and wrong for one
+ * built from data: for a slug read from a database row, a config file or a
+ * webhook, use {@link RepoRef.parse}, which fails with a typed
+ * {@link InvalidRepoRefError} instead (or {@link RepoRef.parseResult}
+ * outside an `Effect`).
+ *
  * @public
  */
 export class RepoRef extends Schema.Class<RepoRef>("RepoRef")({
@@ -42,7 +51,13 @@ export class RepoRef extends Schema.Class<RepoRef>("RepoRef")({
 		return Result.succeed(RepoRef.make({ owner, repo }));
 	}
 
-	/** Parse `"owner/repo"`. */
+	/**
+	 * Parse `"owner/repo"`, failing with a typed {@link InvalidRepoRefError}.
+	 *
+	 * @remarks
+	 * The typed path for building a `Repo` from stored data, such as a stored
+	 * `full_name`: a malformed value fails here, where `make` would die.
+	 */
 	static readonly parse = Effect.fn("RepoRef.parse")((slug: string) => Effect.fromResult(RepoRef.parseResult(slug)));
 
 	/** `"owner/repo"`. */
@@ -59,32 +74,25 @@ export class RepoRef extends Schema.Class<RepoRef>("RepoRef")({
  * `{ owner, repo }` argument**, which is what makes a read like
  * `GitHubRepository.defaultBranch` a single expression instead of a preamble.
  *
- * The package this replaces read `process.env.GITHUB_REPOSITORY` in three
- * places — inside the client, inside the App layer, and transitively in every
- * caller of `client.repo` — which is most of what coupled a GitHub API client to
- * the GitHub Actions runtime. Here the coordinate is a value, the env-driven way
- * to get one is a layer variant **named for being env-driven**, and a program
- * that acts on several repositories uses {@link Repo.provide}:
+ * The coordinate is a plain value. The only env-driven way to get one is
+ * {@link Repo.layerFromConfig}, which is named for being env-driven, and a
+ * program that acts on several repositories uses {@link Repo.provide}.
+ *
+ * The service shape is entirely one immutable value (a `RepoRef`), with no
+ * methods, so `Layer.succeed` is the correct test double.
  *
  * @example
  * ```ts
- * import { Repo } from "@effected/github";
+ * import { Repo, RepoRef } from "@effected/github";
  * import { Effect } from "effect";
  *
  * declare const syncOne: Effect.Effect<void, never, Repo>;
- * declare const targets: ReadonlyArray<Repo["Service"]>;
+ * declare const targets: ReadonlyArray<RepoRef>;
  *
  * const syncAll = Effect.forEach(targets, (target) => syncOne.pipe(Repo.provide(target)), {
  *   concurrency: 4,
  * });
  * ```
- *
- * **A deliberate exception to "no non-effectful members on a service shape."**
- * This shape is entirely one immutable value: there is nothing to leave
- * unimplemented, so `Layer.mock` has nothing to degrade and `Layer.succeed` is
- * the correct double. The rule exists to stop a sync member from quietly
- * degrading a *mixed* shape's partial mock. The boundary to hold: the moment a
- * method appears here, this is a service again and the rule applies.
  *
  * @public
  */
@@ -109,7 +117,7 @@ export class Repo extends Context.Service<Repo, RepoRef>()("@effected/github/Rep
 	): Layer.Layer<Repo, Config.ConfigError | InvalidRepoRefError> =>
 		Layer.effect(
 			Repo,
-			Effect.flatMap(Config.string(options.name ?? "GITHUB_REPOSITORY"), (slug) => RepoRef.parse(slug)),
+			Effect.flatMap(Config.String(options.name ?? "GITHUB_REPOSITORY"), (slug) => RepoRef.parse(slug)),
 		);
 
 	/** Run `effect` against a different repository. */

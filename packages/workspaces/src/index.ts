@@ -8,20 +8,21 @@
  * text, `@effected/glob` matches patterns, `@effected/walker` ascends
  * directories. This package is the part that needs a filesystem and a package
  * manager under it, and it is where `@effected/npm`'s `CatalogResolver` and
- * `WorkspaceResolver` contracts are finally implemented.
+ * `WorkspaceResolver` contracts are implemented.
  *
  * @example
  * ```ts
+ * import { NodeServices } from "@effect/platform-node";
  * import { WorkspaceDiscovery, Workspaces } from "@effected/workspaces";
- * import { Effect } from "effect";
+ * import { Effect, Layer } from "effect";
  *
- * const WorkspacesLayer = Workspaces.layer();
+ * const WorkspacesLayer = Workspaces.layer().pipe(Layer.provide(NodeServices.layer));
  *
  * const program = Effect.gen(function* () {
  *   const discovery = yield* WorkspaceDiscovery;
  *   const packages = yield* discovery.listPackages();
  *   return packages.map((pkg) => pkg.name);
- * });
+ * }).pipe(Effect.provide(WorkspacesLayer));
  * ```
  *
  * @packageDocumentation
@@ -38,10 +39,22 @@ export {
 	ConfigDependencyHooks,
 	type ConfigDependencyHooksShape,
 	type HookInjection,
+	type HookReplay,
+	type HookReplayContext,
+	type HookReplaySource,
 	NoPeerDependencyRules,
 	type PeerDependencyRules,
 } from "./ConfigDependencyHooks.js";
+export { ConfigDependencySpec, InvalidConfigDependencySpecError } from "./ConfigDependencySpec.js";
 export { CyclicDependencyError, DependencyGraph } from "./DependencyGraph.js";
+export {
+	Dependent,
+	DuplicateCheck,
+	type DuplicateCheckOptions,
+	DuplicateInstance,
+	DuplicatedPackage,
+	DuplicatedVersion,
+} from "./DuplicateCheck.js";
 export {
 	LockfileReadError,
 	type LockfileReadFailure,
@@ -124,6 +137,7 @@ export {
 	type WorkspacesServices,
 } from "./Workspaces.js";
 export {
+	type FindWorkspaceRootSyncOptions,
 	type GetWorkspacePackagesSyncOptions,
 	type SyncDirectoryEntry,
 	type SyncFileSystem,

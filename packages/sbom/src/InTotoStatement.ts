@@ -58,7 +58,7 @@ export class InvalidSha256DigestError extends Schema.TaggedError<InvalidSha256Di
 }
 
 /** 64 hex characters, lowercase — the normalized form. */
-const SHA256_RE = /^[0-9a-f]{64}$/;
+const SHA256_RE = /^[0-9a-f]{64}$/u;
 
 /** The `sha256:` prefix a caller may have carried in from a digest reference. */
 const SHA256_PREFIX_RE = /^sha256:/i;
@@ -94,7 +94,7 @@ const parseResult = (value: string): Result.Result<Sha256Digest, InvalidSha256Di
  * A deliberate small duplication rather than a shared package: `@effected/github`
  * types the same value structurally on its attestation surface, and dragging a
  * package across that seam to share one branded string would cost more than the
- * duplication does. Recorded under the program's shared-vocabulary rule.
+ * duplication does.
  *
  * @public
  */
@@ -146,7 +146,7 @@ export class InTotoSubject extends Schema.Class<InTotoSubject>("InTotoSubject")(
 /**
  * Input to {@link (InTotoStatement:class).of}.
  *
- * @remarks
+ * @privateRemarks
  * The two predicate members are spelled out here and again on
  * {@link InTotoSubjectInput} rather than shared through a base interface: an
  * internal type named on a `@public` signature is a forgotten export, and a
@@ -196,12 +196,16 @@ export interface InTotoSubjectInput {
  * @example
  * ```ts
  * import { InTotoStatement, Sha256Digest, SlsaProvenance } from "@effected/sbom";
+ * import { Effect } from "effect";
  *
- * const statement = InTotoStatement.forSubject({
- *   name: "pkg:npm/%40scope/pkg@1.0.0",
- *   digest,
- *   predicateType: SlsaProvenance.predicateType,
- *   predicate: provenance,
+ * const program = Effect.gen(function* () {
+ *   const digest = yield* Sha256Digest.parse("ab".repeat(32));
+ *   return InTotoStatement.forSubject({
+ *     name: "pkg:npm/%40scope/pkg@1.0.0",
+ *     digest,
+ *     predicateType: SlsaProvenance.predicateType,
+ *     predicate: {}, // a SlsaProvenance, a BOM, or any predicate body
+ *   });
  * });
  * ```
  *
@@ -244,7 +248,7 @@ export class InTotoStatement extends Schema.Class<InTotoStatement>("InTotoStatem
 	 * serializes to the same bytes on every run. Pass `space` for a form meant to
 	 * be read by a person.
 	 */
-	toJson(options?: { readonly space?: number }): string {
+	toJson(options?: { readonly space?: number | undefined }): string {
 		return JSON.stringify(
 			{
 				_type: this._type,

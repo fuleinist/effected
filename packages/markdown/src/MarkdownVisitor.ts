@@ -6,14 +6,13 @@
 // `Data.TaggedEnum` with a `taggedEnum` constructor const, and the statics
 // class exposes a single `visit`. One recorded deviation: the yaml and toml
 // visitors take TEXT and parse internally, because their event source is the
-// parse itself; this visitor walks an ALREADY-PARSED tree — the design's
-// "streams events from a tree walk" — which is what lets it stay infallible
+// parse itself; this visitor walks an ALREADY-PARSED tree, which is what lets it stay infallible
 // at the type level with no parse-error channel. Consumers compose
 // `Markdown.parse` (or `Mdast.fromMdast`) with `MarkdownVisitor.visit`.
 //
 // Guard posture: a tree this package's own parser produced can never exceed
-// `MAX_NESTING_DEPTH` (the parse guard refuses deeper input), and a decoded
-// foreign tree (`Mdast.fromMdast`) no longer can — the decode boundary
+// `MAX_NESTING_DEPTH` (the parse guard refuses deeper input), and neither
+// can a decoded foreign tree (`Mdast.fromMdast`) — the decode boundary
 // refuses it first. Only a hand-constructed tree can trip the guard.
 // Mirroring stringify — which fails typed on the same tree — the walk
 // surfaces the trip deliberately as a terminal `Error` event carrying a
@@ -53,7 +52,24 @@ export type MarkdownVisitorEvent = Data.TaggedEnum<{
 export const MarkdownVisitorEvent = Data.taggedEnum<MarkdownVisitorEvent>();
 
 /**
- * SAX-style markdown tree visitor statics. Not instantiable.
+ * Walks a parsed markdown tree as a lazy `Stream` of `Enter`/`Exit` events in
+ * document pre-order. Not instantiable.
+ *
+ * @example
+ * ```ts
+ * import { Markdown, MarkdownVisitor, MarkdownVisitorEvent } from "@effected/markdown";
+ * import { Effect, Stream } from "effect";
+ *
+ * const program = Effect.gen(function* () {
+ *   const root = yield* Markdown.parse("# Hi\n\ntext\n");
+ *   return yield* MarkdownVisitor.visit(root).pipe(
+ *     Stream.filter(MarkdownVisitorEvent.$is("Enter")),
+ *     Stream.map((event) => event.node.type),
+ *     Stream.runCollect,
+ *   );
+ *   // => ["root", "heading", "text", "paragraph", "text"]
+ * });
+ * ```
  *
  * @public
  */
@@ -70,12 +86,16 @@ export class MarkdownVisitor {
 	 * @remarks
 	 * Infallible at the type level. A tree produced by `Markdown.parse` can
 	 * never trip the walk's depth guard — the parser refuses deeper input —
-	 * and a decoded foreign tree (`Mdast.fromMdast`) no longer can, because
-	 * the decode boundary refuses it first; only a hand-constructed tree can
-	 * trip the guard. The trip surfaces as a terminal `MarkdownVisitorEvent`
+	 * and neither can a decoded foreign tree (`Mdast.fromMdast`), because the
+	 * decode boundary refuses it first; only a hand-constructed tree can trip
+	 * the guard. The trip surfaces as a terminal `MarkdownVisitorEvent`
 	 * `Error` event carrying a `NestingDepthExceeded` {@link MarkdownDiagnostic},
 	 * mirroring the typed failure `Markdown.stringify` produces for the same
 	 * tree.
+	 *
+	 * @param root - The tree to walk.
+	 * @returns A lazy `Stream` of `MarkdownVisitorEvent`, infallible at the type
+	 *   level.
 	 */
 	static visit(root: Root): Stream.Stream<MarkdownVisitorEvent> {
 		return Stream.fromIterable(walkIterable(root));

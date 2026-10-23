@@ -8,14 +8,13 @@
 // transparency log are.
 
 import { assert, describe, it } from "@effect/vitest";
+import { IdentityToken, IdentityTokenError } from "@effected/oidc";
 import { BUNDLE_V03_MEDIA_TYPE } from "@sigstore/bundle";
 import type { Signer, Witness } from "@sigstore/sign";
 import { Effect, Layer, Redacted } from "effect";
 import type { Sha256Digest } from "../src/index.js";
 import {
 	IN_TOTO_PAYLOAD_TYPE,
-	IdentityToken,
-	IdentityTokenError,
 	InTotoStatement,
 	SIGSTORE_BUNDLE_V0_3_MEDIA_TYPE,
 	SigningError,
@@ -130,6 +129,20 @@ describe("SigstoreSigner.sign — the real DSSE builder", () => {
 				blob.slice(0, 60),
 			);
 			assert.include(blob, statement.toJson());
+		}),
+	);
+
+	it.effect("accepts statically-undefined options under exactOptionalPropertyTypes", () =>
+		Effect.gen(function* () {
+			// The #664 widening, applied here: a Fulcio/Rekor URL read out of config
+			// arrives as `string | undefined` and must forward without a spread. The
+			// stub signer and witnesses keep the builder off the network.
+			const config: { fulcioBaseUrl: string | undefined; rekorBaseUrl: string | undefined } = {
+				fulcioBaseUrl: undefined,
+				rekorBaseUrl: undefined,
+			};
+			const bundle = yield* signWith({ ...config, signer: stubSigner(), witnesses: [stubWitness()] });
+			assert.instanceOf(bundle, SigstoreBundle);
 		}),
 	);
 

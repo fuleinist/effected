@@ -1,13 +1,13 @@
 import { NodeServices } from "@effect/platform-node";
-import { Cause, Effect, Exit, Layer, Option, Result } from "effect";
-import type { HttpClient } from "effect/unstable/http";
-import { FetchHttpClient } from "effect/unstable/http";
+import { WorkflowCommand } from "@effected/github-commands";
+import { Cause, Effect, Exit, Layer, LogLevel, Option, References, Result } from "effect";
+import type { HttpClient } from "effect/http";
+import { FetchHttpClient } from "effect/http";
 import { ActionEnvironment } from "./ActionEnvironment.js";
 import { ActionInput } from "./ActionInput.js";
 import { ActionLogger } from "./ActionLogger.js";
 import { ActionOutputs } from "./ActionOutputs.js";
 import { ActionState } from "./ActionState.js";
-import { WorkflowCommand } from "./WorkflowCommand.js";
 
 /**
  * Everything {@link ActionRuntime.layer} provides.
@@ -67,10 +67,9 @@ export class ActionRuntime {
 		// and stays exported for resolving inputs from an explicit record in a
 		// test). This one changes bare `Config` reads only: a flat name tries the
 		// runner's INPUT_ derivation first and then falls back to the ambient
-		// lookup unchanged. It is here because a live action shipped a false
-		// green — every bare read fell back to its `withDefault` because the
-		// runner publishes INPUT_<MANGLED> and a plain-named lookup finds
-		// nothing. A caller-supplied provider in the `layer` option still wins:
+		// lookup unchanged. It is needed because the runner publishes
+		// INPUT_<MANGLED>, so a plain-named lookup finds nothing and every bare
+		// read would silently fall back to its `withDefault`. A caller-supplied provider in the `layer` option still wins:
 		// the extra layer's context merges last in `Action.run`'s composition.
 		ActionInput.layerDefault,
 	).pipe(
@@ -98,13 +97,45 @@ export interface ActionRunOptions<R> {
 	 * what makes `{ layer: ActionCache.layer }` compile with no further wiring.
 	 */
 	readonly layer?: Layer.Layer<R, never, ActionServices> | undefined;
+	/**
+	 * Whether step debugging lowers the minimum log level to `Debug`.
+	 *
+	 * @remarks
+	 * Defaults to `true`. With step debugging on (`RUNNER_DEBUG=1`, read through
+	 * {@link ActionEnvironmentShape.isDebug}), `Action.run` lowers core's
+	 * `References.MinimumLogLevel` — `Info` by default — to `Debug` for the whole
+	 * program, so `Effect.logDebug` calls reach the runner as `::debug::` lines
+	 * instead of being filtered before any logger sees them. It only ever
+	 * **lowers**: a level already at `Debug` or below, from the `layer` option,
+	 * is left alone.
+	 *
+	 * Pass `false` to keep the ambient level regardless of step debugging — an
+	 * action whose debug output is too heavy to show even to someone who asked
+	 * for it. A program can still provide its own `MinimumLogLevel` either way;
+	 * the innermost provision wins.
+	 */
+	readonly stepDebugLogLevel?: boolean | undefined;
 }
+
+/**
+ * Lower the minimum log level to `Debug` for the program when the runner has
+ * step debugging on — and never raise it.
+ */
+const withStepDebugLogLevel = <A, E, R>(program: Effect.Effect<A, E, R>): Effect.Effect<A, E, R | ActionEnvironment> =>
+	Effect.gen(function* () {
+		const env = yield* ActionEnvironment;
+		const stepDebug = yield* env.isDebug;
+		const minimum = yield* References.MinimumLogLevel;
+		return yield* stepDebug && LogLevel.isGreaterThan(minimum, "Debug")
+			? Effect.provideService(program, References.MinimumLogLevel, "Debug")
+			: program;
+	});
 
 /**
  * A readable one-line summary of why an action failed.
  *
  * @remarks
- * `[Tag] message` because a workflow log is read by a human scanning for the
+ * `[Tag]: message` because a workflow log is read by a human scanning for the
  * first red line, and every error in this kit carries both. The `_tag` is what
  * makes two failures with the same wording distinguishable, and the `message`
  * getter is what makes the line worth reading.
@@ -147,13 +178,21 @@ const describeError = (error: unknown): string => {
  * reports a failure and then recovers is not doomed by a side effect it cannot
  * undo.
  *
+ * It also honours **step debugging**: when the runner sets `RUNNER_DEBUG=1`, it
+ * lowers core's `References.MinimumLogLevel` from its `Info` default to
+ * `Debug`, so `Effect.logDebug` anywhere in the program — or in any
+ * `@effected` library it calls — reaches the runner as a `::debug::` line
+ * rather than being filtered before a logger sees it. It only ever lowers the
+ * level, and `{ stepDebugLogLevel: false }` ({@link ActionRunOptions}) opts
+ * out.
+ *
  * Two things it deliberately does **not** do:
  *
- * - **It does not wrap the program in a log buffer.** The package this replaces
- *   did, and an unhandled defect inside the buffer swallowed the entire
- *   transcript — the run failed and printed nothing. `ActionLogger.withBuffer`
- *   is opt-in and flushes on every exit path including a defect, so the
- *   buffering is where the caller can see it.
+ * - **It does not wrap the program in a log buffer.** A buffer that swallowed
+ *   the transcript on an unhandled defect would leave a run that failed and
+ *   printed nothing. `ActionLogger.withBuffer` is opt-in and flushes on every
+ *   exit path including a defect, so the buffering is where the caller can
+ *   see it.
  * - **It does not throw.** The returned promise always resolves; the failure is
  *   in `process.exitCode`, which is what the runner reads. An action entry
  *   point that rejected would produce an unhandled rejection *and* a failed
@@ -162,9 +201,9 @@ const describeError = (error: unknown): string => {
  * The rendering depth is deliberate too: one `::error::` line carrying
  * `[Tag]: message`, and the fiddly diagnostics — the full `Cause.pretty` render
  * with its span trace and stack — behind `::debug::`, which the runner shows
- * only when someone turns step debugging on. The package this replaces spliced
- * a JS stack into the visible error, which in a bundled action points at one
- * line of `dist/main.js`.
+ * only when someone turns step debugging on. No JS stack is spliced into the
+ * visible error, because in a bundled action it points at one line of
+ * `dist/main.js`.
  *
  * @example
  * ```ts
@@ -185,8 +224,9 @@ export class Action {
 	 * Run an action program to completion.
 	 *
 	 * @remarks
-	 * Resolves whether the program succeeded or not; read `process.exitCode` for
-	 * the verdict.
+	 * Never rejects: the promise resolves whether the program succeeded or not,
+	 * so read `process.exitCode` for the verdict. Requirements beyond
+	 * {@link ActionServices} come from `options.layer`.
 	 */
 	static readonly run = <E, R = never>(
 		program: Effect.Effect<void, E, ActionServices | R>,
@@ -200,7 +240,11 @@ export class Action {
 					// the environment snapshot is taken once rather than twice.
 					Layer.mergeAll(ActionRuntime.layer, Layer.provide(extra, ActionRuntime.layer));
 
-		const runnable = (program as Effect.Effect<void, E, ActionServices | R>).pipe(
+		// Inside the provide, so the level read is the one the composed runtime —
+		// including a caller's `layer` — actually installed.
+		const leveled = options.stepDebugLogLevel === false ? program : withStepDebugLogLevel(program);
+
+		const runnable = leveled.pipe(
 			Effect.provide(composed as Layer.Layer<ActionServices | R>),
 			Effect.exit,
 			Effect.flatMap((exit) =>

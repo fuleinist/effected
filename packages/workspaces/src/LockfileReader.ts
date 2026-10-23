@@ -1,7 +1,7 @@
 // The IO half of `@effected/lockfiles`.
 //
-// The extraction drew the seam at `content: string`: lockfiles is pure and
-// parses text, workspaces finds the root, detects the manager, reads the file
+// The seam is `content: string`: lockfiles is pure and parses text,
+// workspaces finds the root, detects the manager, reads the file
 // and — for pnpm — supplies the importer-path → name map that the pure
 // `Lockfile.withImporterNames` second stage needs. That map is built here
 // because building it requires reading every workspace `package.json`, which is
@@ -10,6 +10,7 @@
 import type { Lockfile, LockfileFramingError, LockfileParseError, ResolvedPackage } from "@effected/lockfiles";
 import { LockfileFormat, LockfileIntegrity, Lockfile as LockfileModel, filenameFor } from "@effected/lockfiles";
 import { Context, Duration, Effect, Exit, FileSystem, Layer, Option, Path, Schema } from "effect";
+import { findLayerRoot } from "./internal/layerRoot.js";
 import type { PackageManagerDetectionFailure } from "./PackageManagerName.js";
 import { PackageManagerDetector } from "./PackageManagerName.js";
 import type { WorkspaceDiscoveryFailure } from "./WorkspaceDiscovery.js";
@@ -44,8 +45,7 @@ export class LockfileReadError extends Schema.TaggedError<LockfileReadError>()("
 }
 
 /**
- * Every failure the lockfile methods can surface — the exported init-error
- * union the review named best-in-class DX.
+ * Every failure the lockfile methods can surface.
  *
  * @remarks
  * Layer construction does no IO, so every member surfaces from the *methods*
@@ -77,9 +77,7 @@ export interface LockfileReaderShape {
 	 * @remarks
 	 * A name can resolve at **several versions** in one lockfile (two members
 	 * depending on different majors of the same package). This returns the
-	 * **first** entry in lockfile order and does not attempt to rank them — there
-	 * is no single "the" version to return, and picking the highest semver would
-	 * imply a resolution decision this reader is not entitled to make. Callers
+	 * **first** entry in lockfile order and does not rank them. Callers
 	 * that must see every resolution should read `lockfile.packagesNamed(name)`
 	 * off `read()` directly.
 	 */
@@ -105,6 +103,21 @@ export interface LockfileReaderOptions {
 	 * @defaultValue `process.cwd()`, read lazily on first use.
 	 */
 	readonly cwd?: string;
+	/**
+	 * A ceiling for the root ascent from `cwd`, passed straight through to the
+	 * `stopAt` of {@link WorkspaceRoot}'s `find`.
+	 *
+	 * @remarks
+	 * Inclusive, and resolved to an absolute path exactly as `cwd` is. When no
+	 * root is found at or below the ceiling, `read` fails with
+	 * {@link WorkspaceRootNotFoundError} carrying the resolved `stopAt` rather
+	 * than adopting an enclosing directory's workspace. Pass the same value as
+	 * {@link WorkspaceDiscoveryOptions.stopAt} so every service agrees on the
+	 * root; the `Workspaces.*` composites forward one `stopAt` to all of them.
+	 *
+	 * @defaultValue no ceiling — the ascent runs to the filesystem root.
+	 */
+	readonly stopAt?: string | undefined;
 }
 
 /** A defect naming the unstubbed test-double method — a test-wiring mistake, not a typed failure. */
@@ -154,7 +167,7 @@ export class LockfileReader extends Context.Service<LockfileReader, LockfileRead
 			const path = yield* Path.Path;
 
 			const init: Effect.Effect<Lockfile, LockfileReadFailure> = Effect.gen(function* () {
-				const root = yield* Effect.suspend(() => roots.find(options?.cwd ?? process.cwd()));
+				const root = yield* findLayerRoot(roots, options);
 				const detected = yield* detector.detect(root);
 				// `PackageManagerName` and `LockfileFormat` are the same four literals;
 				// the assignment is what makes the two concepts interoperate for free.
@@ -165,13 +178,27 @@ export class LockfileReader extends Context.Service<LockfileReader, LockfileRead
 					.readFileString(lockfilePath)
 					.pipe(Effect.mapError((cause) => new LockfileReadError({ lockfilePath, format, cause })));
 
-				// `Lockfile.parse` owns YAML-stream framing as of `@effected/lockfiles`
-				// #58: `pnpm-lock.yaml` is a stream, and pnpm's writer always emits the
-				// config-dependencies document as a PREFIX, so the real lockfile is
-				// deterministically the last one. This reader used to select the document
-				// itself; the pure package now does it correctly, and a stream carrying no
-				// lockfile document fails typed as a `LockfileFramingError`.
-				const lockfile = yield* LockfileModel.parse(content, { format });
+				// `Lockfile.parse` owns YAML-stream framing: `pnpm-lock.yaml` is a
+				// stream, and pnpm's writer always emits the config-dependencies document
+				// as a PREFIX, so the real lockfile is deterministically the last one. A
+				// stream carrying no lockfile document fails typed as a
+				// `LockfileFramingError`.
+				//
+				// A preamble followed by an EMPTY main document is ambiguous: pnpm writes
+				// those bytes for a config-dependency-only workspace with no root
+				// `package.json`, and also when a first install fails after the config
+				// dependencies went in. The pure parser cannot tell them apart, so this
+				// reader — which can look — asserts `configOnly` only when the root has
+				// no `package.json`. A failing `exists` probe (anything but NotFound,
+				// which `exists` already answers `false`) is read as "present": the flag
+				// is an assertion of absence, so it is made only on evidence of absence.
+				// That fails closed without widening the error channel — at worst an
+				// ambiguous stream fails `noLockfileDocument`, and an unambiguous one
+				// parses as it would have anyway.
+				const configOnly =
+					format === "pnpm" &&
+					!(yield* fs.exists(path.join(root, "package.json")).pipe(Effect.orElseSucceed(() => true)));
+				const lockfile = yield* LockfileModel.parse(content, { format, configOnly });
 				if (format !== "pnpm") return lockfile;
 
 				// The pure second stage. pnpm names workspace packages by IMPORTER PATH;
@@ -245,11 +272,14 @@ export class LockfileReader extends Context.Service<LockfileReader, LockfileRead
 		});
 
 	/**
-	 * The live layer.
+	 * The live layer: reads the lockfile of the detected package manager at the
+	 * workspace root.
 	 *
 	 * @remarks
 	 * Parameterized, so it mints a fresh reference per call — bind it to a
 	 * `const` and reuse it.
+	 *
+	 * @param options - Root resolution (`cwd`, `stopAt`).
 	 */
 	static readonly layer = (
 		options?: LockfileReaderOptions,

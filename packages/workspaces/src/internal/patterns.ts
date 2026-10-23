@@ -2,9 +2,7 @@
 //
 // pnpm records it in `pnpm-workspace.yaml`; npm, yarn and bun record it in the
 // root package.json `workspaces` field (array form, or the legacy
-// `{ packages: [...] }` object form). v3 hand-rolled a line-by-line YAML
-// scanner here "to avoid pulling in a YAML library"; `@effected/yaml` is a
-// workspace sibling, so the scanner is deleted.
+// `{ packages: [...] }` object form). The YAML is parsed with `@effected/yaml`.
 
 import { Yaml } from "@effected/yaml";
 import { Effect, FileSystem, Path } from "effect";
@@ -16,7 +14,8 @@ export interface PatternReadFailure {
 	readonly cause: unknown;
 }
 
-const stringsOf = (value: unknown): ReadonlyArray<string> | undefined =>
+/** The string entries of `value` when it is an array, else `undefined`. */
+export const stringsOf = (value: unknown): ReadonlyArray<string> | undefined =>
 	Array.isArray(value) ? value.filter((entry): entry is string => typeof entry === "string") : undefined;
 
 /** The `packages:` list of a `pnpm-workspace.yaml` document. Total on a parsed document. */

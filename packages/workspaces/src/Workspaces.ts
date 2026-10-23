@@ -1,11 +1,8 @@
 // The composite layers.
 //
-// v3 split its two composites on PLATFORM REQUIREMENTS — `WorkspacesLive`
-// (FileSystem + Path) versus `WorkspacesFullLive` (+ a subprocess runner) — and
-// the review called that a great consumer story because the requirement set,
-// not a feature flag, is the split axis. The axis survives: `layer` needs a
-// filesystem, `layerWithGit` additionally needs core's `ChildProcessSpawner`
-// (behind `@effected/git`'s `Git` service) to run git.
+// The composites split on PLATFORM REQUIREMENTS, not on a feature flag:
+// `layer` needs a filesystem, `layerWithGit` additionally needs core's
+// `ChildProcessSpawner` (behind `@effected/git`'s `Git` service) to run git.
 
 import { ExecContext, LocalExec, LocalExecError } from "@effected/commands";
 import { Git } from "@effected/git";
@@ -19,12 +16,16 @@ import type {
 } from "@effected/npm";
 import type { FileSystem, Path } from "effect";
 import { Effect, Layer, Option } from "effect";
-import type { ChildProcessSpawner } from "effect/unstable/process";
+import type { ChildProcessSpawner } from "effect/process";
 import { ChangeDetector } from "./ChangeDetector.js";
+import { ConfigDependencyHooks } from "./ConfigDependencyHooks.js";
+import type { LockfileReaderOptions } from "./LockfileReader.js";
 import { LockfileReader } from "./LockfileReader.js";
 import type { DetectedPackageManager } from "./PackageManagerName.js";
 import { PackageManagerDetector } from "./PackageManagerName.js";
+import type { WorkspaceCatalogsOptions } from "./WorkspaceCatalogs.js";
 import { WorkspaceCatalogs } from "./WorkspaceCatalogs.js";
+import type { WorkspaceDiscoveryOptions } from "./WorkspaceDiscovery.js";
 import { WorkspaceDiscovery } from "./WorkspaceDiscovery.js";
 import { WorkspaceRoot } from "./WorkspaceRoot.js";
 import type { WorkspaceSnapshotsOptions } from "./WorkspaceSnapshots.js";
@@ -33,9 +34,17 @@ import { WorkspaceSnapshots } from "./WorkspaceSnapshots.js";
 /**
  * Options shared by the composite layers.
  *
+ * @remarks
+ * Derived from the option shapes of the services a composite builds —
+ * {@link WorkspaceDiscoveryOptions}, {@link LockfileReaderOptions} and
+ * {@link WorkspaceCatalogsOptions} — and handed to each of them unchanged, so a
+ * root-resolving option one service grows cannot silently stop at the
+ * composite. `cwd` and `stopAt` are re-declared here only to document them as
+ * the one concern they are across the composite.
+ *
  * @public
  */
-export interface WorkspacesOptions {
+export interface WorkspacesOptions extends WorkspaceDiscoveryOptions, LockfileReaderOptions, WorkspaceCatalogsOptions {
 	/**
 	 * The directory every root-consuming service resolves the workspace root
 	 * from — one explicit concern, applied uniformly.
@@ -43,8 +52,23 @@ export interface WorkspacesOptions {
 	 * @defaultValue `process.cwd()`, read lazily on first use.
 	 */
 	readonly cwd?: string;
-	/** Descent cap for segment-crossing `packages:` patterns. Defaults to 32. */
-	readonly maxDepth?: number;
+	/**
+	 * A ceiling for the root ascent from `cwd`, forwarded to EVERY
+	 * root-resolving service the composite builds — {@link WorkspaceDiscovery},
+	 * {@link LockfileReader}, {@link WorkspaceCatalogs} and, on the git
+	 * composites, {@link WorkspaceSnapshots}.
+	 *
+	 * @remarks
+	 * Inclusive and resolved to an absolute path, as {@link WorkspaceRoot}'s
+	 * `find` does. Pass `stopAt: cwd` for a checkout nested inside someone
+	 * else's workspace: every service then fails with
+	 * {@link WorkspaceRootNotFoundError} consistently, instead of discovery
+	 * refusing the enclosing workspace while the lockfile and catalog reads
+	 * adopt it. A checkout that is itself a workspace root still resolves.
+	 *
+	 * @defaultValue no ceiling — the ascent runs to the filesystem root.
+	 */
+	readonly stopAt?: string | undefined;
 }
 
 /**
@@ -77,14 +101,17 @@ export type WorkspacesServices =
 // Shared composition helper for Workspaces.layer,
 // Workspaces.layerWithConfigDependencies and
 // Workspaces.layerWithConfigDependenciesSubprocess; the public contracts live
-// on those statics. Generic in R so a catalogs factory carrying an extra
-// requirement (the subprocess variant's ChildProcessSpawner) threads it
-// through to the composite's R unchanged.
+// on those statics. It takes the ConfigDependencyHooks layer EXPLICITLY —
+// built once per composite and handed to WorkspaceCatalogs here and, by
+// `withGit`, to WorkspaceSnapshots — so both services replay through ONE
+// hooks reference (layer memoization is by reference) while the composite's
+// OUTPUT never carries ConfigDependencyHooks: `WorkspacesServices` is
+// unchanged. Generic in R so a hooks layer carrying an extra requirement (the
+// subprocess variant's ChildProcessSpawner) threads it through to the
+// composite's R.
 const compose = <R = never>(
 	options: WorkspacesOptions | undefined,
-	catalogsFactory: (
-		options?: WorkspacesOptions,
-	) => Layer.Layer<WorkspaceCatalogs, never, WorkspaceRoot | LockfileReader | FileSystem.FileSystem | Path.Path | R>,
+	hooks: Layer.Layer<ConfigDependencyHooks, never, R>,
 ): Layer.Layer<WorkspacesServices, never, FileSystem.FileSystem | Path.Path | R> => {
 	const roots = WorkspaceRoot.layer;
 	const detector = PackageManagerDetector.layer;
@@ -94,7 +121,10 @@ const compose = <R = never>(
 		Layer.provide(detector),
 		Layer.provide(discovery),
 	);
-	const catalogs = catalogsFactory(options).pipe(Layer.provide(roots), Layer.provide(lockfiles));
+	const catalogs = WorkspaceCatalogs.layerWithHooks(hooks, options).pipe(
+		Layer.provide(roots),
+		Layer.provide(lockfiles),
+	);
 
 	// PublishabilityDetector is deliberately ABSENT from this merge. Supplying a
 	// default here made the npm-semantics choice invisible and, because
@@ -114,36 +144,31 @@ const compose = <R = never>(
 const layer = (
 	options?: WorkspacesOptions,
 ): Layer.Layer<WorkspacesServices, never, FileSystem.FileSystem | Path.Path> =>
-	compose<never>(options, WorkspaceCatalogs.layer);
+	compose(options, ConfigDependencyHooks.layerNoop);
 
 /**
- * The git half, over an ALREADY-BUILT core composite.
- *
- * @remarks
- * Taking the core as a parameter rather than building it is what lets the
- * config-dependency composites exist at all: the git services are identical
- * across all three, and only the catalogs layer underneath differs. Copying
- * this graph per variant is exactly what a consumer had to do downstream
- * before `layerWithGitAndConfigDependencies` existed.
- *
- * `core` is threaded in as a value, so the caller's single `layer(options)`
- * reference is shared by `ChangeDetector`, `WorkspaceSnapshots` and the merge —
- * building it twice here would defeat layer memoization inside one composite.
+ * The core composite widened with the git tier: `Git`, `ChangeDetector` and
+ * `WorkspaceSnapshots`. It builds the core over `hooks` ITSELF, so the SAME
+ * hooks layer reaches `WorkspaceCatalogs` (through `compose`) and
+ * `WorkspaceSnapshots` by construction — `at(ref)` replays a ref's config
+ * dependencies exactly as the live assembler replays the worktree's: one
+ * reference, one memo, one policy for both sides of a diff.
  */
-const withGit = <R>(
-	core: Layer.Layer<WorkspacesServices, never, FileSystem.FileSystem | Path.Path | R>,
-	options: WorkspacesGitOptions | undefined,
+const withGit = <R = never>(
+	hooks: Layer.Layer<ConfigDependencyHooks, never, R>,
+	options?: WorkspacesGitOptions,
 ): Layer.Layer<
 	WorkspacesServices | ChangeDetector | WorkspaceSnapshots | Git,
 	never,
 	FileSystem.FileSystem | Path.Path | ChildProcessSpawner.ChildProcessSpawner | R
 > => {
+	const core = compose(options, hooks);
 	const git = Git.layer;
 	return Layer.mergeAll(
 		core,
 		git,
 		ChangeDetector.layer.pipe(Layer.provide(git), Layer.provide(core)),
-		WorkspaceSnapshots.layer(options).pipe(Layer.provide(git), Layer.provide(core)),
+		WorkspaceSnapshots.layer(options).pipe(Layer.provide(git), Layer.provide(hooks), Layer.provide(core)),
 	);
 };
 
@@ -154,7 +179,7 @@ const layerWithGit = (
 	WorkspacesServices | ChangeDetector | WorkspaceSnapshots | Git,
 	never,
 	FileSystem.FileSystem | Path.Path | ChildProcessSpawner.ChildProcessSpawner
-> => withGit<never>(layer(options), options);
+> => withGit(ConfigDependencyHooks.layerNoop, options);
 
 // Implementation of Workspaces.resolvers; the public contract lives on the static.
 const resolvers: Layer.Layer<CatalogResolver | WorkspaceResolver, never, WorkspaceCatalogs | WorkspaceDiscovery> =
@@ -164,7 +189,7 @@ const resolvers: Layer.Layer<CatalogResolver | WorkspaceResolver, never, Workspa
 const layerWithConfigDependencies = (
 	options?: WorkspacesOptions,
 ): Layer.Layer<WorkspacesServices, never, FileSystem.FileSystem | Path.Path> =>
-	compose<never>(options, WorkspaceCatalogs.layerWithConfigDependencies);
+	compose(options, ConfigDependencyHooks.layerLive);
 
 // Implementation of Workspaces.layerWithConfigDependenciesSubprocess; the public contract lives on the static.
 const layerWithConfigDependenciesSubprocess = (
@@ -173,7 +198,7 @@ const layerWithConfigDependenciesSubprocess = (
 	WorkspacesServices,
 	never,
 	FileSystem.FileSystem | Path.Path | ChildProcessSpawner.ChildProcessSpawner
-> => compose<ChildProcessSpawner.ChildProcessSpawner>(options, WorkspaceCatalogs.layerWithConfigDependenciesSubprocess);
+> => compose(options, ConfigDependencyHooks.layerSubprocess);
 
 // Implementation of Workspaces.layerWithGitAndConfigDependencies; the public
 // contract lives on the static.
@@ -183,7 +208,7 @@ const layerWithGitAndConfigDependencies = (
 	WorkspacesServices | ChangeDetector | WorkspaceSnapshots | Git,
 	never,
 	FileSystem.FileSystem | Path.Path | ChildProcessSpawner.ChildProcessSpawner
-> => withGit<never>(layerWithConfigDependencies(options), options);
+> => withGit(ConfigDependencyHooks.layerLive, options);
 
 // Implementation of Workspaces.layerWithGitAndConfigDependenciesSubprocess; the
 // public contract lives on the static.
@@ -193,7 +218,7 @@ const layerWithGitAndConfigDependenciesSubprocess = (
 	WorkspacesServices | ChangeDetector | WorkspaceSnapshots | Git,
 	never,
 	FileSystem.FileSystem | Path.Path | ChildProcessSpawner.ChildProcessSpawner
-> => withGit<ChildProcessSpawner.ChildProcessSpawner>(layerWithConfigDependenciesSubprocess(options), options);
+> => withGit(ConfigDependencyHooks.layerSubprocess, options);
 
 // Implementation of Workspaces.resolverLayer; the public contract lives on the static.
 const resolverLayer = (
@@ -216,6 +241,7 @@ const resolveManifest: (
 // Implementation of Workspaces.localExecLayer; the public contract lives on the static.
 const localExecLayer = (options?: {
 	readonly cwd?: string;
+	readonly stopAt?: string | undefined;
 }): Layer.Layer<LocalExec, never, PackageManagerDetector | WorkspaceRoot> =>
 	Layer.effect(
 		LocalExec,
@@ -229,8 +255,13 @@ const localExecLayer = (options?: {
 				// between provide and first use is honoured. The house `{ cwd }`
 				// convention, applied here too.
 				const cwd = options?.cwd ?? globalThis.process?.cwd?.() ?? "/";
+				const stopAt = options?.stopAt;
 
-				const root = yield* roots.find(cwd).pipe(Effect.asSome, Effect.orElseSucceed(Option.none<string>));
+				// A ceiling that finds no root is the ordinary None case, like any
+				// other absent root: nothing project-local to run here.
+				const root = yield* roots
+					.find(cwd, stopAt === undefined ? undefined : { stopAt })
+					.pipe(Effect.asSome, Effect.orElseSucceed(Option.none<string>));
 				if (Option.isNone(root)) return Option.none<ExecContext>();
 
 				const detected = yield* detector.detect(root.value).pipe(
@@ -278,13 +309,12 @@ export class Workspaces {
 	 * @remarks
 	 * Requires core `FileSystem` and `Path`, which the consumer provides at the
 	 * edge (`@effect/platform-node`, `@effect/platform-bun`, or a test's
-	 * `FileSystem.layerNoop`).
+	 * `@effected/memfs` volume).
 	 *
 	 * **`PublishabilityDetector` is neither provided nor required here.** The
-	 * composite used to bake in npm semantics, which a naively-ordered override
-	 * silently lost to; now it supplies no default, and — because nothing inside
-	 * the composite asks a publishability question — it does not require one in
-	 * `R` either. The requirement surfaces in the `R` of each operation that
+	 * composite supplies no default policy, and — because nothing inside it asks
+	 * a publishability question — it does not require one in `R` either. The
+	 * requirement surfaces in the `R` of each operation that
 	 * asks (`VersioningStrategy.detect`, e.g.), so a program that asks and never
 	 * wires a detector fails to compile at that operation, and a program that
 	 * never asks never supplies a publish policy. Wire one explicitly where
@@ -369,10 +399,9 @@ export class Workspaces {
 	 * `pnpmfile.cjs` hooks**.
 	 *
 	 * @remarks
-	 * The composite that did not exist. `layerWithGit` hard-wires the no-op
-	 * catalogs layer, so a consumer wanting snapshots + git + hook replay had to
-	 * rebuild the entire service graph by hand — which is exactly what
-	 * `@savvy-web/silk-effects` did, and the copy this static deletes.
+	 * `layerWithGit` wires the no-op catalogs layer, so this is the composite to
+	 * reach for when you want snapshots, git and hook replay together without
+	 * assembling the service graph by hand.
 	 *
 	 * Requirements are unchanged from {@link Workspaces.layerWithGit}: a
 	 * filesystem, a path service, and core's `ChildProcessSpawner` (behind
@@ -427,17 +456,52 @@ export class Workspaces {
 	static readonly layerWithGitAndConfigDependenciesSubprocess = layerWithGitAndConfigDependenciesSubprocess;
 
 	/**
+	 * The git composite over a **caller-supplied** hooks layer — the same graph
+	 * as {@link Workspaces.layerWithGit} and its two config-dependency
+	 * variants, with the `ConfigDependencyHooks` policy chosen by the caller.
+	 *
+	 * @remarks
+	 * The three fixed git composites are this function applied to
+	 * {@link ConfigDependencyHooks.layerNoop}, {@link ConfigDependencyHooks.layerLive}
+	 * and {@link ConfigDependencyHooks.layerSubprocess}. It exists for the fourth
+	 * policy: {@link ConfigDependencyHooks.layerFrom}, the hermetic seam, which a
+	 * snapshot-backed test otherwise cannot reach without rebuilding the whole
+	 * git graph by hand. The ONE hooks reference is handed to both `WorkspaceCatalogs`
+	 * and `WorkspaceSnapshots`, so `at(ref)` and `worktree()` cannot drift on
+	 * which policy they replay. A hooks layer carrying its own requirement (the
+	 * subprocess variant's `ChildProcessSpawner`) threads it through to the
+	 * composite's `R` unchanged.
+	 *
+	 * **Bind the result to a `const`.**
+	 *
+	 * @param hooks - The `ConfigDependencyHooks` layer to wire on both sides.
+	 * @param options - The composite options, as for {@link Workspaces.layerWithGit}.
+	 *
+	 * @example
+	 * ```ts
+	 * import { ConfigDependencyHooks, Workspaces } from "@effected/workspaces";
+	 *
+	 * // A test pinning what at(ref) replays for two declared plugin versions.
+	 * const KitLayer = Workspaces.layerWithGitAndHooks(
+	 *   ConfigDependencyHooks.layerFrom({
+	 *     "@scope/plugin@1.0.0": "/fixtures/plugin-1/pnpmfile.mjs",
+	 *     "@scope/plugin@2.0.0": "/fixtures/plugin-2/pnpmfile.mjs",
+	 *   }),
+	 * );
+	 * ```
+	 */
+	static readonly layerWithGitAndHooks = withGit;
+
+	/**
 	 * This package's implementation of `@effected/commands`' `LocalExec`
 	 * contract: how to run a project-local binary here.
 	 *
 	 * @remarks
-	 * **An inverted contract, the `@effected/npm` `CatalogResolver`
-	 * precedent.** Tool discovery needs package-manager detection and
-	 * workspace-root resolution, both of which live here — but a direct edge
-	 * from `@effected/commands` to this package would make that boundary-tier
-	 * package integrated, and through the planned `npm` → `commands` edge
-	 * would drag `npm`, `lockfiles` (pure!) and `package-json` up a tier with
-	 * it. So `commands` declares the narrow contract and we ship the layer.
+	 * **An inverted contract, like `@effected/npm`'s `CatalogResolver`.** Tool
+	 * discovery needs package-manager detection and workspace-root resolution,
+	 * both of which live here, but `@effected/commands` must not depend on this
+	 * package. So `commands` declares the narrow `LocalExec` contract and this
+	 * package ships the layer.
 	 *
 	 * **The argv knowledge is not duplicated.** `LocalExec.prefixes(name)` is
 	 * the one home of the four managers' `exec`/`dlx`/script-runner prefixes;
@@ -457,7 +521,10 @@ export class Workspaces {
 	 * verbatim.
 	 *
 	 * `directory` is the resolved **workspace root**, not the caller's cwd: a
-	 * project-local launcher has to run where the workspace is.
+	 * project-local launcher has to run where the workspace is. `stopAt` caps
+	 * that ascent exactly as {@link WorkspacesOptions.stopAt} does, and a
+	 * ceiling with no root at or below it is the same `Option.none()` as no
+	 * root at all.
 	 *
 	 * A consumer with no monorepo never needs this layer, and therefore never
 	 * installs this package — `LocalExec.layerNone` and `LocalExec.layerFor`
@@ -468,6 +535,7 @@ export class Workspaces {
 	 *
 	 * @example
 	 * ```ts
+	 * import { NodeServices } from "@effect/platform-node";
 	 * import { ToolDiscovery } from "@effected/commands";
 	 * import { Workspaces } from "@effected/workspaces";
 	 * import { Layer } from "effect";

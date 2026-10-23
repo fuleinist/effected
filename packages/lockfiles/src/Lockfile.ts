@@ -32,8 +32,11 @@ const EMPTY_IMPORTERS: ReadonlyArray<LockfileImporter> = [];
  * @public
  */
 export class LockfileParseError extends Schema.TaggedError<LockfileParseError>()("LockfileParseError", {
+	/** The lockfile format that was being parsed. */
 	format: LockfileFormat,
+	/** Whether the text itself failed to parse (`"syntax"`) or parsed but had the wrong shape (`"validation"`). */
 	stage: Schema.Literals(["syntax", "validation"]),
+	/** The underlying engine or schema failure, preserved structurally. */
 	cause: Schema.Defect(),
 }) {
 	override get message(): string {
@@ -48,26 +51,35 @@ export class LockfileParseError extends Schema.TaggedError<LockfileParseError>()
  * lockfile document could be located in it.
  *
  * @remarks
- * `pnpm-lock.yaml` is a YAML **stream**. pnpm 11 writes a
- * config-dependencies preamble document ahead of the lockfile whenever the
- * workspace uses `configDependencies`, so the file holds two documents. The
+ * `pnpm-lock.yaml` is a YAML **stream**. pnpm writes an env preamble document
+ * ahead of the lockfile whenever the workspace declares `configDependencies`
+ * or `devEngines.packageManager`, so the file holds two documents. The
  * lockfile is the last one — pnpm composes the preamble as a prefix — and a
- * parser that reads only the first document gets the preamble: a document
- * that *validates*, and yields a lockfile with an empty workspace. This error
- * exists so that case can never again succeed quietly.
+ * parser that read only the first document would get the preamble: a document
+ * that *validates*, yielding a lockfile with an empty workspace. This error
+ * makes that case fail instead of succeeding quietly.
  *
  * - `format` — which format was being parsed.
  * - `documents` — how many YAML documents the stream carried.
  * - `reason`:
- *   - `"noLockfileDocument"` — the stream carries no lockfile document. An
- *     env-only `pnpm-lock.yaml` (a config-dependencies preamble and nothing
- *     after it) reads this way, as does empty content. pnpm itself treats
- *     such a file as having no lockfile.
+ *   - `"noLockfileDocument"` — the stream carries no lockfile document:
+ *     empty content, or a pnpm stream whose lockfile position is empty. That
+ *     includes an env preamble followed by an empty document unless the
+ *     caller passes `configOnly`: pnpm writes those same bytes for a
+ *     config-dependency-only workspace with no root `package.json` *and* for
+ *     a workspace whose first install failed after its config dependencies
+ *     were installed, so only the caller can say which it is. With
+ *     `configOnly`, `Lockfile.parse` reads that stream as an empty lockfile
+ *     versioned by the preamble; an empty lockfile position with no preamble
+ *     fails either way.
  *   - `"noImporters"` — the located document declares no importers, so it
  *     describes no workspace. pnpm always records at least the root importer.
- *   - `"unexpectedDocuments"` — the stream carries several documents in a
- *     format that defines no document framing (yarn). Rather than silently
- *     taking the first, parsing refuses to guess.
+ *   - `"unexpectedDocuments"` — the stream carries more documents than the
+ *     format's framing defines: several in a format that defines none
+ *     (yarn), or more than the env preamble and the lockfile in a pnpm
+ *     stream. Rather than silently picking one, parsing refuses to guess.
+ *     `Lockfile.parse` and `PnpmEnvLockfile` share one pnpm splitter, so
+ *     both enforce the same at-most-two limit.
  *
  * It carries typed fields rather than a `cause`: unlike
  * {@link LockfileParseError}, there is no underlying engine failure to wrap —
@@ -76,8 +88,11 @@ export class LockfileParseError extends Schema.TaggedError<LockfileParseError>()
  * @public
  */
 export class LockfileFramingError extends Schema.TaggedError<LockfileFramingError>()("LockfileFramingError", {
+	/** The lockfile format that was being parsed. */
 	format: LockfileFormat,
+	/** Which framing check failed; see the class remarks for each. */
 	reason: Schema.Literals(["noLockfileDocument", "noImporters", "unexpectedDocuments"]),
+	/** How many YAML documents the stream carried. */
 	documents: Schema.Int,
 }) {
 	override get message(): string {
@@ -85,20 +100,42 @@ export class LockfileFramingError extends Schema.TaggedError<LockfileFramingErro
 			this.reason === "noImporters"
 				? "the lockfile document declares no importers, so it describes no workspace"
 				: this.reason === "unexpectedDocuments"
-					? `expected a single YAML document but the content carries ${this.documents}`
+					? this.format === "pnpm"
+						? `expected at most two YAML documents (an env preamble and the lockfile) but the content carries ${this.documents}`
+						: `expected a single YAML document but the content carries ${this.documents}`
 					: `the content carries no lockfile document (${this.documents} YAML document(s) found)`;
 		return `Failed to parse ${this.format} lockfile: ${detail}`;
 	}
 }
 
-const dispatch = (format: LockfileFormat, content: string): Effect.Effect<LockfileFields, ParseFailure> => {
+/**
+ * Materialize an internal {@link ParseFailure} record into the public error
+ * union — the one mapping every public fallible boundary shares, so
+ * `Lockfile.parse` and `PnpmEnvLockfile.packageManager` cannot disagree about
+ * which failure is which.
+ *
+ * @internal
+ */
+export const materializeFailure = (
+	format: LockfileFormat,
+	failure: ParseFailure,
+): LockfileParseError | LockfileFramingError =>
+	failure.stage === "framing"
+		? new LockfileFramingError({ format, reason: failure.reason, documents: failure.documents })
+		: new LockfileParseError({ format, stage: failure.stage, cause: failure.cause });
+
+const dispatch = (
+	format: LockfileFormat,
+	content: string,
+	configOnly: boolean,
+): Effect.Effect<LockfileFields, ParseFailure> => {
 	switch (format) {
 		case "bun":
 			return parseBun(content);
 		case "npm":
 			return parseNpm(content);
 		case "pnpm":
-			return parsePnpm(content);
+			return parsePnpm(content, configOnly);
 		case "yarn":
 			return parseYarn(content);
 	}
@@ -156,7 +193,14 @@ export class Lockfile extends Schema.Class<Lockfile>("Lockfile")({
 	 *
 	 * @param content - The lockfile text (this package does no IO; the caller
 	 *   reads the file).
-	 * @param options - The lockfile format to parse as.
+	 * @param options - `format` is the lockfile format to parse as.
+	 *   `configOnly` is the caller's assertion that the workspace has **no root
+	 *   `package.json`**, so a pnpm env preamble followed by an empty main
+	 *   document is a config-dependency-only workspace and reads as an empty
+	 *   lockfile versioned by the preamble. Without it that stream fails
+	 *   {@link LockfileFramingError} with `noLockfileDocument`, because the same
+	 *   bytes are also what an interrupted first install leaves behind. It
+	 *   loosens nothing else, and is ignored for non-pnpm formats.
 	 * @returns An `Effect` succeeding with the {@link Lockfile}, or failing
 	 *   with {@link LockfileParseError} (malformed text or the wrong shape) or
 	 *   {@link LockfileFramingError} (the text parsed, but no lockfile document
@@ -165,18 +209,10 @@ export class Lockfile extends Schema.Class<Lockfile>("Lockfile")({
 	 */
 	static readonly parse = Effect.fn("Lockfile.parse")(function* (
 		content: string,
-		options: { readonly format: LockfileFormat },
+		options: { readonly format: LockfileFormat; readonly configOnly?: boolean | undefined },
 	) {
-		const fields = yield* dispatch(options.format, content).pipe(
-			Effect.mapError((failure) =>
-				failure.stage === "framing"
-					? new LockfileFramingError({
-							format: options.format,
-							reason: failure.reason,
-							documents: failure.documents,
-						})
-					: new LockfileParseError({ format: options.format, stage: failure.stage, cause: failure.cause }),
-			),
+		const fields = yield* dispatch(options.format, content, options.configOnly === true).pipe(
+			Effect.mapError((failure) => materializeFailure(options.format, failure)),
 		);
 		return Lockfile.make({
 			format: options.format,
@@ -294,9 +330,8 @@ export class Lockfile extends Schema.Class<Lockfile>("Lockfile")({
 	 *
 	 * @remarks
 	 * `ResolvedPackage.instanceId` is what a resolved edge points at, so peer and
-	 * dependency resolution is a lookup through this index rather than a scan.
-	 * Without it every consumer rebuilds the same map — `new Map(lockfile.packages.map((p) => [p.instanceId, p]))` —
-	 * which is O(n) per walk and one more place for the key choice to drift.
+	 * dependency resolution is a lookup through this index rather than a scan
+	 * over `packages`.
 	 *
 	 * The index is a `Map`, so an instance id that collides with an `Object`
 	 * member name (`__proto__`, `constructor`) neither pollutes nor

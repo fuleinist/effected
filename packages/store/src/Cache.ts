@@ -1,12 +1,12 @@
 import * as SqliteClient from "@effect/sql-sqlite-node/SqliteClient";
 import type { Duration } from "effect";
 import { Cause, Context, DateTime, Effect, Layer, Option, PubSub, Schema } from "effect";
-import * as SqlClient from "effect/unstable/sql/SqlClient";
-import * as SqlError from "effect/unstable/sql/SqlError";
+import * as SqlClient from "effect/sql/SqlClient";
+import * as SqlError from "effect/sql/SqlError";
 import { bytesToUtf8, utf8ToBytes } from "./Bytes.js";
 import type { MigratorMigration } from "./internal/migrator.js";
-import { ensureLedger, runPending } from "./internal/migrator.js";
-import { walCheckpointOnClose } from "./internal/sqlite.js";
+import { ensureLedger, failureCause, runPending } from "./internal/migrator.js";
+import { mapSetupError, walCheckpointOnClose, withOnConnect } from "./internal/sqlite.js";
 
 /**
  * A stored cache entry: its key, value and bookkeeping fields.
@@ -35,8 +35,7 @@ export class CacheEntry extends Schema.Class<CacheEntry>("CacheEntry")({
  *
  * @remarks
  * Returned by {@link CacheShape.entries} so listing a cache never loads BLOBs.
- * Unlike v3, the timestamps are structured `DateTime.Utc` values, not raw ISO
- * strings.
+ * The timestamps are structured `DateTime.Utc` values, not raw ISO strings.
  *
  * @public
  */
@@ -61,7 +60,7 @@ export interface CacheEntryMeta {
  *
  * @remarks
  * Returned by {@link CacheShape.invalidateByTag}, {@link CacheShape.invalidateAll}
- * and {@link CacheShape.prune}. v3's `PruneResult` alias is not ported.
+ * and {@link CacheShape.prune}.
  *
  * @public
  */
@@ -77,8 +76,8 @@ export interface CacheRemovalResult {
  * {@link CacheShape.events}.
  *
  * @remarks
- * `Evicted` is new in v4: it reports entries removed by the
- * {@link CacheOptions.maxEntries} eviction policy during a `set`.
+ * `Evicted` reports entries removed by the {@link CacheOptions.maxEntries}
+ * eviction policy during a `set`.
  *
  * @public
  */
@@ -135,10 +134,9 @@ export class CacheEvent extends Schema.Class<CacheEvent>("CacheEvent")({
  * Raised when a cache operation's SQL fails.
  *
  * @remarks
- * `cause` carries the underlying `SqlError` structurally; v3 flattened it to a
- * `reason` string. Defects — a throwing `onRemoved` callback, a programmer
- * error inside the engine — are NOT laundered into this error; they propagate
- * as defects (the v3 `catchAllDefect` round-trip is deliberately not ported).
+ * `cause` carries the underlying `SqlError` structurally. Defects — a throwing
+ * `onRemoved` callback, a programmer error inside the engine — are NOT
+ * laundered into this error; they propagate as defects.
  *
  * @public
  */
@@ -339,8 +337,8 @@ export interface CacheSqliteOptions extends CacheOptions {
 	 * The SQLite database file path.
 	 *
 	 * @remarks
-	 * The parent directory must exist — a missing directory is a wiring defect
-	 * from the driver, not a typed failure.
+	 * The parent directory must exist — a missing directory fails the layer
+	 * with a typed `CacheError` (`operation: "setup"`).
 	 */
 	readonly filename: string;
 	/**
@@ -369,6 +367,17 @@ export interface CacheSqliteOptions extends CacheOptions {
 	 * never checkpoints.
 	 */
 	readonly checkpointOnClose?: boolean;
+	/**
+	 * Run once against the freshly opened connection, before the cache's
+	 * schema is ensured and outside any transaction — for per-connection
+	 * settings `client` cannot carry.
+	 *
+	 * @remarks
+	 * The SQLite driver opens one connection per layer build, so once per
+	 * build is once per connection. A failure fails the layer as a
+	 * `CacheError` with `operation: "setup"`.
+	 */
+	readonly onConnect?: (sql: SqlClient.SqlClient) => Effect.Effect<unknown, SqlError.SqlError>;
 }
 
 const CACHE_LEDGER_TABLE = "_cache_migrations";
@@ -476,9 +485,11 @@ const make = (options: CacheOptions): Effect.Effect<CacheShape, CacheError, SqlC
 		const sql = yield* SqlClient.SqlClient;
 		const pubsub = yield* PubSub.unbounded<CacheEvent>();
 
-		yield* ensureLedger(sql, CACHE_LEDGER_TABLE).pipe(Effect.mapError((failure) => cacheError("setup", failure.cause)));
+		yield* ensureLedger(sql, CACHE_LEDGER_TABLE).pipe(
+			Effect.mapError((failure) => cacheError("setup", failureCause(failure))),
+		);
 		yield* runPending(sql, CACHE_LEDGER_TABLE, cacheMigrations).pipe(
-			Effect.mapError((failure) => cacheError("setup", failure.cause)),
+			Effect.mapError((failure) => cacheError("setup", failureCause(failure))),
 		);
 
 		const emit = (event: CacheEventPayload): Effect.Effect<void> =>
@@ -655,9 +666,8 @@ const make = (options: CacheOptions): Effect.Effect<CacheShape, CacheError, SqlC
 					Effect.gen(function* () {
 						// The tags column stores JSON text, so match the JSON encoding of
 						// the tag (quotes included — they anchor whole-tag matches), with
-						// LIKE metacharacters escaped. v3 matched the RAW tag against the
-						// JSON column, so a tag containing a backslash or quote never
-						// matched its own entry.
+						// LIKE metacharacters escaped, so a tag containing a backslash or
+						// quote still matches its own entry.
 						const escaped = JSON.stringify(tag).replace(/[%_\\]/g, "\\$&");
 						const pattern = `%${escaped}%`;
 						const removed = yield* sql<{ key: string }>`
@@ -803,13 +813,24 @@ const makeDegraded = (cause: Cause.Cause<unknown>): Effect.Effect<CacheShape> =>
  * `TestClock.adjust`. **Provide `TestClock.layer()` outside the `Effect.provide`
  * that supplies this cache, not beneath it** — underneath, the test body has no
  * `TestClock` in its own context and `TestClock.adjust` dies as a defect, so
- * nothing you try to expire ever expires. The layer statics are parameterized factories: call each
- * once and bind the result to a `const`, or memoization by reference is lost
- * and the database is opened twice.
+ * nothing you try to expire ever expires.
+ *
+ * The layer statics are parameterized factories: call each once and bind the
+ * result to a `const`, or memoization by reference is lost and the database is
+ * opened twice.
  *
  * @example
  * ```ts
- * const CacheLayer = Cache.layerSqlite({ filename: "cache.db", maxEntries: 1000 });
+ * import { Cache } from "@effected/store";
+ * import { Duration, Effect } from "effect";
+ *
+ * const CacheLive = Cache.layerSqlite({ filename: "cache.db", maxEntries: 1000 });
+ *
+ * const program = Effect.gen(function* () {
+ * 	const cache = yield* Cache;
+ * 	yield* cache.set({ key: "greeting", value: new TextEncoder().encode("hello"), ttl: Duration.minutes(5) });
+ * 	return yield* cache.has("greeting"); // => true
+ * }).pipe(Effect.provide(CacheLive));
  * ```
  *
  * @public
@@ -823,7 +844,13 @@ export class Cache extends Context.Service<Cache, CacheShape>()("@effected/store
 		return Layer.effect(Cache, make(options ?? {}));
 	}
 
-	/** The batteries-included layer over `@effect/sql-sqlite-node`. */
+	/**
+	 * The batteries-included layer: a `Cache` over a SQLite database file via
+	 * `@effect/sql-sqlite-node`.
+	 *
+	 * @remarks
+	 * Fails with `CacheError` on the layer's error channel if setup fails.
+	 */
 	static layerSqlite(options: CacheSqliteOptions): Layer.Layer<Cache, CacheError> {
 		// `filename` last: the layer owns it, whatever the passthrough says. The
 		// name transforms are stripped at runtime too — the `Omit` on `client`
@@ -835,14 +862,61 @@ export class Cache extends Context.Service<Cache, CacheShape>()("@effected/store
 			transformQueryNames: _transformQueryNames,
 			...passthrough
 		} = (options.client ?? {}) as Partial<SqliteClient.SqliteClientConfig>;
-		const client = SqliteClient.layer({ ...passthrough, filename: options.filename });
-		const cache = Layer.provide(Cache.layer(options), client);
+		const client = mapSetupError(
+			SqliteClient.layer({ ...passthrough, filename: options.filename }),
+			(cause) => new CacheError({ operation: "setup", cause }),
+		);
+		const connected = withOnConnect(
+			client,
+			options.onConnect,
+			(cause) => new CacheError({ operation: "setup", cause }),
+		);
+		const cache = Layer.provide(Cache.layer(options), connected);
 		return options.checkpointOnClose === true
 			? Layer.merge(cache, Layer.provide(walCheckpointOnClose(), client))
 			: cache;
 	}
 
-	/** An in-memory (`:memory:`) layer for tests. */
+	/**
+	 * {@link Cache.layerSqlite} provided under a service key the consumer
+	 * defines, for an application that keeps more than one cache.
+	 *
+	 * @remarks
+	 * `tag` is a `Context.Service` whose service type is {@link CacheShape}.
+	 * A key whose shape is incompatible is a compile error, and so is one that
+	 * adds members (`CacheShape & { … }`), reported as an argument "not
+	 * assignable to parameter of type 'never'" because this layer could not
+	 * supply them. The check cannot see through method-syntax parameter
+	 * bivariance: a shape that redeclares a member as a method with a wider
+	 * parameter still compiles. The output is `I` alone: the `Cache` built internally
+	 * never leaks, so a keyed cache composes beside a primary `Cache` — each
+	 * with its own file, bound, TTL default and `CacheEvent` stream.
+	 *
+	 * A layer-returning function, like every factory here: bind the result to
+	 * a `const` once and reuse that binding.
+	 *
+	 * @example
+	 * ```ts
+	 * import { Cache } from "@effected/store";
+	 * import type { CacheShape } from "@effected/store";
+	 * import { Context } from "effect";
+	 *
+	 * class TarballCache extends Context.Service<TarballCache, CacheShape>()("myapp/TarballCache") {}
+	 *
+	 * const TarballCacheLive = Cache.layerSqliteAs(TarballCache, { filename: "/abs/tarballs.db", maxEntries: 200 });
+	 * ```
+	 */
+	static layerSqliteAs<I, S extends CacheShape>(
+		tag: Context.Key<I, S> & ([CacheShape] extends [S] ? unknown : never),
+		options: CacheSqliteOptions,
+	): Layer.Layer<I, CacheError> {
+		// The constraint rejects keys whose shape adds members or is incompatible with CacheShape, so the key
+		// is read at CacheShape. It cannot see through method-syntax parameter bivariance: a member redeclared
+		// as a method with a wider parameter still passes.
+		return Layer.effect(tag as Context.Key<I, CacheShape>, Cache).pipe(Layer.provide(Cache.layerSqlite(options)));
+	}
+
+	/** An in-memory (`:memory:`) `Cache` layer for tests; each build is a fresh, empty cache. */
 	static layerTest(options?: CacheOptions): Layer.Layer<Cache, CacheError> {
 		return Cache.layerSqlite({ ...(options ?? {}), filename: ":memory:" });
 	}
@@ -869,10 +943,10 @@ export class Cache extends Context.Service<Cache, CacheShape>()("@effected/store
 	 * channel widening.
 	 *
 	 * **It catches failures and defects, and deliberately not interruption.**
-	 * Defects matter here specifically: `SqliteClient.layer` reports driver
-	 * construction failures — a `filename` whose parent directory does not
-	 * exist, the common case — as **defects, not typed failures**, so a
-	 * failure-only catch would miss the very case this exists for. Interruption
+	 * `layerSqlite` reports driver setup failures — a `filename` whose parent
+	 * directory does not exist, the common case — as a typed `CacheError`, but
+	 * any `Cache` layer can die during construction, and a failure-only catch
+	 * would let that abort the program this exists to keep running. Interruption
 	 * is not a broken cache: it is the caller shutting down, and swallowing it
 	 * would substitute a working cache for a fiber that was meant to stop.
 	 * A hand-written `Layer.catchCause` gets the defect half right and this
@@ -905,9 +979,8 @@ export class Cache extends Context.Service<Cache, CacheShape>()("@effected/store
 	 * its result and return that.
 	 *
 	 * @remarks
-	 * `get` → decode → on miss run `onMiss` → encode → `set` is the entire
-	 * reason to have a cache, and it was roughly twenty-five lines every
-	 * consumer wrote for themselves. `schema` encodes to `string`; the last
+	 * Runs `get` → decode → on miss `onMiss` → encode → `set` in one call.
+	 * `schema` encodes to `string`; the last
 	 * step to bytes is {@link Uint8ArrayFromUtf8}, so the encoding decision
 	 * lives in one audited place here rather than one per consumer.
 	 *
@@ -929,12 +1002,18 @@ export class Cache extends Context.Service<Cache, CacheShape>()("@effected/store
 	 *
 	 * @example
 	 * ```ts
+	 * import { Cache } from "@effected/store";
+	 * import { Duration, Effect, Schema } from "effect";
+	 *
+	 * const Members = Schema.Array(Schema.String);
+	 * const fetchMembersFromApi = Effect.succeed(["ada", "grace"]);
+	 *
 	 * const program = Effect.gen(function* () {
-	 *   const members = yield* Cache.through("team:platform", Schema.fromJsonString(Members), {
-	 *     ttl: "1 hour",
-	 *     tags: ["team"],
-	 *   })(fetchMembersFromApi);
-	 *   return members;
+	 * 	const members = yield* Cache.through("team:platform", Schema.fromJsonString(Members), {
+	 * 		ttl: Duration.hours(1),
+	 * 		tags: ["team"],
+	 * 	})(fetchMembersFromApi);
+	 * 	return members;
 	 * });
 	 * ```
 	 */

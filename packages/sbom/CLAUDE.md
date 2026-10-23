@@ -6,7 +6,7 @@ Phase 4 of the GitHub/Actions split — the middle piece of the old `Attest` kno
 whose other two are `@effected/github`'s `Attestation` (the REST surface) and
 consumer composition (the pipeline).
 
-**Design doc:** `@../../.claude/design/effected/packages/sbom.md`
+**Design doc:** `@./okf/modules/sbom.md`
 
 ## Tier: integrated
 
@@ -77,7 +77,8 @@ stayed within each file — no new imports, so the reachability wall holds.
   **nothing** from `@sigstore/*`.
 - `SigstoreSigner.ts` — the service, its layers, `SigningError`. The **only**
   module importing `@sigstore/*`.
-- `IdentityToken.ts` — the inverted OIDC contract.
+- The inverted OIDC contract, `IdentityToken`, lives in `@effected/oidc` and is
+  **not** re-exported here; the signer imports it from there.
 
 ## The things that will bite you
 
@@ -179,8 +180,8 @@ walker have the opposite order and are safe only by luck.
 
 ## Testing
 
-`@effect/vitest`, `it.effect`, `assert.*` — never `expect`. Run root-relative
-with `--coverage.enabled=false` for subset runs.
+`@effect/vitest`, `it.effect`, `assert.*` — never `expect`. Run root-relative;
+subset runs skip the global coverage thresholds automatically.
 
 **Two vendored oracles, both in `__test__/fixtures/` with a `VENDORED.md` pin.**
 Never hand-write an expectation either one can derive:

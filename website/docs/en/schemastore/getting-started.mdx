@@ -50,7 +50,7 @@ console.log(text.split("\n")[0]);
 // {
 ```
 
-Two things happened that are easy to miss. The document declares Draft-07 (`$schema` is `http://json-schema.org/draft-07/schema#`), because that is the dialect the language servers actually support. And `additionalProperties: false` appears without you asking — core's default for a struct — which is usually what a config schema wants and is worth knowing before a user reports a "spurious" error on an extra key.
+Two things happened that are easy to miss. The document declares Draft-07 (`$schema` is `http://json-schema.org/draft-07/schema#`), because that is the dialect the language servers actually support. And `additionalProperties: true` appears without you asking — core's default for a struct is an open object — which is usually *not* what a config schema wants: pass `jsonSchema: { onExcessProperty: "error" }` to `fromSchema` (or set the same field on a pipeline target) to close it, so a typo in a key is reported rather than silently accepted.
 
 Now gate it. [`DocumentLint.lint`](/schemastore/api/class/documentlint) is total: it returns findings as values and never fails, so it costs you nothing to call and never becomes an exception you did not plan for:
 
@@ -137,10 +137,11 @@ console.log(Effect.runSync(program));
 
 ### Validate with the real engine
 
-[`SchemaValidator.layer`](/schemastore/api/class/schemavalidator) is ajv, shipped. There is no adapter to write — provide the layer and validation works, in the strict mode SchemaStore itself gates on:
+The library ships the [`SchemaValidator`](/schemastore/api/class/schemavalidator) contract and its doubles; the real engine is `AjvValidator.layer` from the companion `@effected/schemastore-cli` — ajv in the strict mode SchemaStore itself gates on. There is no adapter to write — provide the layer and validation works:
 
 ```ts with-api
 import { SchemaValidator, StoreDocument } from "@effected/schemastore";
+import { AjvValidator } from "@effected/schemastore-cli";
 import { Effect, Schema } from "effect";
 
 const program = Effect.gen(function* () {
@@ -149,13 +150,15 @@ const program = Effect.gen(function* () {
     $id: "https://example.com/schemas/mytool.json",
   });
   return yield* validator.validate(document.toJson());
-}).pipe(Effect.provide(SchemaValidator.layer));
+}).pipe(Effect.provide(AjvValidator.layer));
 
 Effect.runPromise(program).then((findings) => console.log(findings.length));
 // 0 — an empty array is a clean pass
 ```
 
 `validate` takes the flat serialized record that `toJson()` produces, so the seam stays engine-shaped rather than coupled to this package's classes. An empty array is a clean pass; findings come back as values.
+
+The payload half of the story has the same shape: the library ships the `InstanceValidator` contract — "does this instance conform to the published document it names in `$schema`" — with findings (`InstanceFinding`) pointing into the instance, and the CLI ships the one engine, `AjvInstanceValidator.layer`. The `schemastore validate <payload.json>` command composes it for you, resolving the reference file-first and then against every identity a config schema derives, with no network fetch.
 
 ### Assemble a catalog entry
 
@@ -181,7 +184,9 @@ console.log(Effect.runSync(program).url);
 // https://example.com/schemas/mytool-1.10.0.json
 ```
 
-`1.10.0` wins over `1.9.0` because ordering is real SemVer precedence, not a string sort. Labels are full three-component SemVer — `1.2` does not parse — so a label can always be split back out of a file name unambiguously.
+`name` is what an editor or SchemaStore displays; `fileBaseName` (defaulting to `name`) is what the URLs are built from. A `schemastore.config.ts` makes the same split: a schema's key is the file base name, and its `catalog` block's optional `name` sets the display name, defaulting to the key. `defineConfig` rejects two schemas of one config whose catalog entries resolve to one name, and the CLI blocks a merged catalog in which two slices advertise one.
+
+`1.10.0` wins over `1.9.0` because ordering is real SemVer precedence, not a string sort. Labels are one to three components — `1`, `1.2` and `1.2.0` all parse, optionally with a prerelease — and a missing component reads as `0` for ordering, so those three compare equal while each round-trips verbatim into its file name; `defineConfig` refuses two spellings of one version under one name for exactly that reason.
 
 ### Check `fileMatch` hygiene before you submit
 

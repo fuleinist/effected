@@ -1,0 +1,105 @@
+# @effected/jwt
+
+## 0.5.0
+
+### Maintenance
+
+- Upgrades core Effect library dependencies to v4.0.6 [#1039][#1039]
+
+### Thanks
+
+Thanks to [@spencerbeggs](https://github.com/spencerbeggs) for their contributions!
+
+[#1039]: https://github.com/spencerbeggs/effected/pull/1039
+
+## 0.4.0
+
+### Maintenance
+
+- Upgrades core Effect library dependencies to v4.0.5 [#1019][#1019]
+
+### Thanks
+
+Thanks to [@spencerbeggs](https://github.com/spencerbeggs) for their contributions!
+
+[#1019]: https://github.com/spencerbeggs/effected/pull/1019
+
+## 0.3.0
+
+### Maintenance
+
+- Upgrades core Effect library dependencies to v4.0.4 [#1008][#1008]
+
+### Thanks
+
+Thanks to [@spencerbeggs](https://github.com/spencerbeggs) for their contributions!
+
+[#1008]: https://github.com/spencerbeggs/effected/pull/1008
+
+## 0.2.0
+
+### Dependencies
+
+| Dependency | Type | Action | From | To |
+| --- | --- | --- | --- | --- |
+| effect | peerDependency | updated | 4.0.2 | ^4.0.3 |
+
+- Effect 4.0.3 advance: the `effect` peer and catalog move from the exact `4.0.2` hold back to `^4.0.3`. No API change. [#1000][#1000]
+
+### Thanks
+
+Thanks to [@spencerbeggs](https://github.com/spencerbeggs) for their contributions!
+
+[#1000]: https://github.com/spencerbeggs/effected/pull/1000
+
+## 0.1.1
+
+### Bug Fixes
+
+- Republished with every `effect` and `@effect/*` version pinned exactly to `4.0.2`, both peer and dependency ranges.
+
+- On 2026-10-10, every `@effect/*` package published at `4.0.3`, but `effect@4.0.3` itself never reached npm (Effect-TS/effect#8994). The 4.0.3 packages require `effect ^4.0.3`. A caret range on any of them therefore resolves a 4.0.3 package next to `effect@4.0.2`, and the program crashes when it imports them. Exact pins keep a fresh install of any kit package on a matched set until `effect@4.0.3` is available. [#997][#997]
+
+### Thanks
+
+Thanks to [@spencerbeggs](https://github.com/spencerbeggs) for their contributions!
+
+[#997]: https://github.com/spencerbeggs/effected/pull/997
+
+## 0.1.0
+
+### Features
+
+#### JWS, JWT, JWK and JWKS over WebCrypto
+
+- `@effected/jwt` signs and verifies JSON Web Signatures and Tokens, models JSON Web Keys, and resolves keys from a JWKS endpoint. It is built on WebCrypto with no `node:` imports, so it runs on Node and on Cloudflare workerd.
+
+- RS256 and ES256 are the supported algorithms, and the algorithm is taken from the key rather than from the token header.
+
+- A token whose `alg` is outside that set is refused before any key is resolved, and a token carrying `crit` is refused.
+
+- RSA keys must be at least 2048 bits and EC keys must be P-256.
+
+- PEM keys are accepted as PKCS#1 or PKCS#8, including PEM text whose line breaks arrive as escaped `\n`.
+
+- Every failure is a single `JwtError` with a `reason` you can route on.
+
+#### Key resolution with `JwksResolver`
+
+- `JwksResolver` fetches and caches a remote key set and selects the key for a token.
+
+- Storage goes through the `JwksStore` seam, so the cache can live in memory or in a store you provide.
+
+- Entries honour a TTL, refetches are rate-limited, and the fetch has a timeout.
+
+- Discovery is https-only.
+
+#### Test issuer at `@effected/jwt/testing`
+
+- `TestIssuer` mints keys and signed tokens, and serves a matching key set, so tests can exercise verification without a network or a real identity provider. [#984][#984]
+
+### Thanks
+
+Thanks to [@spencerbeggs](https://github.com/spencerbeggs) for their contributions!
+
+[#984]: https://github.com/spencerbeggs/effected/pull/984

@@ -40,6 +40,13 @@ export class TomlStringifyOptions extends Schema.Class<TomlStringifyOptions>("To
  * array shape matches `@effected/yaml`'s aggregate contract). Raised by
  * {@link Toml.parse} and the decode direction of the schema factories.
  *
+ * @remarks
+ * The `message` renders the first diagnostic's position 1-based
+ * (`line + 1:character + 1`) for human readers — a CLI printing this string
+ * shows the line/column a person counts in their editor. The structured
+ * {@link TomlDiagnostic} `line`/`character` fields stay 0-based (LSP
+ * convention); the offset applies to the rendered message only.
+ *
  * @public
  */
 export class TomlParseError extends Schema.TaggedError<TomlParseError>()("TomlParseError", {
@@ -48,7 +55,8 @@ export class TomlParseError extends Schema.TaggedError<TomlParseError>()("TomlPa
 	override get message(): string {
 		const count = this.diagnostics.length;
 		const first = this.diagnostics[0];
-		const detail = first === undefined ? "" : `: ${first.code} at ${first.line}:${first.character} ${first.message}`;
+		const detail =
+			first === undefined ? "" : `: ${first.code} at ${first.line + 1}:${first.character + 1} ${first.message}`;
 		return `TOML parse failed with ${count} error${count === 1 ? "" : "s"}${detail}`;
 	}
 }
@@ -302,7 +310,7 @@ export class Toml {
 		return Schema.String.pipe(
 			Schema.decodeTo(
 				Schema.Unknown,
-				SchemaTransformation.transformOrFail({
+				SchemaTransformation.transformEffect({
 					decode: (input: string) =>
 						Toml.parse(input).pipe(
 							Effect.mapError((error) => new SchemaIssue.InvalidValue({ message: error.message }, input)),
@@ -329,6 +337,9 @@ export class Toml {
 	 *
 	 * Schema-producing: bind the result to a `const` on hot paths (see
 	 * {@link Toml.fromString}).
+	 *
+	 * @param target - The domain schema decoded values must satisfy.
+	 * @returns A `Schema.Codec<T, string>` decoding TOML text straight into `T`.
 	 */
 	static schema<T, E, RD = never, RE = never>(target: Schema.Codec<T, E, RD, RE>): Schema.Codec<T, string, RD, RE> {
 		return Toml.TomlFromString.pipe(

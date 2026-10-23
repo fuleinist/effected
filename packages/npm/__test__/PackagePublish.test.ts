@@ -1,48 +1,73 @@
 import { assert, describe, it } from "@effect/vitest";
 import { LocalExec } from "@effected/commands";
-import { Effect, Exit, Layer, Redacted } from "effect";
+import type { MemoryFileSystemFaults, MemoryFileSystemHandle, MemoryFileSystemSeed } from "@effected/memfs";
+import { MemoryFileSystem } from "@effected/memfs";
+import { Effect, Exit, Layer, PlatformError, Redacted } from "effect";
 import { NpmExecutor } from "../src/NpmExecutor.js";
 import { PackagePublish, PackedTarball } from "../src/PackagePublish.js";
 import { PublishError } from "../src/PublishError.js";
+import type { RegistryCredential } from "../src/RegistryCredential.js";
 import { basicCredentialFromPair } from "../src/RegistryCredential.js";
 import type { ScriptResult } from "./publish-fixtures.js";
-import { fakeCrypto, recordingFs, scripted } from "./publish-fixtures.js";
+import { fakeCrypto, scripted } from "./publish-fixtures.js";
 
-const NPMRC = "/home/runner/.npmrc";
+const HOME = "/home/runner";
+const NPMRC = `${HOME}/.npmrc`;
 const TOKEN = Redacted.make("s3cr3t-token");
 const TOKEN_CREDENTIAL = { kind: "token", token: TOKEN } as const;
 
-/** `npm pack --json` output, as npm emits it (an array of one entry). */
-const packJson = JSON.stringify([
-	{
-		id: "pkg@1.1.0",
-		name: "pkg",
-		version: "1.1.0",
-		filename: "pkg-1.1.0.tgz",
-		integrity: "sha512-abc123==",
-		size: 2048,
-		unpackedSize: 8192,
-		entryCount: 12,
-	},
-]);
+/** One packed tarball, as both npm majors describe it. */
+const packEntry = {
+	id: "pkg@1.1.0",
+	name: "pkg",
+	version: "1.1.0",
+	filename: "pkg-1.1.0.tgz",
+	integrity: "sha512-abc123==",
+	size: 2048,
+	unpackedSize: 8192,
+	entryCount: 12,
+};
+
+/** `npm pack --json` output as npm 11 emits it: an array of one entry. */
+const packJson = JSON.stringify([packEntry]);
+
+/**
+ * `npm pack --json` output as npm 12 emits it: an object keyed by package
+ * name — verified against `npm@12.0.2`'s `lib/commands/pack.js`, which hands
+ * `logTar` the tarball's `name` as the key where 11 handed it the index.
+ */
+const packJsonNpm12 = JSON.stringify({ [packEntry.name]: packEntry });
 
 interface Harness {
 	readonly run: <A, E>(program: Effect.Effect<A, E, PackagePublish>) => Effect.Effect<A, E>;
 	readonly spawner: ReturnType<typeof scripted>;
-	readonly fs: ReturnType<typeof recordingFs>;
+	readonly fs: MemoryFileSystemHandle;
 }
 
 const harness = (options?: {
 	readonly script?: (command: string, args: ReadonlyArray<string>) => ScriptResult;
 	readonly local?: Layer.Layer<LocalExec>;
-	readonly files?: Record<string, string>;
+	readonly files?: MemoryFileSystemSeed;
+	readonly faults?: MemoryFileSystemFaults;
 }): Harness => {
 	const spawner = scripted(options?.script ?? (() => ({ stdout: packJson, exit: 0 })));
-	const fs = recordingFs(options?.files ?? {});
+	// The runner's home directory exists, as it does on a real runner: a write
+	// into a missing directory fails honestly on memfs, as it would on disk.
+	const fs = MemoryFileSystem.makeSync(
+		{ [HOME]: MemoryFileSystem.directory(), ...options?.files },
+		options?.faults === undefined ? undefined : { faults: options.faults },
+	);
 	const layer = PackagePublish.layer.pipe(
 		Layer.provide(Layer.mergeAll(spawner.layer, fs.layer, fakeCrypto, options?.local ?? LocalExec.layerNone)),
 	);
 	return { run: (program) => Effect.provide(program, layer), spawner, fs };
+};
+
+/** The written npmrc — asserting it exists rather than reading absence as `""`. */
+const npmrcOf = (h: Harness): string => {
+	const text = h.fs.volume.text(NPMRC);
+	assert.isDefined(text, "setupAuth wrote no npmrc");
+	return text;
 };
 
 const publisher = Effect.gen(function* () {
@@ -137,7 +162,7 @@ describe("PackagePublish.setupAuth", () => {
 					p.setupAuth({ registry: "https://registry.npmjs.org", credential: TOKEN_CREDENTIAL, npmrcPath: NPMRC }),
 				),
 			);
-			const written = h.fs.files.get(NPMRC) ?? "";
+			const written = npmrcOf(h);
 			assert.include(written, "s3cr3t-token");
 			assert.lengthOf(h.spawner.spawns, 0, "setupAuth must not spawn anything — the token stays off the process table");
 		}),
@@ -154,7 +179,7 @@ describe("PackagePublish.setupAuth", () => {
 					p.setupAuth({ registry: "https://npm.pkg.github.com", credential: TOKEN_CREDENTIAL, npmrcPath: NPMRC }),
 				),
 			);
-			assert.include(h.fs.files.get(NPMRC) ?? "", "//npm.pkg.github.com/:_authToken=");
+			assert.include(npmrcOf(h), "//npm.pkg.github.com/:_authToken=");
 		}),
 	);
 
@@ -170,7 +195,7 @@ describe("PackagePublish.setupAuth", () => {
 					}),
 				),
 			);
-			assert.include(h.fs.files.get(NPMRC) ?? "", "//example.com/artifactory/api/npm/repo/:_authToken=");
+			assert.include(npmrcOf(h), "//example.com/artifactory/api/npm/repo/:_authToken=");
 		}),
 	);
 
@@ -182,9 +207,78 @@ describe("PackagePublish.setupAuth", () => {
 					p.setupAuth({ registry: "https://registry.npmjs.org", credential: TOKEN_CREDENTIAL, npmrcPath: NPMRC }),
 				),
 			);
-			const written = h.fs.files.get(NPMRC) ?? "";
+			const written = npmrcOf(h);
 			assert.include(written, "registry=https://registry.npmjs.org");
 			assert.include(written, "_authToken=");
+		}),
+	);
+
+	it.effect("writes a fresh npmrc when none exists (NotFound is the only read failure treated as empty)", () =>
+		Effect.gen(function* () {
+			const h = harness();
+			assert.isUndefined(h.fs.volume.text(NPMRC));
+			yield* h.run(
+				Effect.flatMap(publisher, (p) =>
+					p.setupAuth({ registry: "https://registry.npmjs.org", credential: TOKEN_CREDENTIAL, npmrcPath: NPMRC }),
+				),
+			);
+			assert.include(npmrcOf(h), "_authToken=");
+		}),
+	);
+
+	it.effect("fails kind auth and leaves an unreadable npmrc untouched (PermissionDenied)", () =>
+		Effect.gen(function* () {
+			const prior = "registry=https://registry.npmjs.org\n//other.example/:_authToken=keep-me\n";
+			const h = harness({
+				files: { [NPMRC]: prior },
+				faults: {
+					readFile: (path) =>
+						Effect.fail(
+							PlatformError.systemError({
+								_tag: "PermissionDenied",
+								module: "FileSystem",
+								method: "readFile",
+								pathOrDescriptor: path,
+							}),
+						),
+				},
+			});
+			const exit = yield* Effect.exit(
+				h.run(
+					Effect.flatMap(publisher, (p) =>
+						p.setupAuth({ registry: "https://registry.npmjs.org", credential: TOKEN_CREDENTIAL, npmrcPath: NPMRC }),
+					),
+				),
+			);
+			assert.isTrue(Exit.isFailure(exit));
+			const error = Exit.isFailure(exit) ? Exit.findErrorOption(exit) : undefined;
+			assert.isTrue(error !== undefined && error._tag === "Some");
+			if (error !== undefined && error._tag === "Some") {
+				assert.instanceOf(error.value, PublishError);
+				assert.strictEqual((error.value as PublishError).kind, "auth");
+			}
+			assert.strictEqual(h.fs.volume.text(NPMRC), prior);
+		}),
+	);
+
+	it.effect("fails kind auth when the npmrc path is a directory (BadResource)", () =>
+		Effect.gen(function* () {
+			const h = harness({ files: { [NPMRC]: MemoryFileSystem.directory() } });
+			const exit = yield* Effect.exit(
+				h.run(
+					Effect.flatMap(publisher, (p) =>
+						p.setupAuth({ registry: "https://registry.npmjs.org", credential: TOKEN_CREDENTIAL, npmrcPath: NPMRC }),
+					),
+				),
+			);
+			assert.isTrue(Exit.isFailure(exit));
+			const error = Exit.isFailure(exit) ? Exit.findErrorOption(exit) : undefined;
+			assert.isTrue(error !== undefined && error._tag === "Some");
+			if (error !== undefined && error._tag === "Some") {
+				assert.strictEqual((error.value as PublishError).kind, "auth");
+				// Only the READ failure names the npmrc; a failed write carries no subject.
+				assert.strictEqual((error.value as PublishError).subject, NPMRC);
+			}
 		}),
 	);
 });
@@ -202,6 +296,44 @@ describe("PackagePublish.pack", () => {
 			assert.strictEqual(packed.unpackedSize, 8192);
 			assert.strictEqual(packed.fileCount, 12);
 			assert.include(packed.tarballPath, "pkg-1.1.0.tgz");
+		}),
+	);
+
+	it.effect("parses npm 12's name-keyed pack --json to the same PackedTarball", () =>
+		// The 12.0.0 breaking change: `pack --json` and `publish --json` share
+		// one shape, an object keyed by package name. Both majors are in the
+		// support window, so the keyed form decodes to the identical record.
+		Effect.gen(function* () {
+			const h = harness({
+				script: () => ({ stdout: packJsonNpm12, exit: 0 }),
+				files: { "/repo/pkg/pkg-1.1.0.tgz": "bytes" },
+			});
+			const packed = yield* h.run(Effect.flatMap(publisher, (p) => p.pack("/repo/pkg")));
+			assert.strictEqual(packed.name, "pkg");
+			assert.strictEqual(packed.version, "1.1.0");
+			assert.strictEqual(packed.integrity, "sha512-abc123==");
+			assert.strictEqual(packed.packedSize, 2048);
+			assert.strictEqual(packed.fileCount, 12);
+			assert.include(packed.tarballPath, "pkg-1.1.0.tgz");
+		}),
+	);
+
+	it.effect("a keyed object whose entry is malformed still fails with kind 'output'", () =>
+		// The keyed branch is not a lenient catch-all: an entry missing its
+		// filename is rejected the same way the array form rejects it.
+		Effect.gen(function* () {
+			const { filename: _dropped, ...noFilename } = packEntry;
+			const h = harness({ script: () => ({ stdout: JSON.stringify({ pkg: noFilename }), exit: 0 }) });
+			const error = yield* Effect.flip(h.run(Effect.flatMap(publisher, (p) => p.pack("/repo/pkg"))));
+			assert.strictEqual(error.kind, "output");
+		}),
+	);
+
+	it.effect("an empty keyed object fails with kind 'output', like an empty array", () =>
+		Effect.gen(function* () {
+			const h = harness({ script: () => ({ stdout: "{}", exit: 0 }) });
+			const error = yield* Effect.flip(h.run(Effect.flatMap(publisher, (p) => p.pack("/repo/pkg"))));
+			assert.strictEqual(error.kind, "output");
 		}),
 	);
 
@@ -402,6 +534,17 @@ describe("PackagePublish.dryRun", () => {
 		}),
 	);
 
+	it.effect("reads the sizing from npm 12's keyed shape too", () =>
+		Effect.gen(function* () {
+			const h = harness({ script: () => ({ stdout: packJsonNpm12, exit: 0 }) });
+			const outcome = yield* h.run(Effect.flatMap(publisher, (p) => p.dryRun("/repo/pkg")));
+			assert.isTrue(outcome.ok);
+			assert.strictEqual(outcome.packedSize, 2048);
+			assert.strictEqual(outcome.unpackedSize, 8192);
+			assert.strictEqual(outcome.fileCount, 12);
+		}),
+	);
+
 	it.effect("a FAILED dry run is a result, not an error", () =>
 		// A package that cannot pack is a valid answer to "would this publish?".
 		// The error channel is reserved for a structural failure.
@@ -464,7 +607,7 @@ describe("PackagePublish.setupAuth with basic auth", () => {
 					}),
 				),
 			);
-			const written = h.fs.files.get(NPMRC) ?? "";
+			const written = npmrcOf(h);
 			assert.include(written, "//registry.example.test/:_auth=dXNlcjpwYXNz");
 			assert.notInclude(written, "_authToken");
 			assert.lengthOf(h.spawner.spawns, 0, "the credential stays off the process table");
@@ -483,7 +626,106 @@ describe("PackagePublish.setupAuth with basic auth", () => {
 					}),
 				),
 			);
-			assert.include(h.fs.files.get(NPMRC) ?? "", "//example.com/artifactory/api/npm/repo/:_auth=YWJj");
+			assert.include(npmrcOf(h), "//example.com/artifactory/api/npm/repo/:_auth=YWJj");
+		}),
+	);
+});
+
+describe("PackagePublish.setupAuth replaces its own key", () => {
+	const HOST = "https://registry.npmjs.org";
+	const KEY = "//registry.npmjs.org/:_authToken";
+	const run = (h: Harness, options: { registry?: string; credential?: RegistryCredential } = {}) =>
+		h.run(
+			Effect.flatMap(publisher, (p) =>
+				p.setupAuth({
+					registry: options.registry ?? HOST,
+					credential: options.credential ?? TOKEN_CREDENTIAL,
+					npmrcPath: NPMRC,
+				}),
+			),
+		);
+
+	it.effect("replaces an existing token line in place, keeping the other lines and their order", () =>
+		Effect.gen(function* () {
+			const h = harness({ files: { [NPMRC]: `a=1\n${KEY}=old\n; note\nb = 2\n` } });
+			yield* run(h);
+			assert.strictEqual(npmrcOf(h), `a=1\n${KEY}=s3cr3t-token\n; note\nb = 2\n`);
+		}),
+	);
+
+	it.effect("appends when no line matches", () =>
+		Effect.gen(function* () {
+			const h = harness({ files: { [NPMRC]: "a=1\nno-newline=2" } });
+			yield* run(h);
+			assert.strictEqual(npmrcOf(h), `a=1\nno-newline=2\n${KEY}=s3cr3t-token\n`);
+		}),
+	);
+
+	it.effect("collapses duplicates into the first position", () =>
+		Effect.gen(function* () {
+			const h = harness({ files: { [NPMRC]: `${KEY}=one\nx=1\n ${KEY} = two\ny=2\n${KEY}=three\n` } });
+			yield* run(h);
+			assert.strictEqual(npmrcOf(h), `${KEY}=s3cr3t-token\nx=1\ny=2\n`);
+		}),
+	);
+
+	it.effect("does not touch a line for a different registry host", () =>
+		Effect.gen(function* () {
+			const other = "//npm.pkg.github.com/:_authToken=keep-me";
+			const h = harness({ files: { [NPMRC]: `${other}\n${KEY}=old\n` } });
+			yield* run(h);
+			assert.strictEqual(npmrcOf(h), `${other}\n${KEY}=s3cr3t-token\n`);
+		}),
+	);
+
+	it.effect("a second call for the same registry leaves exactly one key, holding the newer credential", () =>
+		Effect.gen(function* () {
+			// npm reads the first matching key, so an appended second line would be
+			// shadowed by the first and the re-minted credential never used.
+			const h = harness();
+			yield* run(h);
+			yield* run(h, { credential: { kind: "token", token: Redacted.make("re-minted") } });
+			assert.strictEqual(npmrcOf(h), `${KEY}=re-minted\n`);
+		}),
+	);
+
+	it.effect("replaces only the exact key: no trailing slash, no other path", () =>
+		Effect.gen(function* () {
+			const lines = [
+				"//registry.npmjs.org:_authToken=no-slash",
+				"//registry.npmjs.org/x/:_auth=other-path-basic",
+				"//registry.npmjs.org/x/:_authToken=other-path",
+				"registry.npmjs.org/:_authToken=no-nerf",
+			];
+			const h = harness({ files: { [NPMRC]: `${lines.join("\n")}\n` } });
+			yield* run(h);
+			assert.strictEqual(npmrcOf(h), `${lines.join("\n")}\n${KEY}=s3cr3t-token\n`);
+		}),
+	);
+
+	it.effect("a basic credential replaces _auth and clears the same registry's _authToken, which npm reads first", () =>
+		Effect.gen(function* () {
+			const h = harness({ files: { [NPMRC]: `${KEY}=tok\n//registry.npmjs.org/:_auth=old\nx=1\n` } });
+			yield* run(h, { credential: { kind: "basic", encoded: Redacted.make("YWJj") } });
+			assert.strictEqual(npmrcOf(h), "//registry.npmjs.org/:_auth=YWJj\nx=1\n");
+		}),
+	);
+
+	it.effect("a token credential clears the same registry's _auth even when it has to append", () =>
+		Effect.gen(function* () {
+			const h = harness({ files: { [NPMRC]: "a=1\n//registry.npmjs.org/:_auth=old\nb=2\n" } });
+			yield* run(h);
+			assert.strictEqual(npmrcOf(h), `a=1\nb=2\n${KEY}=s3cr3t-token\n`);
+		}),
+	);
+
+	it.effect("keeps the registry path in the key and treats a missing trailing slash as the same registry", () =>
+		Effect.gen(function* () {
+			const scoped = "//registry.savvyweb.systems/npm/:_authToken";
+			const sibling = "//registry.savvyweb.systems/other/:_authToken=keep-me";
+			const h = harness({ files: { [NPMRC]: `${sibling}\n${scoped}=old\n` } });
+			yield* run(h, { registry: "https://registry.savvyweb.systems/npm" });
+			assert.strictEqual(npmrcOf(h), `${sibling}\n${scoped}=s3cr3t-token\n`);
 		}),
 	);
 });

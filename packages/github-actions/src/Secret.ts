@@ -61,8 +61,7 @@ export class Secret {
 	 * **Detached workers invert the masking model.** Masking works because the
 	 * runner parses this process's stdout; a *detached* child's stdout is a log
 	 * file no runner parses, so a mask emitted **inside** the worker is inert
-	 * and writes the plaintext verbatim into that log — a shipped incident, not
-	 * a hypothetical. The rule: **the parent masks, before the spawn** — call
+	 * and writes the plaintext verbatim into that log. The rule: **the parent masks, before the spawn** — call
 	 * this member in the parent, where the runner is listening, and hand the
 	 * already-masked plaintext to the worker's environment. Inside the worker,
 	 * compose `ActionOutputs.layerDetached`, whose `setSecret` is a documented
@@ -101,9 +100,13 @@ export class Secret {
 	 * Declassify one secret for an in-process use that needs the raw bytes.
 	 *
 	 * @remarks
-	 * Request signing is the case this exists for: an HMAC cannot be computed
-	 * over a `Redacted`, so a signing key has to become a string somewhere, and
-	 * the point of this module is that "somewhere" is here and nowhere else.
+	 * For a consumer that must hand the raw key to code taking a plain string,
+	 * such as a third-party signing library. A signer that takes a `Redacted`
+	 * needs no declassification at all: `@effected/crypto`'s `SigV4` and `Hmac`
+	 * unwrap the key only where they compute, so a caller of those (this
+	 * package's own S3 `BlobStore` is one) registers the value with
+	 * {@link Secret.mask} and passes the `Redacted` on. No module in this
+	 * package calls this member any more.
 	 *
 	 * Signing named the member; it does not gate it. **Any in-process use that
 	 * needs the raw value without writing it to a runner file is this
@@ -127,11 +130,10 @@ export class Secret {
 	 * **In a detached worker, the mask this member emits is a leak.** The
 	 * `::add-mask::` command only masks when the runner parses this process's
 	 * stdout; a detached worker's stdout is a log file no runner parses, so
-	 * there the command masks nothing *and* spells the plaintext into the log
-	 * — a signing key shipped exactly that way for one round. A worker that
-	 * signs (an S3-style `BlobStore` is the canonical case) must compose
-	 * `ActionOutputs.layerDetached`, under which this member still returns the
-	 * raw key for the HMAC but the mask is a documented no-op; the masking
+	 * there the command masks nothing *and* spells the plaintext into the log.
+	 * A worker that signs must compose `ActionOutputs.layerDetached`, under
+	 * which this member still returns the raw key but the mask is a
+	 * documented no-op; the masking
 	 * itself is the **parent's** job, done before the spawn via
 	 * {@link Secret.forChildEnv} under the real layer.
 	 */
@@ -151,8 +153,7 @@ export class Secret {
 	 * secret enters the ambient environment without wading through signing
 	 * keys and runner files.
 	 *
-	 * The ruling on who mutates is unchanged by the name existing: **this
-	 * package never mutates `process.env`.** Reads are seeded once, at layer
+	 * **This package never mutates `process.env`.** Reads are seeded once, at layer
 	 * construction, through `ActionEnvironment`, and nothing here writes back
 	 * — a write from inside the kit would be invisible to that seeding and to
 	 * every consumer's assumptions about when the environment is stable. This
@@ -176,13 +177,10 @@ export class Secret {
 	 * Masking without declassification: the value is registered with
 	 * `::add-mask::` through the same route as every other member, and the
 	 * success channel is `void`, so a caller cannot come away holding the raw
-	 * value at all. This is the register-only shape consumers previously spelled
-	 * as a {@link Secret.forSigning} whose result was discarded — a spelling
-	 * that lied to the audit vocabulary (a grep for signing found masking),
-	 * contradicted forSigning's own once-at-construction guidance, and needed a
-	 * comment to apologize for itself. The names are the vocabulary: a grep for
-	 * this member finds every register-only site, and a grep for `forSigning`
-	 * again finds only signing.
+	 * value at all. Prefer it to calling {@link Secret.forSigning} and discarding
+	 * the result, which would mislabel a masking site as a signing one. The names
+	 * are the audit vocabulary: a grep for this member finds every register-only
+	 * site, and a grep for `forSigning` finds only signing.
 	 *
 	 * The canonical caller masks every supplied credential input
 	 * unconditionally, before the logic that decides which of them will
@@ -197,9 +195,8 @@ export class Secret {
 	 * **In a detached worker, the mask this member emits is a leak.** The
 	 * `::add-mask::` command only masks when the runner parses this process's
 	 * stdout; a detached worker's stdout is a log file no runner parses, so
-	 * there the command masks nothing *and* spells the plaintext into the log
-	 * — a signing key shipped exactly that way for one round. A worker must
-	 * compose `ActionOutputs.layerDetached`, under which the mask is a
+	 * there the command masks nothing *and* spells the plaintext into the log.
+	 * A worker must compose `ActionOutputs.layerDetached`, under which the mask is a
 	 * documented no-op; the masking itself is the **parent's** job, done
 	 * before the spawn via {@link Secret.forChildEnv} under the real layer.
 	 */
@@ -214,5 +211,5 @@ export class Secret {
 	 * naming the variable rather than an empty `Redacted` that fails much later
 	 * as an authentication error.
 	 */
-	static readonly adopt = (name: string): Config.Config<Redacted.Redacted<string>> => Config.redacted(name);
+	static readonly adopt = (name: string): Config.Config<Redacted.Redacted<string>> => Config.Redacted(name);
 }

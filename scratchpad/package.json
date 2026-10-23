@@ -14,15 +14,19 @@
 		"@effected/cli": "workspace:*",
 		"@effected/commands": "workspace:*",
 		"@effected/config-file": "workspace:*",
+		"@effected/engine": "workspace:*",
+		"@effected/env": "workspace:*",
 		"@effected/git": "workspace:*",
 		"@effected/github": "workspace:*",
 		"@effected/github-actions": "workspace:*",
+		"@effected/github-commands": "workspace:*",
 		"@effected/github-references": "workspace:*",
 		"@effected/glob": "workspace:*",
 		"@effected/jsonc": "workspace:*",
 		"@effected/jsonl": "workspace:*",
 		"@effected/lockfiles": "workspace:*",
 		"@effected/markdown": "workspace:*",
+		"@effected/mcp": "workspace:*",
 		"@effected/memfs": "workspace:*",
 		"@effected/npm": "workspace:*",
 		"@effected/package-json": "workspace:*",
@@ -40,12 +44,13 @@
 		"@effected/walker": "workspace:*",
 		"@effected/workspaces": "workspace:*",
 		"@effected/xdg": "workspace:*",
-		"@effected/yaml": "workspace:*",
-		"effect": "catalog:effect"
+		"@effected/yaml": "workspace:*"
 	},
 	"devDependencies": {
+		"@effect/platform-node": "catalog:effect",
 		"@effect/vitest": "catalog:effect",
 		"@types/node": "catalog:build",
+		"effect": "catalog:effect",
 		"tsx": "^4.23.12",
 		"typescript": "catalog:build"
 	}

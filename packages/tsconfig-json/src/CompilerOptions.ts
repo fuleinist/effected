@@ -1,31 +1,30 @@
-// compilerOptions as string-level schemas — the foundational module every
-// later tsconfig-json task builds on. Ported against TS 6.0.3 × schemastore
-// per R1 (see the task-2 reference table); alias normalization (es6→es2015,
-// node→node10) is deliberately NOT applied here — only lowercasing. Aliases
-// collapse only in the numeric-enum codec (Task 4's TsEnumCodec). watchOptions/
-// typeAcquisition/references are Task 3's — this module owns compilerOptions only.
+// compilerOptions as string-level schemas — the foundational module the rest of
+// the package builds on, modelled on TS 6.0.3 × schemastore. Alias
+// normalization (es6→es2015, node→node10) is deliberately NOT applied here —
+// only lowercasing. Aliases collapse only in the numeric-enum codec
+// (TsEnumCodec). watchOptions/typeAcquisition/references live in
+// TsconfigJson.ts — this module owns compilerOptions only.
 //
-// Probe (2026-07-13, effect@4.0.0-beta.97, packages/tsconfig-json/probe.ts,
-// deleted per protocol) settled both spellings this module depends on, at
-// rung 3 (behavioral), against a non-first-literal control per the source-
-// lookup skill's multi-value probing rule:
+// Two spellings this module depends on, pinned by __test__/CompilerOptions.test.ts:
 //
 // (a) struct + passthrough — `Schema.StructWithRest(Schema.Struct({...}),
-//     [Schema.Record(Schema.String, Schema.Unknown)])`. Verified round-
-//     tripping a typed field alongside an unknown passthrough key through
-//     both `Schema.decodeUnknownEffect` and `Schema.encodeUnknownEffect`.
+//     [Schema.Record(Schema.String, Schema.Unknown)])` round-trips a typed
+//     field alongside an unknown passthrough key through both
+//     `Schema.decodeUnknownEffect` and `Schema.encodeUnknownEffect` ("passes
+//     unknown option keys through and preserves them across encode").
 //
 // (b) case-insensitive literal union — `Schema.String.pipe(Schema.decodeTo(
 //     Schema.Literals(literals), SchemaTransformation.transform({ decode: (s)
-//     => s.toLowerCase(), encode: (s) => s })))`. Verified against a
-//     NON-first literal ("es2015", third of three) decoding correctly from
-//     "ES2015", and an unrecognized literal ("es9999") failing decode.
+//     => s.toLowerCase(), encode: (s) => s })))` decodes a non-first literal
+//     ("es2015", third of three) from "ES2015" and rejects an unrecognized
+//     one ("decodes enum values case-insensitively" / "rejects an unknown
+//     enum value").
 
 import { Schema, SchemaTransformation } from "effect";
 
 /**
  * Case-insensitive literal-union decode; canonical lowercase encode. Module-
- * internal per the task brief — every exported enum schema below is built
+ * internal — every exported enum schema below is built
  * from it, but the helper itself is not part of the public surface.
  */
 const caseInsensitiveLiterals = <const L extends ReadonlyArray<string>>(literals: L) =>
@@ -41,7 +40,7 @@ const caseInsensitiveLiterals = <const L extends ReadonlyArray<string>>(literals
 
 /**
  * `compilerOptions.target` — the ECMAScript target. `es5` is deprecated in TS
- * 6.0; `es3` has no literal (dead per R1.3 — a `target: "es3"` value fails
+ * 6.0; `es3` has no literal (a removed value — a `target: "es3"` value fails
  * decode against this schema rather than silently passing through, since
  * `target` itself is a live, typed field).
  *
@@ -112,7 +111,7 @@ export const ModuleDetection = caseInsensitiveLiterals(["auto", "legacy", "force
 
 /**
  * `compilerOptions.lib` member values — the complete TS 6.0.3 set, lowercase
- * canonical, per R1.2.
+ * canonical.
  *
  * @public
  */
@@ -228,8 +227,7 @@ export const Lib = caseInsensitiveLiterals([
 
 // `compilerOptions.ignoreDeprecations` — the values are version strings, not
 // case-varying identifiers, so this stays a plain (non-case-insensitive)
-// literal schema and is not promoted to a named export per the task's fixed
-// export list.
+// literal schema and is not exported by name.
 const IgnoreDeprecations = Schema.Literals(["5.0", "6.0"]);
 
 /**
@@ -242,16 +240,16 @@ const PluginEntry = Schema.StructWithRest(Schema.Struct({ name: Schema.String })
 ]);
 
 /**
- * `compilerOptions`, decoded as every R1.3-live boolean, R1.4 string/path/
- * array/record/number, and R1.2 enum field — each `optionalKey` — intersected
- * with a passthrough record so unknown and dead (R1.3 dead-list) keys survive
- * decode and re-encode untouched, per the forward-tolerance constraint.
+ * `compilerOptions`, decoded as every live boolean, string, path, array,
+ * record, number and enum field — each `optionalKey` — intersected with a
+ * passthrough record so unknown and removed keys survive decode and re-encode
+ * untouched, which keeps the schema tolerant of newer compiler options.
  *
  * @public
  */
 export const CompilerOptions = Schema.StructWithRest(
 	Schema.Struct({
-		// ── Enum-valued options (R1.2) ─────────────────────────────────────
+		// ── Enum-valued options ─────────────────────────────────────
 		target: Schema.optionalKey(Target),
 		module: Schema.optionalKey(Module),
 		moduleResolution: Schema.optionalKey(ModuleResolution),
@@ -261,7 +259,7 @@ export const CompilerOptions = Schema.StructWithRest(
 		lib: Schema.optionalKey(Schema.Array(Lib)),
 		ignoreDeprecations: Schema.optionalKey(IgnoreDeprecations),
 
-		// ── Boolean options — R1.3 live typed set (verbatim, complete) ─────
+		// ── Boolean options — live typed set ─────
 		strict: Schema.optionalKey(Schema.Boolean),
 		noImplicitAny: Schema.optionalKey(Schema.Boolean),
 		strictNullChecks: Schema.optionalKey(Schema.Boolean),
@@ -347,7 +345,7 @@ export const CompilerOptions = Schema.StructWithRest(
 		libReplacement: Schema.optionalKey(Schema.Boolean),
 		stableTypeOrdering: Schema.optionalKey(Schema.Boolean),
 
-		// ── Path strings (R1.4) ─────────────────────────────────────────────
+		// ── Path strings ─────────────────────────────────────────────
 		/** @deprecated Deprecated in TypeScript 6.0. */
 		outFile: Schema.optionalKey(Schema.String),
 		outDir: Schema.optionalKey(Schema.String),
@@ -361,28 +359,28 @@ export const CompilerOptions = Schema.StructWithRest(
 		generateCpuProfile: Schema.optionalKey(Schema.String),
 		generateTrace: Schema.optionalKey(Schema.String),
 
-		// ── Path lists (R1.4) ───────────────────────────────────────────────
+		// ── Path lists ───────────────────────────────────────────────
 		typeRoots: Schema.optionalKey(Schema.Array(Schema.String)),
 		rootDirs: Schema.optionalKey(Schema.Array(Schema.String)),
 
-		// ── Plain strings (R1.4) ────────────────────────────────────────────
+		// ── Plain strings ────────────────────────────────────────────
 		jsxFactory: Schema.optionalKey(Schema.String),
 		jsxFragmentFactory: Schema.optionalKey(Schema.String),
 		jsxImportSource: Schema.optionalKey(Schema.String),
 		reactNamespace: Schema.optionalKey(Schema.String),
 
-		// ── String lists (R1.4) ─────────────────────────────────────────────
+		// ── String lists ─────────────────────────────────────────────
 		types: Schema.optionalKey(Schema.Array(Schema.String)),
 		customConditions: Schema.optionalKey(Schema.Array(Schema.String)),
 		moduleSuffixes: Schema.optionalKey(Schema.Array(Schema.String)),
 
-		// ── Record (R1.4) ────────────────────────────────────────────────────
+		// ── Record ────────────────────────────────────────────────────
 		paths: Schema.optionalKey(Schema.Record(Schema.String, Schema.Array(Schema.String))),
 
-		// ── Objects (R1.4) ───────────────────────────────────────────────────
+		// ── Objects ───────────────────────────────────────────────────
 		plugins: Schema.optionalKey(Schema.Array(PluginEntry)),
 
-		// ── Number (R1.4) ────────────────────────────────────────────────────
+		// ── Number ────────────────────────────────────────────────────
 		maxNodeModuleJsDepth: Schema.optionalKey(Schema.Number),
 	}),
 	[Schema.Record(Schema.String, Schema.Unknown)],

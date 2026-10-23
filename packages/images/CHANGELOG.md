@@ -1,0 +1,123 @@
+# @effected/images
+
+## 0.5.0
+
+### Maintenance
+
+- Upgrades core Effect library dependencies to v4.0.6 [#1039][#1039]
+
+### Thanks
+
+Thanks to [@spencerbeggs](https://github.com/spencerbeggs) for their contributions!
+
+[#1039]: https://github.com/spencerbeggs/effected/pull/1039
+
+## 0.4.0
+
+### Maintenance
+
+- Upgrades core Effect library dependencies to v4.0.5 [#1019][#1019]
+
+### Thanks
+
+Thanks to [@spencerbeggs](https://github.com/spencerbeggs) for their contributions!
+
+[#1019]: https://github.com/spencerbeggs/effected/pull/1019
+
+## 0.3.0
+
+### Maintenance
+
+- Upgrades core Effect library dependencies to v4.0.4 [#1008][#1008]
+
+### Thanks
+
+Thanks to [@spencerbeggs](https://github.com/spencerbeggs) for their contributions!
+
+[#1008]: https://github.com/spencerbeggs/effected/pull/1008
+
+## 0.2.0
+
+### Dependencies
+
+| Dependency | Type | Action | From | To |
+| --- | --- | --- | --- | --- |
+| effect | peerDependency | updated | 4.0.2 | ^4.0.3 |
+
+- Effect 4.0.3 advance: the `effect` peer and catalog move from the exact `4.0.2` hold back to `^4.0.3`. No API change. [#1000][#1000]
+
+### Thanks
+
+Thanks to [@spencerbeggs](https://github.com/spencerbeggs) for their contributions!
+
+[#1000]: https://github.com/spencerbeggs/effected/pull/1000
+
+## 0.1.2
+
+### Bug Fixes
+
+- Republished with every `effect` and `@effect/*` version pinned exactly to `4.0.2`, both peer and dependency ranges.
+
+- On 2026-10-10, every `@effect/*` package published at `4.0.3`, but `effect@4.0.3` itself never reached npm (Effect-TS/effect#8994). The 4.0.3 packages require `effect ^4.0.3`. A caret range on any of them therefore resolves a 4.0.3 package next to `effect@4.0.2`, and the program crashes when it imports them. Exact pins keep a fresh install of any kit package on a matched set until `effect@4.0.3` is available. [#997][#997]
+
+### Thanks
+
+Thanks to [@spencerbeggs](https://github.com/spencerbeggs) for their contributions!
+
+[#997]: https://github.com/spencerbeggs/effected/pull/997
+
+## 0.1.1
+
+### Maintenance
+
+- Republished to re-verify the package's npm trusted publishing setup. No code changes. [#986][#986]
+
+### Thanks
+
+Thanks to [@spencerbeggs](https://github.com/spencerbeggs) for their contributions!
+
+[#986]: https://github.com/spencerbeggs/effected/pull/986
+
+## 0.1.0
+
+### Features
+
+#### Image facts from bytes
+
+- `ImageFacts` reads the format, MIME type and pixel dimensions of a PNG, JPEG, GIF, WebP or AVIF file straight from its header. The readers are in-house, so the package has no runtime dependency beyond `effect` and replaces `image-size` for consumers.
+
+```ts
+import { ImageFacts } from "@effected/images";
+import { Result } from "effect";
+
+declare const bytes: Uint8Array;
+
+const result = ImageFacts.fromBytesResult(bytes);
+if (Result.isSuccess(result)) {
+  const { format, mimeType, width, height } = result.success;
+  const file = `card.${result.success.extension}`;
+}
+```
+
+- `ImageFacts.fromBytesResult` is the synchronous primitive and returns a `Result`; `ImageFacts.fromBytes` is the same read as an `Effect`.
+- `mimeType` is a literal union of the five media types, and the `extension` getter returns `jpg` for `jpeg` and the format name otherwise.
+- `ImageFormat` is the `png | jpeg | gif | webp | avif` union; `ImageMimeType` and `ImageExtension` are exported as types.
+- Unreadable bytes fail with one `ImageParseError` whose `reason` is `unrecognized`, `truncated` or `malformed`. The readers never throw and bound every length and walk they perform.
+
+#### Generated-image cache at `@effected/images/cache`
+
+- `ImageCache.getOrGenerate` skips an expensive renderer, such as an Open Graph card generator, when the same parameters were already rendered.
+
+- `ImageCacheKey.fromParams` derives a SHA-256 key from a salt and the canonical JSON of your schema-encoded parameters, using core `Crypto`. Failures are `ImageCacheKeyError`.
+
+- `ImageCache.getOrGenerate(key, generate, { accept })` returns the bytes, their `ImageFacts` and whether it was a `hit`. Passing `accept` narrows the result's `facts.format` to the accepted formats.
+
+- A stored entry that no longer parses, or whose format is outside `accept`, is treated as a miss and overwritten. A generated result that is empty, unparseable or outside `accept` fails with `ImageGenerateError` and is never stored.
+
+- `ImageBackend` is the storage port: `layerDirectory` writes through a temp file and an atomic rename, `layerFrom` adapts any structurally matching store such as the `Cache` from `@effected/store`, and `layerNone` stores nothing for when caching is switched off. Failures are `ImageBackendError`. [#977][#977]
+
+### Thanks
+
+Thanks to [@spencerbeggs](https://github.com/spencerbeggs) for their contributions!
+
+[#977]: https://github.com/spencerbeggs/effected/pull/977

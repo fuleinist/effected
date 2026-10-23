@@ -25,9 +25,9 @@ export interface PathPrependOptions {
 	 * The environment the child will inherit — on a runner, `process.env`.
 	 *
 	 * @remarks
-	 * Explicit rather than defaulted, matching this package's rule that ambient
-	 * process state is never read behind a caller's back — which is also what
-	 * makes the Windows casing branch exercisable from a test on any host.
+	 * Explicit rather than defaulted, per the package rule stated on
+	 * {@link ChildEnv} — which is also what makes the Windows casing branch
+	 * exercisable from a test on any host.
 	 */
 	readonly base: Readonly<Record<string, string | undefined>>;
 	/**
@@ -39,8 +39,7 @@ export interface PathPrependOptions {
 
 /**
  * Child-process environment construction: prepending directories to `PATH`
- * without falling into the three traps that each cost a real consumer a
- * cross-OS matrix round.
+ * without falling into three cross-platform traps.
  *
  * @remarks
  * Spawning a child with directories prepended to `PATH` is one tiny concern
@@ -66,6 +65,14 @@ export interface PathPrependOptions {
  * This class is total and pure — no service, no `R`, nothing read from the
  * ambient process — the same species as `Secret`'s statics, one concern per
  * member.
+ *
+ * **The package rule, stated once: ambient process state is never read behind
+ * a caller's back.** `process.env`, `process.arch` and `process.platform` are
+ * read by `ActionEnvironment` (once, at layer construction) and otherwise
+ * taken as an argument — which is what makes every platform branch
+ * exercisable from a test on any host. The sanctioned exceptions are
+ * *defaults a caller can override by passing the value*: `ActionInput.provider`'s
+ * `env = process.env` and `DetachedProcess.spawn`'s `base`.
  *
  * @public
  */
@@ -113,7 +120,7 @@ export class ChildEnv {
 	 * @example
 	 * ```ts
 	 * import { ChildEnv } from "@effected/github-actions";
-	 * import { ChildProcess } from "effect/unstable/process";
+	 * import { ChildProcess } from "effect/process";
 	 *
 	 * const command = ChildProcess.make("pnpm", ["install"], {
 	 *   ...ChildEnv.prependPath(["/opt/hostedtoolcache/pnpm/10.13.1/x64/bin"], {

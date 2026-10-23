@@ -1,12 +1,12 @@
 import { assert, describe, it } from "@effect/vitest";
-import { Effect, Layer, Option, Path, Schema } from "effect";
+import { MemoryFileSystem } from "@effected/memfs";
+import { Effect, Layer, Option, Path, PlatformError, Schema } from "effect";
 import { ConfigCodecError } from "../src/ConfigCodec.js";
 import type { ConfigLoadError, ConfigReadError } from "../src/ConfigFile.js";
 import { ConfigFile, ConfigFileNotFoundError, ConfigFileReadError, ConfigValidationError } from "../src/ConfigFile.js";
 import { ConfigResolver } from "../src/ConfigResolver.js";
 import { JsonCodec } from "../src/JsonCodec.js";
 import { MergeStrategy } from "../src/MergeStrategy.js";
-import { memoryFs } from "./helpers.js";
 
 class AppShape extends Schema.Class<AppShape>("AppShape")({ port: Schema.Number }) {}
 class AppConfig extends ConfigFile.Service<AppConfig, AppShape>()("test/AppConfig") {}
@@ -22,7 +22,7 @@ const layerFor = (
 		resolvers,
 		strategy: MergeStrategy.firstMatch<AppShape>(),
 		...(validate !== undefined && { validate }),
-	}).pipe(Layer.provide(Layer.mergeAll(memoryFs(files), Path.layer)));
+	}).pipe(Layer.provide(Layer.mergeAll(MemoryFileSystem.layerWith(files), Path.layer)));
 
 describe("ConfigFile.load", () => {
 	it.effect("loads, decodes and validates the highest-priority source", () =>
@@ -42,7 +42,58 @@ describe("ConfigFile.load", () => {
 			assert.strictEqual(error._tag, "ConfigFileNotFoundError");
 			// It reports which tiers were probed — v3's mega-error could not.
 			assert.include((error as ConfigFileNotFoundError).searched, "explicit");
+			// ...and which paths those tiers checked — one name can hide N candidates.
+			assert.deepStrictEqual((error as ConfigFileNotFoundError).candidates, ["/app/.apprc"]);
 		}).pipe(Effect.provide(layerFor({}))),
+	);
+
+	it.effect("ConfigFileNotFoundError.candidates carries the full walk, in probe order", () =>
+		Effect.gen(function* () {
+			const cfg = yield* AppConfig;
+			const error = (yield* Effect.flip(cfg.load)) as ConfigFileNotFoundError;
+			assert.deepStrictEqual(error.searched, ["explicit", "walk:project"]);
+			assert.deepStrictEqual(error.candidates, [
+				"/app/.apprc",
+				"/repo/pkg/.app.json",
+				"/repo/pkg/app.json",
+				"/repo/.app.json",
+				"/repo/app.json",
+			]);
+			// The message names the search without dumping every path; the field carries them.
+			assert.include(error.message, "walk:project");
+			assert.include(error.message, "5 candidate paths checked");
+		}).pipe(
+			Effect.provide(
+				layerFor({}, [
+					ConfigResolver.explicitPath("/app/.apprc"),
+					ConfigResolver.upwardWalk({
+						filenames: [".app.json", "app.json"],
+						cwd: "/repo/pkg",
+						stopAt: "/repo",
+						name: "walk:project",
+					}),
+				]),
+			),
+		),
+	);
+
+	it.effect("a resolver without resolveProbe contributes no candidates but still names itself", () =>
+		Effect.gen(function* () {
+			const cfg = yield* AppConfig;
+			const error = (yield* Effect.flip(cfg.load)) as ConfigFileNotFoundError;
+			assert.deepStrictEqual(error.searched, ["hand-rolled", "explicit"]);
+			// The hand-rolled tier is opaque; the built-in still reports its probe.
+			assert.deepStrictEqual(error.candidates, ["/app/.apprc"]);
+			// No probe count in the message beyond what the field holds.
+			assert.include(error.message, "1 candidate path checked");
+		}).pipe(
+			Effect.provide(
+				layerFor({}, [
+					{ name: "hand-rolled", resolve: Effect.succeed(Option.none()) },
+					ConfigResolver.explicitPath("/app/.apprc"),
+				]),
+			),
+		),
 	);
 
 	it.effect("fails with ConfigCodecError — distinguishable from NotFound", () =>
@@ -82,8 +133,10 @@ describe("ConfigFile.load", () => {
 			const cfg = yield* AppConfig;
 			const error = yield* Effect.flip(cfg.loadFrom("/nope/.apprc"));
 			assert.instanceOf(error, ConfigFileReadError);
-			// v3 collapsed this to `reason: String(e)`; the Error instance survives.
-			assert.instanceOf((error as ConfigFileReadError).cause, Error);
+			// v3 collapsed this to `reason: String(e)`; the host's typed PlatformError survives.
+			const cause = (error as ConfigFileReadError).cause;
+			assert.instanceOf(cause, PlatformError.PlatformError);
+			assert.strictEqual((cause as PlatformError.PlatformError).reason._tag, "NotFound");
 		}).pipe(Effect.provide(layerFor({}))),
 	);
 

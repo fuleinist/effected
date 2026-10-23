@@ -7,10 +7,10 @@
 
 Composable config file loading for Effect. Declare a resolver chain — an explicit path, an upward walk from the cwd, the workspace or git root, `/etc` — decode every discovered file through an Effect `Schema`, and combine the results with a merge strategy. JSON, JSONC, YAML and TOML all decode with no extra install. Codecs, resolvers and merge strategies are pluggable seams, and failures arrive as tagged errors carrying structured payloads rather than prose, so "no config anywhere" is routable separately from "the config I found is broken".
 
-> **Pre-release.** This package is part of the `@effected/*` kit, in pre-`1.0.0`
-> development against a single pinned Effect v4 prerelease. Packages graduate to
-> `1.0.0` once Effect `4.0.0` ships. To hold your own `effect` versions at
-> exactly the ones the kit is built and tested against, install
+> **Pre-`1.0.0`.** This package is part of the `@effected/*` kit, built on stable
+> Effect v4 (`effect` `^4.0.0`) and still in `0.x` development. Stable Effect
+> makes a kit `1.0.0` possible, not automatic. To keep your `effect` and
+> `@effect/*` versions on the line the kit is built and tested against, install
 > [`@effected/pnpm-plugin-effect`](https://www.npmjs.com/package/@effected/pnpm-plugin-effect).
 >
 > **Stability: unstable.** This package's API surface is not yet considered
@@ -149,7 +149,7 @@ Every failure is a tagged error you route on with `Effect.catchTag`. The tags ex
 
 | Tag | Means | Recovery |
 | --- | --- | --- |
-| `ConfigFileNotFoundError` | The resolver chain matched nothing. Carries `searched`, the resolver names probed. | Fall back to defaults — the one failure that is often not an error. `loadOrDefault` handles it for you. |
+| `ConfigFileNotFoundError` | The resolver chain matched nothing. Carries `searched`, the resolver names probed, and `candidates`, the paths they actually checked on disk. | Fall back to defaults — the one failure that is often not an error. `loadOrDefault` handles it for you. |
 | `ConfigFileReadError` | A file was found but could not be read. Carries `path` and the structural `cause`. | Usually fatal: the file exists and the process cannot read it. Check permissions. |
 | `ConfigFileWriteError` | A file could not be written. Carries `path` and the structural `cause`. | Retry elsewhere, or surface to the user. |
 | `ConfigDefaultPathMissingError` | `save` or `update` was called on a service configured without a `defaultPath`. | A wiring bug, not a data condition. Fix the layer, or call `write` with an explicit path. |
@@ -158,7 +158,7 @@ Every failure is a tagged error you route on with `Effect.catchTag`. The tags ex
 | `ConfigMigrationError` | A versioned migration failed. Carries `version`, `name`, `phase` and the structural `cause`. | Report which step failed; the config on disk is left untouched. |
 | `ConfigEncryptionError` | An encrypt, decrypt, key-derivation or base64 step failed. Carries `phase` and the structural `cause`. | A wrong passphrase and a corrupt envelope both land here; inspect `phase`. |
 
-`ConfigLoadError`, `ConfigReadError`, `ConfigWriteError`, `ConfigSaveError` and `ConfigUpdateError` are exported unions naming exactly the failures each method can produce. Catching one tag narrows the union, leaving the rest to propagate:
+`ConfigLoadError`, `ConfigReadError`, `ConfigEncodeError`, `ConfigWriteError`, `ConfigSaveError` and `ConfigUpdateError` are exported unions naming exactly the failures each method can produce — `ConfigEncodeError` is `ConfigWriteError` minus `ConfigFileWriteError`, because `encode` never touches the disk. Catching one tag narrows the union, leaving the rest to propagate:
 
 ```ts
 import type { ConfigFileShape } from "@effected/config-file";
@@ -213,6 +213,7 @@ export const secret = EncryptedCodec(migrating, EncryptedCodecKey.fromPassphrase
 - `ConfigFile.Service` / `ConfigFile.layer` / `ConfigFile.testLayer` — a per-schema service class and its layers. `testLayer` seeds files into a temp directory and wires the *real* implementation over them, so tests exercise the actual pipeline rather than a stub that can drift from it.
 - `parseOptions` — decode options threaded into every decode, on the layer and on `read`. `onExcessProperty: "error"` is the only way to report a typo'd section or a field the schema deliberately removed.
 - `ConfigFile.read` — the one-shot escape from the service: read, decode and validate one explicit path, schema and codec named per call, with no resolver chain and no write path.
+- `encode` / `write` / `save` / `update` — the write path. `encode(value, options?)` returns the serialized text a `write` would put on disk without writing, emitting an event or naming a path in its errors: the primitive behind a `--dry-run` flag. `write` takes an explicit path the caller vouches for; `save` and `update` resolve the layer's `defaultPath` and create its parent directory. `encode` and `write` accept `{ header }`, text prepended verbatim above the document with exactly one newline between — a `#:schema https://…` directive atop a TOML file, say. The caller owns its validity in the target format; JSON has no comment syntax, so a header on `JsonCodec` yields an unparseable file by construction.
 - `ConfigResolver` — `explicitPath`, `staticDir`, `upwardWalk`, `workspaceRoot`, `gitRoot` and `systemEtc`. A resolver's error channel is `never` by contract: every filesystem failure becomes `Option.none()`, so one unreadable tier never aborts the chain.
 - `MergeStrategy` — `firstMatch` and `layeredMerge`, combining discovered sources in priority order.
 - `JsonCodec`, `JsoncCodec`, `YamlCodec`, `TomlCodec` — JSON, JSONC, YAML and TOML in the box, exported free-standing so an unused format's engine is tree-shaken away.

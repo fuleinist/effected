@@ -46,14 +46,14 @@ const nonNegativeInteger = Schema.Number.check(
 // String prerelease identifiers must contain at least one non-digit:
 // all-numeric identifiers are numbers (the grammar parses them as such), so
 // requiring a non-digit keeps decode/encode round-trips canonical. Written
-// without lookahead so `Schema.toArbitrary` can derive a generator.
+// without lookahead so `Arbitrary.schema` can derive a generator.
 const prereleaseIdentifier = Schema.Union([
-	Schema.String.check(Schema.isPattern(/^[0-9]*[A-Za-z-][0-9A-Za-z-]*$/)),
+	Schema.String.check(Schema.isPattern(/^[0-9]*[A-Za-z-][0-9A-Za-z-]*$/u)),
 	nonNegativeInteger,
 ]);
 
 // Build identifiers allow leading zeros and all-digit tokens (SemVer §10).
-const buildIdentifier = Schema.String.check(Schema.isPattern(/^[0-9A-Za-z-]+$/));
+const buildIdentifier = Schema.String.check(Schema.isPattern(/^[0-9A-Za-z-]+$/u));
 
 /**
  * A parsed SemVer 2.0.0 version: an Effect `Schema.Class` whose fields are
@@ -104,7 +104,7 @@ export class SemVer extends Schema.Class<SemVer>("SemVer")({
 	static readonly FromString: Schema.Codec<SemVer, string> = Schema.String.pipe(
 		Schema.decodeTo(
 			SemVer,
-			SchemaTransformation.transformOrFail({
+			SchemaTransformation.transformEffect({
 				decode: (input: string) => {
 					const result = parseVersion(input);
 					return result.ok
@@ -154,9 +154,7 @@ export class SemVer extends Schema.Class<SemVer>("SemVer")({
 	 * The corepack-pinnable notion: what the `<name>@<version>[+<integrity>]`
 	 * pin grammar can express in its version position, where the first `+`
 	 * always begins the integrity component. `@effected/package-json`'s
-	 * `PackageManager` field model consumes this schema directly; suites that
-	 * must prove they share it rather than carrying a copy can assert object
-	 * identity against this export.
+	 * `PackageManager` field model uses this schema directly.
 	 */
 	static readonly PinnableVersionString: Schema.String = Schema.String.pipe(
 		Schema.check(
@@ -577,15 +575,13 @@ export class SemVer extends Schema.Class<SemVer>("SemVer")({
 	}
 }
 
-/**
- * Raised in place of `SemVer.make`'s raw schema failure when a bump would
- * increment a component past `Number.MAX_SAFE_INTEGER`. This is a wiring/
- * arithmetic invariant, not malformed input — `SemVerBump` only ever
- * increments components already validated on the receiver — so it stays a
- * thrown defect rather than a typed `Effect` failure, matching every other
- * `SemVer`/`SemVerBump` method's synchronous, non-`Effect` signature. The
- * original `SemVer.make` schema failure rides as `cause`.
- */
+// Raised in place of `SemVer.make`'s raw schema failure when a bump would
+// increment a component past `Number.MAX_SAFE_INTEGER`. This is an arithmetic
+// invariant, not malformed input — `SemVerBump` only ever increments
+// components already validated on the receiver — so it stays a thrown defect
+// rather than a typed `Effect` failure, matching every other
+// `SemVer`/`SemVerBump` method's synchronous, non-`Effect` signature. The
+// original `SemVer.make` schema failure rides as `cause`.
 function overflow(component: "major" | "minor" | "patch" | "prerelease", cause: unknown): never {
 	throw new Error(
 		`SemVerBump invariant violated: bumping "${component}" would exceed Number.MAX_SAFE_INTEGER (${Number.MAX_SAFE_INTEGER})`,
@@ -602,10 +598,18 @@ function overflow(component: "major" | "minor" | "patch" | "prerelease", cause: 
  * `major`/`minor`/`patch` always increment the requested component, whether
  * or not the receiver is a prerelease — this deliberately diverges from
  * node-semver, where `inc("2.0.0-beta.1", "major")` answers `"2.0.0"` (the
- * release target of an in-progress prerelease, not a further increment).
- * `@effected/schemastore`'s `SchemaVersioning.next` depends on this
- * package's answer of `"3.0.0"` instead; do not "fix" it to match
- * node-semver without checking that dependent first.
+ * release target of an in-progress prerelease, not a further increment). Here
+ * the same call answers `"3.0.0"`.
+ *
+ * @example
+ * ```ts
+ * import { SemVer } from "@effected/semver";
+ *
+ * const v = SemVer.of(1, 2, 3);
+ * v.bump.patch().toString(); // => "1.2.4"
+ * v.bump.minor().toString(); // => "1.3.0"
+ * v.bump.prerelease("rc").toString(); // => "1.2.4-rc.0"
+ * ```
  *
  * @public
  */

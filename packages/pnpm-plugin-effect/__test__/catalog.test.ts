@@ -124,3 +124,119 @@ describe("effected catalog", () => {
 		assert.include(publishable, PLUGIN, "the plugin is publishable; it is excluded from the catalog deliberately");
 	});
 });
+
+describe("effect catalog", () => {
+	/**
+	 * The `effect` catalog's own entry is an unquoted key, which the shared
+	 * reader skips, so it is read here by name.
+	 */
+	function effectEntry(): string {
+		const source = readFileSync(join(PACKAGE_ROOT, "savvy.build.ts"), "utf8");
+		const match = /\n\t+effect: (\{[^}]*\})/.exec(source.slice(source.indexOf("effect: {\n\t\t\t\t\tpackages: {")));
+		assert.isNotNull(match, "the effect catalog declares no `effect` entry");
+		return match?.[1] ?? "";
+	}
+
+	const entries = () => new Map([...readCatalogEntries("effect"), ["effect", effectEntry()]]);
+
+	it("finds effect and its satellites, so an empty catalog cannot pass silently", () => {
+		assert.isAtLeast(entries().size, 20);
+		assert.isTrue(entries().has("@effect/platform-node"));
+	});
+
+	// The catalog rides the stable line with carets under lock-minor; the override
+	// layer below, not the catalog range, is what keeps a satellite from pairing with
+	// an older core. What the catalog must still promise is that the whole family
+	// names one version, so the derived pins all agree.
+	it("keeps every entry on a caret under lock-minor with a floored peer", () => {
+		for (const [name, spec] of entries()) {
+			const range = /\brange:\s*"([^"]+)"/.exec(spec)?.[1] ?? "";
+			const peer = /\bpeer:\s*"([^"]+)"/.exec(spec)?.[1] ?? "";
+			assert.match(range, /^\^\d+\.\d+\.\d+$/, `${name} range is not a caret on a plain version`);
+			assert.match(peer, /^\^\d+\.\d+\.0$/, `${name} peer is not floored to its minor`);
+			assert.match(spec, /strategy:\s*"lock-minor"/, `${name} is not on strategy lock-minor`);
+		}
+	});
+
+	it("holds every 4.x entry at the same version as effect itself", () => {
+		const effect = bare(effectEntry());
+		assert.match(effect, /^4\.\d+\.\d+$/);
+		for (const [name, spec] of entries()) {
+			if (name === "@effect/tsgo") continue;
+			assert.strictEqual(bare(spec), effect, name);
+		}
+	});
+});
+
+/** The plain version a catalog entry's range names, operator stripped. */
+function bare(spec: string): string {
+	return (/\brange:\s*"\^?([^"]+)"/.exec(spec)?.[1] ?? "").trim();
+}
+
+describe("overrides", () => {
+	const RC117 = "@effect/platform-node@4.0.0-rc.117>@effect/platform-node-shared";
+	const RC118 = "@effect/platform-node@4.0.0-rc.118>@effect/platform-node-shared";
+	/**
+	 * The pins `overridesFromCatalogs` derives: every member on its own release
+	 * line at the catalog's version (`effect` and the satellites on 4.x, `@effect/tsgo`
+	 * on its 0.x line). Derived here from the catalog literal the same way, so the test
+	 * moves with the catalog and only a disagreement between the literal and the
+	 * built hook can fail it.
+	 */
+	function familyPins(): Record<string, string> {
+		const source = readFileSync(join(PACKAGE_ROOT, "savvy.build.ts"), "utf8");
+		const effect = /\n\t+effect: \{[^}]*range:\s*"\^?([^"]+)"/.exec(
+			source.slice(source.indexOf("effect: {\n\t\t\t\t\tpackages: {")),
+		)?.[1];
+		assert.isString(effect);
+		assert.match(effect ?? "", /^4\.\d+\.\d+$/, "the effect catalog's own entry is not a plain 4.x version");
+		// Each pin sits on the member's own release line, derived from its range the way
+		// the directive does: `^X.0.0` on a major line, `^0.Y.0` on a 0.x line.
+		const pins: Record<string, string> = {};
+		const entries = new Map([...readCatalogEntries("effect"), ["effect", `{ range: "^${effect}" }`]]);
+		for (const [name, spec] of entries) {
+			const version = bare(spec);
+			const [major, minor] = version.split(".");
+			const line = major === "0" ? `^0.${minor}.0` : `^${major}.0.0`;
+			pins[`${name}@${line}`] = version;
+		}
+		assert.strictEqual(pins["effect@^4.0.0"], effect);
+		return pins;
+	}
+	const PINS = { ...familyPins(), [RC117]: "4.0.0-rc.117", [RC118]: "4.0.0-rc.118" };
+	const PNPMFILE = join(PACKAGE_ROOT, "dist/dev/pkg/pnpmfile.mjs");
+
+	/**
+	 * The built hook, not the source literal: what a consumer runs is the
+	 * `updateConfig` the bundler emits, so this is the only place the merge with a
+	 * consumer's own overrides can be observed. `dist/dev/pkg` is the
+	 * `publishConfig.directory`, so it is the published hook, and it is the
+	 * target the test pre-build keeps fresh.
+	 */
+	async function updateConfig(config: Record<string, unknown>): Promise<Record<string, unknown>> {
+		assert.isTrue(existsSync(PNPMFILE), "build the plugin before testing its pnpmfile");
+		const { hooks } = (await import(PNPMFILE)) as {
+			hooks: { updateConfig: (config: Record<string, unknown>) => Promise<Record<string, unknown>> };
+		};
+		return hooks.updateConfig(config);
+	}
+
+	it("pins the effect family to the catalog version and each prerelease parent's shared package to its own", async () => {
+		const { overrides } = await updateConfig({});
+		assert.deepStrictEqual(overrides, PINS);
+		// Positive control on the derivation: the family is more than the two rc entries,
+		// and tsgo is pinned on its own 0.x line rather than the 4.x one.
+		assert.isAtLeast(Object.keys(PINS).length, 23);
+		assert.notProperty(overrides, "@effect/tsgo@^4.0.0");
+	});
+
+	it("keeps a consumer's own overrides", async () => {
+		const { overrides } = await updateConfig({ overrides: { foo: "1.0.0" } });
+		assert.deepStrictEqual(overrides, { ...PINS, foo: "1.0.0" });
+	});
+
+	it("lets a consumer's value for the same selector win", async () => {
+		const { overrides } = await updateConfig({ overrides: { [RC117]: "4.0.0-rc.116" } });
+		assert.deepStrictEqual(overrides, { ...PINS, [RC117]: "4.0.0-rc.116" });
+	});
+});

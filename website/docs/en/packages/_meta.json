@@ -68,6 +68,11 @@
 		"label": "@effected/lockfiles"
 	},
 	{
+		"type": "custom-link",
+		"link": "/engine",
+		"label": "@effected/engine"
+	},
+	{
 		"type": "section-header",
 		"label": "Boundary"
 	},
@@ -123,6 +128,16 @@
 	},
 	{
 		"type": "custom-link",
+		"link": "/images",
+		"label": "@effected/images"
+	},
+	{
+		"type": "custom-link",
+		"link": "/jwt",
+		"label": "@effected/jwt"
+	},
+	{
+		"type": "custom-link",
 		"link": "/runtimes",
 		"label": "@effected/runtimes"
 	},
@@ -130,6 +145,16 @@
 		"type": "custom-link",
 		"link": "/cli",
 		"label": "@effected/cli"
+	},
+	{
+		"type": "custom-link",
+		"link": "/mcp",
+		"label": "@effected/mcp"
+	},
+	{
+		"type": "custom-link",
+		"link": "/lsp",
+		"label": "@effected/lsp"
 	},
 	{
 		"type": "section-header",

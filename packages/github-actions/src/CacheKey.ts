@@ -1,6 +1,7 @@
-import { createHash } from "node:crypto";
 import { GlobSet } from "@effected/glob";
+import { descend } from "@effected/walker";
 import { Effect, FileSystem, Option, Path, Schema } from "effect";
+import { sha256, sha256Hex } from "./internal/digest.js";
 
 /**
  * Raised when a file or directory that was going to be hashed could not be
@@ -71,7 +72,7 @@ const MAX_KEY_LENGTH = 512;
  * Commas and newlines are refused because the runner uses both to delimit the
  * restore-key list — a segment carrying one would silently become two keys.
  */
-const Segment = Schema.String.check(Schema.isPattern(/^[^,\n\r]+$/));
+const Segment = Schema.String.check(Schema.isPattern(/^[^,\n\r]+$/u));
 
 const Segments = Schema.NonEmptyArray(Segment).check(
 	Schema.makeFilter((values) => values.join(SEPARATOR).length <= MAX_KEY_LENGTH, {
@@ -211,13 +212,12 @@ export class CacheKey extends Schema.Class<CacheKey>("CacheKey")(
 	 * A copy of this key that restores from its **exact key only** — no ladder.
 	 *
 	 * @remarks
-	 * The third point in the policy space, and the one the typed key had no
-	 * spelling for: absence of a policy means the default every-prefix ladder,
-	 * so exact-match-only restores (a cache-bust mode, where a stale partial
-	 * hit is worse than a cold start) previously forced the caller back to the
-	 * string form. This is the same `restoreDepths` field carrying **zero
-	 * rungs** — an honest value, not a sentinel: `ActionCache.restore` sends no
-	 * `restore_keys` at all, so the backend answers this key or a miss.
+	 * The third point in the policy space: absence of a policy means the default
+	 * every-prefix ladder, so exact-match-only restores (a cache-bust mode, where
+	 * a stale partial hit is worse than a cold start) need their own spelling.
+	 * This is the same `restoreDepths` field carrying **zero rungs** — an honest
+	 * value, not a sentinel: `ActionCache.restore` sends no `restore_keys` at
+	 * all, so the backend answers this key or a miss.
 	 *
 	 * @example
 	 * ```ts
@@ -302,15 +302,12 @@ export class CacheKey extends Schema.Class<CacheKey>("CacheKey")(
 		/** The content hash, e.g. from {@link CacheKey.hashFiles}. Included last when given. */
 		readonly hash?: string;
 	}): CacheKey {
-		const segments: Array<string> = [];
-		if (options.os !== undefined) {
-			segments.push(options.os);
-		}
-		segments.push(options.scope, options.branch);
+		const segments: [string, ...Array<string>] =
+			options.os === undefined ? [options.scope, options.branch] : [options.os, options.scope, options.branch];
 		if (options.hash !== undefined) {
 			segments.push(options.hash);
 		}
-		return CacheKey.make({ segments: segments as [string, ...Array<string>] });
+		return CacheKey.make({ segments });
 	}
 
 	/**
@@ -354,7 +351,7 @@ export class CacheKey extends Schema.Class<CacheKey>("CacheKey")(
 		if (!Number.isInteger(length) || length < 1 || length > 64) {
 			throw new RangeError(`A digest length must be an integer between 1 and 64, got ${length}`);
 		}
-		return createHash("sha256").update(input).digest("hex").slice(0, length);
+		return sha256Hex(input).slice(0, length);
 	}
 
 	/**
@@ -386,23 +383,19 @@ export class CacheKey extends Schema.Class<CacheKey>("CacheKey")(
 			ordered.map((path) =>
 				fs.readFile(path).pipe(
 					Effect.mapError((cause) => new CacheKeyReadError({ path, cause })),
-					Effect.map((bytes) => createHash("sha256").update(bytes).digest()),
+					Effect.map(sha256),
 				),
 			),
 			// The `concurrency` option is load-bearing, not a tuning knob: `Effect.all`
 			// defaults to `concurrency: 1`, so omitting it reads every file one at a
-			// time and this whole shape buys nothing over the sequential loop it
-			// replaced. Bounded rather than `"unbounded"` because a pattern set can
+			// time and this whole shape buys nothing over a sequential loop. Bounded rather than `"unbounded"` because a pattern set can
 			// match thousands of files and one fiber per file would exhaust the
 			// runner's descriptors; 8 is the width `ActionCache` and `Artifact`
 			// already use for their own IO fan-out.
 			{ concurrency: 8 },
 		);
-		const accumulator = createHash("sha256");
-		for (const digest of digests) {
-			accumulator.update(digest);
-		}
-		return Option.some(accumulator.digest("hex"));
+		// The digest of the concatenated raw digests — the runner's own `hashFiles()` shape.
+		return Option.some(sha256Hex(Uint8Array.from(digests.flatMap((digest) => [...digest]))));
 	});
 
 	/**
@@ -410,20 +403,34 @@ export class CacheKey extends Schema.Class<CacheKey>("CacheKey")(
 	 *
 	 * @remarks
 	 * Discovery and matching are **two different jobs**, and separating them is
-	 * what makes this testable and correct. The walk is core
-	 * `FileSystem.readDirectory(recursive)`; the matching is `@effected/glob`'s
-	 * full minimatch dialect — the same dialect `@actions/glob` uses, so a workflow
-	 * author's `!**\/node_modules/**` behaves here exactly as it does in every
-	 * other cache step in the same workflow. `node:fs.globSync` would have welded
-	 * the two together behind one non-stubbable call *and* changed the dialect,
-	 * and a dialect divergence surfaces as a silent cache-key difference — the
-	 * worst failure mode a cache key has.
+	 * what makes this testable and correct. The walk is `@effected/walker`'s
+	 * `descend`, run once per include from that include's own literal prefix
+	 * (a literal include is one `stat`, never a walk) with nothing pruned
+	 * implicitly; the matching is `@effected/glob`'s full minimatch dialect —
+	 * the same dialect `@actions/glob` uses, so a workflow author's
+	 * `!**\/node_modules/**` behaves here exactly as it does in every other
+	 * cache step in the same workflow. `node:fs.globSync` would have welded the
+	 * two together behind one non-stubbable call *and* changed the dialect, and
+	 * a dialect divergence surfaces as a silent cache-key difference — the worst
+	 * failure mode a cache key has.
 	 *
-	 * Candidates are matched by their path **relative to the workspace**, which
-	 * is what makes "never hash a file outside the workspace" structural rather
-	 * than a rule someone has to remember. Directories are excluded: a directory
+	 * Candidates are matched by their path **relative to the workspace**, and a
+	 * literal that climbs above it (`../lockfile`) is dropped lexically — no
+	 * literal reaches outside the workspace through path text. The walk is
+	 * another matter: under `followSymlinks` a symlinked directory whose target
+	 * lives outside the workspace IS descended, and its files DO contribute to
+	 * the key — parity with `@actions/glob`, which follows links out of the
+	 * tree too. Directories are excluded: a directory
 	 * called `notes.txt` matches `**\/*.txt` and is not a file, and hashing it
-	 * would fail rather than being ignored.
+	 * would fail rather than being ignored. An absent literal is a miss; any
+	 * other failure to read one is a typed `CacheKeyReadError`, because a key
+	 * derived from an incomplete file set is wrong in a way nothing reports.
+	 *
+	 * Symlinked directories are followed (`descend` under
+	 * `followSymlinks: true`), matching `@actions/glob`'s default
+	 * `followSymbolicLinks: true` — a file reachable only through a symlinked
+	 * directory contributes to the key, and `descend`'s real-path cycle guard
+	 * keeps link loops finite.
 	 *
 	 * The answer is sorted, so a caller cannot make its key depend on the order
 	 * the filesystem happened to report.
@@ -436,29 +443,66 @@ export class CacheKey extends Schema.Class<CacheKey>("CacheKey")(
 	}) {
 		const fs = yield* FileSystem.FileSystem;
 		const path = yield* Path.Path;
+		const { workspace } = options;
 		const set = yield* GlobSet.compile(options.patterns).pipe(
 			Effect.mapError((cause) => new CacheKeyBadPatternError({ pattern: cause.pattern, cause })),
 		);
-		const entries = yield* fs
-			.readDirectory(options.workspace, { recursive: true })
-			.pipe(Effect.mapError((cause) => new CacheKeyReadError({ path: options.workspace, cause })));
+		// An absent workspace is a failure naming it, never an empty answer:
+		// `descend` reads a missing base as zero matches, which here would fold
+		// into a key that silently caches against a constant.
+		yield* fs.stat(workspace).pipe(Effect.mapError((cause) => new CacheKeyReadError({ path: workspace, cause })));
 
-		const matched: Array<string> = [];
-		for (const entry of entries) {
-			// The walk reports platform separators; the dialect is posix. A Windows
-			// runner would otherwise match nothing at all.
-			if (!set.matches(entry.replaceAll("\\", "/"))) {
+		// The walk is `@effected/walker`'s: each include is expanded from its own
+		// literal prefix (a literal include is one stat, never a walk), files
+		// only, `cwd`-relative posix paths — so a Windows runner matches too.
+		// Nothing is pruned implicitly, matching the runner's own `hashFiles()`;
+		// an exclusion is the caller's `!pattern`, re-applied over the union
+		// below because each include is expanded alone. Under `followSymlinks`
+		// the walk follows symlinked directories with `@actions/glob`'s
+		// traversal-chain cycle guard, so files reachable only through a
+		// symlinked directory contribute to the key — matching the runner's
+		// `hashFiles()` default of `followSymbolicLinks: true`.
+		const candidates = new Set<string>();
+		for (const literal of set.literals) {
+			const target = path.join(workspace, literal);
+			// A literal that climbs above the workspace is not this workspace's
+			// file, whatever is there. (The walk below is not so bounded: a
+			// symlinked directory targeting outside the workspace is descended,
+			// matching `@actions/glob`'s out-of-tree link following.)
+			const relative = path.relative(workspace, target);
+			if (relative === "" || relative.startsWith("..") || path.isAbsolute(relative)) {
 				continue;
 			}
-			const absolute = path.join(options.workspace, entry);
-			const info = yield* fs
-				.stat(absolute)
-				.pipe(Effect.mapError((cause) => new CacheKeyReadError({ path: absolute, cause })));
-			if (info.type === "File") {
-				matched.push(absolute);
+			// Absent is a miss; unreadable is not, because a key computed without a file the caller asked for
+			// silently restores the wrong cache.
+			const info = yield* fs.stat(target).pipe(
+				Effect.map(Option.some),
+				Effect.catchIf(
+					(error) => error.reason._tag === "NotFound",
+					() => Effect.succeedNone,
+				),
+				Effect.mapError((cause) => new CacheKeyReadError({ path: target, cause })),
+			);
+			if (Option.isSome(info) && info.value.type === "File") {
+				candidates.add(literal);
 			}
 		}
-		return matched.sort() as ReadonlyArray<string>;
+		for (const wildcard of set.wildcards) {
+			// A whole-pattern negation only filters; it expands nothing.
+			if (wildcard.negated) {
+				continue;
+			}
+			const found = yield* descend(wildcard, { cwd: workspace, prune: [], followSymlinks: true }).pipe(
+				Effect.mapError((cause) => new CacheKeyReadError({ path: path.join(workspace, cause.path), cause })),
+			);
+			for (const match of found) {
+				candidates.add(match);
+			}
+		}
+		return [...candidates]
+			.filter((candidate) => set.matches(candidate))
+			.sort()
+			.map((candidate) => path.join(workspace, candidate)) as ReadonlyArray<string>;
 	});
 
 	/**

@@ -1,5 +1,5 @@
 import { Schema } from "effect";
-import type { CatalogUrls, SchemaVersion } from "./SchemaVersioning.js";
+import type { CatalogUrls, SchemaLayout, SchemaVersion } from "./SchemaVersioning.js";
 import { SchemaVersioning } from "./SchemaVersioning.js";
 
 /**
@@ -43,6 +43,22 @@ const GENERIC_BASENAMES = new Set(["conf", "config", "configuration", "options",
 // (expand into multiple simple patterns instead), extglob groups, character
 // classes and negation.
 const COMPLEX_GLOB = /[{}[\]]|[?*+@!]\(|^!/;
+
+// Two labels one version apart in spelling only (`1.2`, `1.2.0`) would mint
+// two `versions` keys and two URLs for one document; `defineConfig` already
+// refuses them, and the library entry point must too.
+const assertDistinctVersions = (name: string, versions: ReadonlyArray<SchemaVersion>): void => {
+	const seen: Array<SchemaVersion> = [];
+	for (const version of versions) {
+		const duplicate = seen.find((v) => SchemaVersioning.Order(v, version) === 0);
+		if (duplicate !== undefined) {
+			throw new Error(
+				`CatalogEntry.assemble: "${name}" declares the same version twice, as "${duplicate}" and "${version}"`,
+			);
+		}
+		seen.push(version);
+	}
+};
 
 const lintPattern = (pattern: string): ReadonlyArray<CatalogLintFinding> => {
 	const findings: Array<CatalogLintFinding> = [];
@@ -107,7 +123,13 @@ export class CatalogEntry extends Schema.Class<CatalogEntry>("CatalogEntry")({
 	 * Assembles an entry from a catalog identity plus
 	 * {@link SchemaVersioning.catalogUrls}' inputs: pass `versions` for the
 	 * versioned mode (the `versions` map and latest-pointing `url` are
-	 * derived), omit it for the unversioned mode.
+	 * derived), omit it for the unversioned mode. `layout` (default
+	 * `"flat"`), `appendVersion` (default `true`) and `current` (default: the
+	 * newest label) are forwarded to {@link SchemaVersioning.catalogUrls}
+	 * verbatim. Throws an `Error` naming
+	 * both spellings when two labels compare equal under
+	 * {@link SchemaVersioning.Order} (`1.2` and `1.2.0`): each would be its
+	 * own key and URL for one document.
 	 */
 	static assemble(options: {
 		readonly name: string;
@@ -116,11 +138,20 @@ export class CatalogEntry extends Schema.Class<CatalogEntry>("CatalogEntry")({
 		readonly baseUrl: string;
 		readonly fileBaseName?: string;
 		readonly versions?: ReadonlyArray<SchemaVersion>;
+		readonly layout?: SchemaLayout;
+		readonly appendVersion?: boolean;
+		readonly current?: SchemaVersion;
 	}): CatalogEntry {
+		if (options.versions !== undefined) {
+			assertDistinctVersions(options.name, options.versions);
+		}
 		const urls: CatalogUrls = SchemaVersioning.catalogUrls({
 			baseUrl: options.baseUrl,
 			name: options.fileBaseName ?? options.name,
 			...(options.versions !== undefined ? { versions: options.versions } : {}),
+			...(options.layout !== undefined ? { layout: options.layout } : {}),
+			...(options.appendVersion !== undefined ? { appendVersion: options.appendVersion } : {}),
+			...(options.current !== undefined ? { current: options.current } : {}),
 		});
 		return CatalogEntry.make({
 			name: options.name,
@@ -141,7 +172,7 @@ export class CatalogEntry extends Schema.Class<CatalogEntry>("CatalogEntry")({
 	}
 
 	/**
-	 * {@link CatalogEntry.lint} over a bare pattern list, for callers
+	 * {@link CatalogEntry.lintFileMatch} over a bare pattern list, for callers
 	 * checking patterns before an entry exists.
 	 */
 	static lintFileMatch(patterns: ReadonlyArray<string>): ReadonlyArray<CatalogLintFinding> {

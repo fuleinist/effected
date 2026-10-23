@@ -21,9 +21,16 @@
 // meets at the registry boundary: `CorepackIntegrityHash.FromSri` decodes
 // npm's SRI `sha512-<base64>` (the shape `NpmRegistry.version()` returns)
 // into the corepack `sha512.<hex>` form a `packageManager` pin carries.
+//
+// `SriIntegrityHash` is the sibling narrowing for the SRI form, for fields that
+// only ever carry `<algo>-<base64>` — `@effected/workspaces`'
+// `ConfigDependencySpec.integrity` (the legacy inline `configDependencies`
+// integrity) is its first consumer.
 
 import type { Brand } from "effect";
-import { Effect, Option, Schema, SchemaIssue, SchemaTransformation } from "effect";
+import { Effect, Option, Result, Schema, SchemaIssue, SchemaTransformation } from "effect";
+import * as Base64 from "effect/encoding/Base64";
+import * as Hex from "effect/encoding/Hex";
 
 /**
  * A supported integrity hash algorithm.
@@ -153,6 +160,50 @@ const corepackRestricted = brandedIntegrity.pipe(
 	),
 );
 
+const sriRestricted = brandedIntegrity.pipe(
+	Schema.check(
+		Schema.makeFilter((value) => (isSri(value) ? undefined : "Expected an SRI (<algo>-<base64>) integrity hash")),
+	),
+);
+
+/**
+ * A subresource-integrity hash in the SRI `<algo>-<base64>` form only —
+ * `sha512-<base64>` as pnpm and npm lockfiles record it, and as pnpm's inline
+ * `configDependencies` integrity carries it. A corepack (`sha512.<hex>`) or yarn
+ * (`10c0/<hex>`) hash, both valid {@link (IntegrityHash:variable)} values, fails
+ * this schema.
+ *
+ * @remarks
+ * The SRI counterpart of {@link (CorepackIntegrityHash:variable)}, with the same
+ * posture: it decodes to the same {@link IntegrityHashBrand} as the
+ * unrestricted schema (no second brand), so a value it accepts assigns anywhere
+ * an `IntegrityHash` is expected.
+ *
+ * It validates SRI shape only: the digest is not base64-decoded or
+ * length-checked. A value this schema accepts, such as `sha512-oldHash==`, can
+ * therefore still fail `CorepackIntegrityHash.fromSri`, which decodes the
+ * digest to hex.
+ *
+ * Reach for `IntegrityHash.isSri(value)` to ask the same question about a raw
+ * string without decoding. Not to be confused with
+ * {@link InvalidSriIntegrityHashError}, which reports a failed SRI → corepack
+ * conversion, not a failed decode through this schema.
+ *
+ * @example
+ * ```ts
+ * import { SriIntegrityHash } from "@effected/npm";
+ * import { Schema } from "effect";
+ *
+ * const decode = Schema.decodeUnknownExit(SriIntegrityHash);
+ *
+ * decode("sha512-3q2+7w=="); // success
+ * decode("sha512.deadbeef"); // failure — corepack form
+ * ```
+ *
+ * @public
+ */
+export const SriIntegrityHash: Schema.brand<Schema.String, "IntegrityHash"> = sriRestricted;
+
 // --- The SRI → corepack bridge ---------------------------------------------
 //
 // npm's registry (and every lockfile) speaks the SRI form `sha512-<base64>`;
@@ -161,22 +212,24 @@ const corepackRestricted = brandedIntegrity.pipe(
 // hand-rolls it re-decides the same edge cases (quoted JSON tokens, non-sha512
 // algorithms, sloppy base64), so the bridge lives here, once, as a codec.
 
-// Why this is hand-rolled rather than core's `Encoding`, which this package
+// Why the decoder is hand-rolled rather than core's `effect/encoding/Base64`, which this package
 // already uses elsewhere (`PackageTarball`, `RegistryCredential`): the two
 // disagree in both directions, and for an integrity value the disagreement is
-// load-bearing. Probed against effect@4.0.0-rc.109:
+// load-bearing:
 //
-//   Encoding.decodeBase64("QQ==")     -> [65]
-//   Encoding.decodeBase64("QR==")     -> [65]   non-zero trailing bits
-//   Encoding.decodeBase64("QV==")     -> [65]   ditto
-//   Encoding.decodeBase64("QQ=\r\n=") -> [65]   CRLF stripped silently
-//   Encoding.decodeBase64("QQ")       -> fail  "Length must be a multiple of 4"
+//   Base64.decode("QQ==")     -> [65]
+//   Base64.decode("QR==")     -> [65]   non-zero trailing bits
+//   Base64.decode("QV==")     -> [65]   ditto
+//   Base64.decode("QQ=\r\n=") -> [65]   CRLF stripped silently
+//   Base64.decode("QQ")       -> fail  "Length must be a multiple of 4"
 //
 // Core accepts three spellings of one digest and tolerates embedded CRLF, so
 // two `integrity` strings that differ as text can decode to identical bytes —
 // precisely the ambiguity an integrity check exists to deny. Core is also
 // *stricter* where this codec is deliberately lenient: it rejects the unpadded
-// form. Neither direction is a drop-in. Do not "fix" this to `Encoding`.
+// form. Neither direction is a drop-in. Do not "fix" this to `Base64.decode`.
+// Only the DECODER is hand-rolled: encoding goes through core's `Base64.encode`
+// and `Hex`, which write the canonical form this decoder accepts.
 //
 // Canonical base64 alphabet; index = 6-bit value.
 const BASE64_ALPHABET = "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/";
@@ -224,34 +277,6 @@ const decodeBase64 = (value: string): ReadonlyArray<number> | undefined => {
 	return bytes;
 };
 
-// Canonical (padded) base64 of a byte sequence — the exact inverse of
-// `decodeBase64`, used by the codec's encode direction.
-const encodeBase64 = (bytes: ReadonlyArray<number>): string => {
-	let out = "";
-	for (let index = 0; index < bytes.length; index += 3) {
-		const b0 = bytes[index] ?? 0;
-		const b1 = bytes[index + 1];
-		const b2 = bytes[index + 2];
-		const buffer = (b0 << 16) | ((b1 ?? 0) << 8) | (b2 ?? 0);
-		out += BASE64_ALPHABET.charAt((buffer >>> 18) & 0x3f);
-		out += BASE64_ALPHABET.charAt((buffer >>> 12) & 0x3f);
-		out += b1 === undefined ? "=" : BASE64_ALPHABET.charAt((buffer >>> 6) & 0x3f);
-		out += b2 === undefined ? "=" : BASE64_ALPHABET.charAt(buffer & 0x3f);
-	}
-	return out;
-};
-
-const hexOfBytes = (bytes: ReadonlyArray<number>): string =>
-	bytes.map((byte) => byte.toString(16).padStart(2, "0")).join("");
-
-const bytesOfHex = (hex: string): ReadonlyArray<number> => {
-	const bytes: Array<number> = [];
-	for (let index = 0; index < hex.length; index += 2) {
-		bytes.push(Number.parseInt(hex.slice(index, index + 2), 16));
-	}
-	return bytes;
-};
-
 const SHA512_SRI_PREFIX = "sha512-";
 const SHA512_COREPACK_PREFIX = "sha512.";
 // A sha512 digest is always 64 bytes. An SRI value with any other payload
@@ -275,15 +300,18 @@ const corepackOfSri = (input: string): string | undefined => {
 	if (!value.startsWith(SHA512_SRI_PREFIX)) return undefined;
 	const bytes = decodeBase64(value.slice(SHA512_SRI_PREFIX.length));
 	if (bytes === undefined || bytes.length !== SHA512_DIGEST_BYTES) return undefined;
-	return `${SHA512_COREPACK_PREFIX}${hexOfBytes(bytes)}`;
+	return `${SHA512_COREPACK_PREFIX}${Hex.encode(Uint8Array.from(bytes))}`;
 };
 
 // corepack `sha512.<128-hex>` → canonical SRI `sha512-<base64>`. `undefined`
-// for the corepack forms SRI cannot carry (sha224, a truncated digest).
-const sriOfCorepack = (value: string): string | undefined =>
-	COREPACK_SHA512_RE.test(value)
-		? `${SHA512_SRI_PREFIX}${encodeBase64(bytesOfHex(value.slice(SHA512_COREPACK_PREFIX.length)))}`
-		: undefined;
+// for the corepack forms SRI cannot carry (sha224, a truncated digest). Core's
+// encoder writes canonical padded base64, the exact inverse of `decodeBase64`;
+// only the DECODE side is hand-rolled, for the strictness core's lacks.
+const sriOfCorepack = (value: string): string | undefined => {
+	if (!COREPACK_SHA512_RE.test(value)) return undefined;
+	const bytes = Hex.decode(value.slice(SHA512_COREPACK_PREFIX.length));
+	return Result.isSuccess(bytes) ? `${SHA512_SRI_PREFIX}${Base64.encode(bytes.success)}` : undefined;
+};
 
 // The codec: decode converts and then validates through the corepack-restricted
 // schema, so the result carries the same brand every other integrity field
@@ -291,7 +319,7 @@ const sriOfCorepack = (value: string): string | undefined =>
 const corepackFromSri: Schema.Codec<IntegrityHashBrand, string> = Schema.String.pipe(
 	Schema.decodeTo(
 		corepackRestricted,
-		SchemaTransformation.transformOrFail<string, string>({
+		SchemaTransformation.transformEffect<string, string>({
 			decode: (input) => {
 				const corepack = corepackOfSri(input);
 				return corepack === undefined
@@ -367,10 +395,10 @@ interface CorepackIntegrityHashStatics {
 }
 
 /**
- * {@link (IntegrityHash:variable)} narrowed to the corepack `<algo>.<hex>` form
- * — `sha512.deadbeef`, and corepack's own sha224 default pins
- * (`sha224.877304e3…`). An SRI (`sha512-<base64>`) or yarn (`10c0/<hex>`)
- * hash, both valid `IntegrityHash` values, fails this schema.
+ * A subresource-integrity hash in the corepack `<algo>.<hex>` form only —
+ * `sha512.deadbeef`, and corepack's own sha224 default pins
+ * (`sha224.877304e3…`). An SRI (`sha512-<base64>`) or yarn (`10c0/<hex>`) hash,
+ * both valid {@link (IntegrityHash:variable)} values, fails this schema.
  *
  * The schema value also carries the SRI bridge: the `FromSri` codec decodes
  * npm's `sha512-<base64>` form (what `NpmRegistry.version()` returns, with one
@@ -384,33 +412,24 @@ interface CorepackIntegrityHashStatics {
  * The corepack pin tail (`<name>@<version>+<integrity>`) is the one place the
  * kit meets this form, and two schemas name it: `PackageManagerPin.integrity`
  * here and `@effected/package-json`'s `PackageManager.integrity`. Both consume
- * **this** schema — the restriction existed privately in each module until they
- * were consolidated, and a private copy is exactly how the two drift (the
- * widening that admitted sha224 had to be made twice).
+ * **this** schema, so a value validated by one is accepted by the other.
  *
  * It decodes to the same {@link IntegrityHashBrand} the unrestricted schema
  * does, so a corepack-validated value assigns anywhere an `IntegrityHash` is
- * expected; there is no second brand. Reach for
- * `IntegrityHash.isCorepack(value)` to ask the same question about a raw
- * string without decoding.
+ * expected; there is no second brand. A `Schema.check` is erased from the built
+ * type, so this schema and the unrestricted one are the same declared type.
+ * Reach for `IntegrityHash.isCorepack(value)` to ask the same question about a
+ * raw string without decoding.
  *
- * That single brand is also why sharing this schema is not type-enforced, and
- * the consequence is sharper than it looks: a `Schema.check` is **erased from
- * the built type**, so this schema and the unrestricted one are the same
- * declared type. A consumer that quietly reverts to a private copy compiles
- * clean, and — if the copy is faithful — passes every rejection test too.
- * Neither `tsc` nor behaviour can see the re-fork.
- *
- * What does see it is **object identity**, so each consumer's suite asserts
- * that its field schema IS this export:
- * `PackageManagerPin.fields.integrity.schema === CorepackIntegrityHash` (an
- * `optionalKey` field keeps the inner schema on `.schema`), and
+ * @privateRemarks
+ * Sharing is not type-enforced: a consumer that quietly reverts to a private
+ * copy of the restriction compiles clean and, if the copy is faithful, passes
+ * every rejection test. What sees a re-fork is **object identity**, so each
+ * consumer's suite asserts its field schema IS this export
+ * (`PackageManagerPin.fields.integrity.schema === CorepackIntegrityHash`, and
  * `PackageManager.fields.integrity.value === CorepackIntegrityHash` on the
- * `@effected/package-json` side (a `Schema.Option` keeps it on `.value`). Both
- * assertions carry a control against the unrestricted brand, so they discriminate
- * rather than passing on any schema at all. That identity assertion is the only
- * thing standing between the two surfaces and a silent re-fork; do not replace
- * it with a behavioural test, which cannot fail.
+ * `@effected/package-json` side), each with a control against the unrestricted
+ * brand. Do not replace those with a behavioural test, which cannot fail.
  *
  * @example
  * ```ts

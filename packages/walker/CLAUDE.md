@@ -1,11 +1,11 @@
 # @effected/walker
 
-Path traversal: upward (`Walker.ascend` / `firstMatch` / `findUpward` /
-`findRoot`) and downward (`descend`, the public glob-file walker). Sixth
+Path traversal: upward (`Walker.ascend` / `ascendWithin` / `firstMatch` /
+`findUpward` / `findRoot`) and downward (`descend`, the public glob-file walker). Sixth
 migration; the first package extracted from an already-merged sibling rather
 than ported from a `*-effect` repo.
 
-**Design doc:** `@../../.claude/design/effected/packages/walker.md`
+**Design doc:** `@./okf/modules/walker.md`
 
 ## Tier: boundary
 
@@ -19,7 +19,7 @@ import is `compileAndExpand` (in `Expand.ts`), which calls
 `GlobPattern.compileResult` and references `GlobPatternError`; the peer was
 already declared, so the dependency graph is unchanged.
 
-Walker needs **no platform package, even in tests** — core's `Path.layer` plus a real in-memory volume from `@effected/memfs` (a devDependency). Do not add `@effect/platform-node`, and do not hand-roll a `FileSystem.layerNoop` tree: `__test__/fixtures.ts` seeds files and symlinks into the volume, and injects the unreadable and vanished directories as `readDirectory` faults that decline for every other path. The volume owns the parent-directory arithmetic and the symlink semantics `descend` reads, so neither is re-derived in the fixture.
+Walker needs **no platform package, even in tests** — core's `Path.layer` plus a real in-memory volume from `@effected/memfs` (a devDependency). Do not add `@effect/platform-node`, and do not hand-roll a `FileSystem.layerNoop` tree: `__test__/fixtures.ts` seeds files and symlinks into the volume, and injects the unreadable and vanished directories as `readDirectory` faults — and an unresolvable link as a `realPath` fault — that decline for every other path. The volume owns the parent-directory arithmetic and the symlink semantics `descend` reads, so neither is re-derived in the fixture. The upward suites in `Walker.test.ts` do the same: `findUpward`'s fixtures seed a volume via `MemoryFileSystem.layerWith`, and the denied probe is an `exists` fault on a candidate that is genuinely present — so disarming the fault moves the answer.
 
 `Walker` is a static class with a private constructor, not an `as const`
 namespace object — an `as const` object's member types are inferred in the
@@ -66,15 +66,34 @@ hands in — never re-derived here.
   pattern's prefix); a missing base directory is an **empty result**, not an
   error. A pattern that lexically climbs above `cwd` via `..` segments is
   zero matches, refused before any filesystem access — the walk never reads
-  outside its documented root.
+  outside its documented root lexically, and physically only while
+  `followSymlinks` is off (under it a link targeting outside `cwd` IS
+  descended, as `@actions/glob` follows links out of the tree).
 - Only files match. A symlink counts when it stat-resolves to a file (`stat`
   follows links, as node's does); a symlinked **directory is never descended**
-  (cycle safety, detected by a `readLink` success-probe); dangling = no match.
+  by default (cycle safety, detected by a `readLink` success-probe), unless
+  `followSymlinks: true` opts in — then links are entered under
+  `@actions/glob`'s per-branch `traversalChain` guard: each `DescendFrame`
+  carries its branch's ancestor real paths, and a directory is a cycle only
+  when its real path is already an ancestor of the branch it sits on. The
+  guard is per-branch, never walk-global — two sibling links to one target
+  BOTH enumerate (a global visited set silently dropped the second, and a
+  test pins that it does not). Only the base and each link pay a
+  `FileSystem.realPath`; a plain directory's real path is its parent's plus
+  its name. A link whose `realPath` fails is never entered, and the failure
+  goes through `onUnreadable` like a failed `readDirectory` (NotFound stays
+  the silent benign race). Dangling = no match either way.
 - Unreadable directory mid-walk: `onUnreadable: "fail"` (default) fails typed
   as `DescendError` — the OPPOSITE of the upward per-probe absorption, because
   a swallowed subtree in a downward enumeration is silently missing
-  membership. `"skip"` absorbs and continues. A NotFound mid-walk is a benign
-  vanished-directory race and reads as empty in both modes.
+  membership. `"skip"` absorbs and continues. `"record"` absorbs and resolves
+  to a `DescendResult { matches, unreadable }` instead of a bare array, where
+  each `UnreadableDirectory` is `{ path, cause }` — the absorbed
+  `readDirectory` (or, for a link under `followSymlinks`, `realPath`)
+  `PlatformError` travels with the entry, so a caller that
+  must report WHY never re-reads the directory. The walk base records as
+  `path: ""`. A NotFound mid-walk is a benign vanished-directory race and
+  reads as empty in every mode — it is never recorded.
 - Depth past `maxDepth` (default 256) is a typed `depthExceeded` failure,
   never a truncation; an invalid `maxDepth` is a **defect**, exactly
   `ascend`'s guard.
@@ -88,7 +107,11 @@ hands in — never re-derived here.
 
 - `ascend` is **lexical, not physical**: `Path.dirname` does not resolve
   symlinks, so ascending out of a symlinked directory follows the given path.
-  Correct for config discovery.
+  Correct for config discovery. A **physical** ceiling (`Git.repoRoot`'s answer)
+  never matches `stopAt` from a symlinked start; that is `Walker.ascendWithin`,
+  a separate static so `ascend`'s `R` stays `Path` alone →
+  `okf/decisions/physical-ceiling-is-a-separate-static.md` — Load when:
+  touching `stopAt`, `ascendWithin`, or bounding a walk by a repository root.
 - `ascend` is a bounded `for` loop, not recursion. It terminates at `dirname`'s
   root fixpoint; `maxDepth` (default 256) guards a pathological `Path`.
 - `stopAt` must be **absolute** and is compared in **normalized** form

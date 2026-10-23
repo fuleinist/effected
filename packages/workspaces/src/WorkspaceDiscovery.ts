@@ -1,9 +1,8 @@
 // Workspace discovery: read the `packages:` patterns, enumerate them, decode a
 // WorkspacePackage per directory.
 //
-// This module also folds in v3's `PackageResolver` (file → owning package,
-// longest-prefix) — that service existed only so ChangeDetector could depend on
-// it, and it is a lookup over discovery output, not a concern of its own.
+// It also owns file → owning-package resolution (longest-prefix), which is a
+// lookup over discovery output rather than a concern of its own.
 //
 // It is also where `@effected/npm`'s `WorkspaceResolver` contract is
 // implemented: `versionOf` is a lookup over the discovered package list.
@@ -13,6 +12,7 @@ import { DependencyResolutionError, WorkspaceResolver } from "@effected/npm";
 import { Context, Duration, Effect, Exit, FileSystem, Layer, Option, Path, Schema } from "effect";
 import type { EnumerationFailureKind } from "./internal/enumerate.js";
 import { enumerate } from "./internal/enumerate.js";
+import { findLayerRoot } from "./internal/layerRoot.js";
 import { readPatterns } from "./internal/patterns.js";
 import { WorkspacePackage } from "./WorkspacePackage.js";
 import type { WorkspaceRootNotFoundError } from "./WorkspaceRoot.js";
@@ -29,7 +29,7 @@ import { WorkspaceRoot } from "./WorkspaceRoot.js";
  * A manifest with no `version` is NOT a failure: pnpm accepts a version-less
  * private package and a private monorepo root without one is the ordinary
  * shape, so the member is discovered with `WorkspacePackage.version` absent.
- * The former `missingVersion` kind is retired. Only ABSENCE is tolerated: a
+ * Only ABSENCE is tolerated: a
  * `version` that is present but not a string — or present and `""`, which pnpm
  * never wrote and which would resolve `workspace:^` to a bare `"^"` — is the
  * manifest's shape being wrong and reports `invalidShape`.
@@ -148,6 +148,32 @@ export interface WorkspaceDiscoveryOptions {
 	 *   honoured.
 	 */
 	readonly cwd?: string;
+	/**
+	 * A ceiling for the layer-bound root ascent from `cwd`, passed straight
+	 * through to the `stopAt` of {@link WorkspaceRoot}'s `find`.
+	 *
+	 * @remarks
+	 * Inclusive: the ceiling itself is probed, so a `cwd` that is its own
+	 * workspace root still resolves with `stopAt: cwd`. A relative ceiling is
+	 * resolved against the process working directory, exactly as `cwd` is. When
+	 * no root is found at or below the ceiling, the methods fail with
+	 * {@link WorkspaceRootNotFoundError} carrying the resolved `stopAt`, rather
+	 * than adopting an enclosing directory's workspace — pass `stopAt: cwd` for
+	 * a checkout nested inside someone else's monorepo.
+	 *
+	 * Applies ONLY to the layer-bound methods (`info`, `listPackages`,
+	 * `importerMap`, `getPackage`, `resolveFile`, `resolveFiles`). The per-call
+	 * `infoIn`, `listPackagesIn` and `refreshIn` resolve from an arbitrary
+	 * directory the caller names, which a single layer-level ceiling cannot
+	 * sensibly bound, so they ascend unbounded.
+	 *
+	 * `LockfileReader`, `WorkspaceCatalogs` and `WorkspaceSnapshots` each
+	 * take the same option; give them the same value when wiring by hand, or let a `Workspaces.*` composite forward one
+	 * `stopAt` to all of them, so no service adopts a root another refused.
+	 *
+	 * @defaultValue no ceiling — the ascent runs to the filesystem root.
+	 */
+	readonly stopAt?: string | undefined;
 	/** Descent cap for segment-crossing patterns. Defaults to 32. */
 	readonly maxDepth?: number;
 }
@@ -244,11 +270,9 @@ export interface WorkspaceDiscoveryShape {
  * the lifetime of the layer. A Vitest reporter that builds the layer per call
  * site and never queries it pays nothing.
  *
- * The memo is **success-only**. `Effect.cached` memoizes the first `Exit`,
- * *including an interrupt* — an init interrupted by an unrelated timeout would
- * otherwise brick the layer permanently with a cause outside its declared error
- * channel. A failure or interrupt is therefore retried on the next call, which
- * is a deliberate behaviour change from the v3 library.
+ * The memo is **success-only**: a failure or interrupt is not cached, so an
+ * init interrupted by an unrelated timeout cannot brick the layer, and the next
+ * call retries.
  *
  * @example
  * ```ts
@@ -468,9 +492,9 @@ export class WorkspaceDiscovery extends Context.Service<WorkspaceDiscovery, Work
 				{ readonly info: WorkspaceInfo; readonly packages: ReadonlyArray<WorkspacePackage> },
 				WorkspaceDiscoveryFailure
 			> = Effect.gen(function* () {
-				// `Effect.suspend` so the ambient cwd is read at first use, not at
-				// layer construction.
-				const root = yield* Effect.suspend(() => roots.find(options?.cwd ?? process.cwd()));
+				// The ambient cwd is read at first use, not at layer construction
+				// (`findLayerRoot` suspends).
+				const root = yield* findLayerRoot(roots, options);
 				return yield* discoverAt(root);
 			});
 
@@ -650,12 +674,14 @@ export class WorkspaceDiscovery extends Context.Service<WorkspaceDiscovery, Work
 		});
 
 	/**
-	 * The live layer.
+	 * The live layer, discovering the workspace from `options.cwd`.
 	 *
 	 * @remarks
 	 * A parameterized layer factory mints a **fresh reference per call**, and
 	 * layers memoize by reference — bind the result to a `const` and reuse it
 	 * rather than calling `layer(...)` at each composition site.
+	 *
+	 * @param options - Root resolution and enumeration bounds.
 	 */
 	static readonly layer = (
 		options?: WorkspaceDiscoveryOptions,
@@ -861,10 +887,9 @@ export class WorkspaceDiscovery extends Context.Service<WorkspaceDiscovery, Work
 							const version = index.get(packageName);
 							return version === undefined
 								? Effect.fail(
-										new DependencyResolutionError({
-											specifier,
-											cause: new Error(`Workspace member "${packageName}" declares no version`),
-										}),
+										// A domain condition read from structured data, not a foreign
+										// failure: typed by `reason`, with nothing to carry as `cause`.
+										new DependencyResolutionError({ specifier, reason: "no-version", cause: undefined }),
 									)
 								: Effect.succeed(Option.some(version));
 						}),

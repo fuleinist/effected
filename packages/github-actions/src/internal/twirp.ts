@@ -1,20 +1,15 @@
-/**
- * The Twirp JSON client the Actions results backend speaks.
- *
- * @remarks
- * The cache, artifact and blob-store protocols are the same transport with a
- * different service segment, so the RPC, the conflict sentinel and the retry
- * policy live here once. Generic over nothing at all: each caller maps a
- * {@link TwirpFailure} into its own typed error, because the failure a caller
- * reports is about *its* operation, not about HTTP.
- *
- * @internal
- */
+// The Twirp JSON client the Actions results backend speaks.
+//
+// The cache, artifact and blob-store protocols are the same transport with a
+// different service segment, so the RPC, the conflict sentinel and the retry
+// policy live here once. Generic over nothing at all: each caller maps a
+// `TwirpFailure` into its own typed error, because the failure a caller
+// reports is about *its* operation, not about HTTP.
 
 import type { Redacted } from "effect";
 import { Effect, Schedule } from "effect";
-import type { HttpClient } from "effect/unstable/http";
-import { HttpClientRequest } from "effect/unstable/http";
+import type { HttpClient } from "effect/http";
+import { HttpClientRequest } from "effect/http";
 
 /**
  * Returned instead of a failure when the backend answers HTTP 409.
@@ -57,6 +52,31 @@ export interface TwirpFailure {
 }
 
 /**
+ * The error fields a {@link TwirpFailure} contributes to a caller's own error
+ * class — the cache, artifact and blob-store errors all carry `reason`,
+ * `status`, `detail` and `cause` under the same names, so each spreads this
+ * and adds its own identifier.
+ *
+ * @internal
+ */
+export const twirpFailureFields = (
+	failure: TwirpFailure,
+):
+	| { readonly reason: "refused"; readonly detail: string; readonly status?: number }
+	| { readonly reason: "unreachable"; readonly detail: string; readonly cause?: unknown } =>
+	failure.kind === "status"
+		? {
+				reason: "refused",
+				detail: failure.method,
+				...(failure.status === undefined ? {} : { status: failure.status }),
+			}
+		: {
+				reason: "unreachable",
+				detail: `${failure.method} did not answer with a Twirp body`,
+				...(failure.cause === undefined ? {} : { cause: failure.cause }),
+			};
+
+/**
  * Whether retrying could plausibly help.
  *
  * @remarks
@@ -90,14 +110,14 @@ const RETRIES = 4;
  *
  * @internal
  */
-export const twirpCall = <T>(options: {
+export const twirpCall = (options: {
 	readonly http: HttpClient.HttpClient;
 	readonly baseUrl: string;
 	readonly service: string;
 	readonly token: Redacted.Redacted<string>;
 	readonly method: string;
 	readonly body: Record<string, unknown>;
-}): Effect.Effect<TwirpResult<T>, TwirpFailure> => {
+}): Effect.Effect<TwirpResult<unknown>, TwirpFailure> => {
 	const { baseUrl, body, http, method, service, token } = options;
 	const attempt = Effect.gen(function* () {
 		const request = HttpClientRequest.post(`${baseUrl}twirp/${service}/${method}`).pipe(
@@ -115,9 +135,7 @@ export const twirpCall = <T>(options: {
 		if (response.status < 200 || response.status >= 300) {
 			return yield* Effect.fail<TwirpFailure>({ method, kind: "status", status: response.status });
 		}
-		return (yield* response.json.pipe(
-			Effect.mapError((cause): TwirpFailure => ({ method, kind: "malformed", cause })),
-		)) as T;
+		return yield* response.json.pipe(Effect.mapError((cause): TwirpFailure => ({ method, kind: "malformed", cause })));
 	});
 
 	return attempt.pipe(

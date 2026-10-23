@@ -8,6 +8,13 @@ import type { RawNodeRelease, RawSchedule } from "../types.js";
  * @internal
  */
 export const nodeDefaults: ReadonlyArray<RawNodeRelease> = [
+	{ version: "26.12.1", npm: "11.20.0", date: "2026-10-21" },
+	{ version: "26.12.0", npm: "11.20.0", date: "2026-10-14" },
+	{ version: "26.11.1", npm: "11.20.0", date: "2026-10-07" },
+	{ version: "26.11.0", npm: "11.20.0", date: "2026-10-07" },
+	{ version: "26.10.0", npm: "11.19.1", date: "2026-09-21" },
+	{ version: "26.9.0", npm: "11.19.1", date: "2026-09-16" },
+	{ version: "26.8.2", npm: "11.19.1", date: "2026-09-09" },
 	{ version: "26.8.1", npm: "11.19.0", date: "2026-08-26" },
 	{ version: "26.8.0", npm: "11.19.0", date: "2026-08-25" },
 	{ version: "26.7.0", npm: "11.19.0", date: "2026-08-05" },
@@ -34,6 +41,9 @@ export const nodeDefaults: ReadonlyArray<RawNodeRelease> = [
 	{ version: "25.2.0", npm: "11.6.2", date: "2025-11-11" },
 	{ version: "25.1.0", npm: "11.6.2", date: "2025-10-28" },
 	{ version: "25.0.0", npm: "11.6.2", date: "2025-10-15" },
+	{ version: "24.22.1", npm: "11.19.1", date: "2026-10-20" },
+	{ version: "24.22.0", npm: "11.19.1", date: "2026-10-14" },
+	{ version: "24.21.0", npm: "11.19.0", date: "2026-09-07" },
 	{ version: "24.20.0", npm: "11.19.0", date: "2026-08-26" },
 	{ version: "24.19.0", npm: "11.17.0", date: "2026-08-03" },
 	{ version: "24.18.1", npm: "11.16.0", date: "2026-07-28" },
@@ -76,6 +86,8 @@ export const nodeDefaults: ReadonlyArray<RawNodeRelease> = [
 	{ version: "23.2.0", npm: "10.9.0", date: "2024-11-11" },
 	{ version: "23.1.0", npm: "10.9.0", date: "2024-10-24" },
 	{ version: "23.0.0", npm: "10.9.0", date: "2024-10-16" },
+	{ version: "22.23.4", npm: "10.9.9", date: "2026-10-20" },
+	{ version: "22.23.3", npm: "10.9.9", date: "2026-09-23" },
 	{ version: "22.23.2", npm: "10.9.8", date: "2026-07-28" },
 	{ version: "22.23.1", npm: "10.9.8", date: "2026-06-22" },
 	{ version: "22.23.0", npm: "10.9.8", date: "2026-06-17" },
@@ -905,5 +917,5 @@ export const nodeScheduleDefaults: RawSchedule = {
 	v24: { start: "2025-05-06", lts: "2025-10-28", maintenance: "2026-10-20", end: "2028-04-30", codename: "Krypton" },
 	v25: { start: "2025-10-15", maintenance: "2026-04-01", end: "2026-06-01" },
 	v26: { start: "2026-05-05", lts: "2026-10-28", maintenance: "2027-10-20", end: "2029-04-30", codename: "" },
-	v27: { start: "2027-04-22", maintenance: "2027-10-20", end: "2030-04-30", codename: "" },
+	v27: { start: "2027-04-22", lts: "2027-10-20", end: "2030-04-30", codename: "" },
 };

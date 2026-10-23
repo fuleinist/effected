@@ -108,4 +108,16 @@ describe("Sbom.toJson", () => {
 		const dense = Sbom.toJson(Sbom.generate({ root, components: [] }), { space: 0 });
 		assert.isFalse(dense.includes("\n"));
 	});
+
+	it("accepts statically-undefined inputs under exactOptionalPropertyTypes", () => {
+		// The #664 widening, applied to this module's inputs: an explicit
+		// `undefined` metadata or indent behaves exactly like an omitted key.
+		const input: { metadata: SbomMetadata | undefined; space: number | undefined } = {
+			metadata: undefined,
+			space: undefined,
+		};
+		const json = Sbom.toJson(Sbom.generate({ root, components: [], metadata: input.metadata }), { space: input.space });
+		assert.isTrue(json.includes("\n"));
+		assert.strictEqual(json, Sbom.toJson(Sbom.generate({ root, components: [] })));
+	});
 });

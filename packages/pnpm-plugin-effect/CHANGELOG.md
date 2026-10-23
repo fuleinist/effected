@@ -1,5 +1,1579 @@
 # @effected/pnpm-plugin-effect
 
+## 0.18.2
+
+### Maintenance
+
+#### Updates 3 catalog:effected versions
+
+- `@effected/crypto` ^0.1.0 -> ^0.1.1 (peer ^0.1.0)
+- `@effected/oidc` ^0.1.0 -> ^0.1.1 (peer ^0.1.0)
+- `@effected/webhooks` ^0.1.0 -> ^0.1.1 (peer ^0.1.0)
+
+### Thanks
+
+Thanks to [@spencerbeggs](https://github.com/spencerbeggs) for their contributions!
+
+## 0.18.1
+
+### Maintenance
+
+#### Updates 7 catalog:effected versions
+
+- `@effected/github` ^0.22.0 -> ^0.23.0 (peer ^0.23.0)
+- `@effected/github-actions` ^0.24.0 -> ^0.25.0 (peer ^0.25.0)
+- `@effected/lockfiles` ^0.19.0 -> ^0.19.1 (peer ^0.19.0)
+- `@effected/npm` ^0.24.0 -> ^0.25.0 (peer ^0.25.0)
+- `@effected/package-json` ^0.24.0 -> ^0.24.1 (peer ^0.24.0)
+- `@effected/sbom` ^0.14.0 -> ^0.15.0 (peer ^0.15.0)
+- `@effected/workspaces` ^0.36.0 -> ^0.36.1 (peer ^0.36.0) [#1051][#1051]
+
+### Thanks
+
+Thanks to [@spencerbeggs](https://github.com/spencerbeggs) for their contributions!
+
+[#1051]: https://github.com/spencerbeggs/effected/pull/1051
+
+## 0.18.0
+
+### Maintenance
+
+- Upgrades core Effect library dependencies to v4.0.6 [#1039][#1039]
+
+#### Updates 38 catalog:effected versions
+
+- `@effected/app` ^0.24.0 -> ^0.25.0 (peer ^0.25.0)
+- `@effected/cli` ^0.19.0 -> ^0.20.0 (peer ^0.20.0)
+- `@effected/commands` ^0.14.0 -> ^0.15.0 (peer ^0.15.0)
+- `@effected/config-file` ^0.17.0 -> ^0.18.0 (peer ^0.18.0)
+- `@effected/engine` ^0.7.0 -> ^0.8.0 (peer ^0.8.0)
+- `@effected/env` ^0.4.0 -> ^0.5.0 (peer ^0.5.0)
+- `@effected/git` ^0.23.0 -> ^0.24.0 (peer ^0.24.0)
+- `@effected/github` ^0.21.0 -> ^0.22.0 (peer ^0.22.0)
+- `@effected/github-actions` ^0.23.1 -> ^0.24.0 (peer ^0.24.0)
+- `@effected/github-commands` ^0.5.0 -> ^0.6.0 (peer ^0.6.0)
+- `@effected/github-references` ^0.10.0 -> ^0.11.0 (peer ^0.11.0)
+- `@effected/glob` ^0.13.0 -> ^0.14.0 (peer ^0.14.0)
+- `@effected/images` ^0.4.0 -> ^0.5.0 (peer ^0.5.0)
+- `@effected/jsonc` ^0.18.0 -> ^0.19.0 (peer ^0.19.0)
+- `@effected/jsonl` ^0.14.0 -> ^0.15.0 (peer ^0.15.0)
+- `@effected/jwt` ^0.4.0 -> ^0.5.0 (peer ^0.5.0)
+- `@effected/lockfiles` ^0.18.0 -> ^0.19.0 (peer ^0.19.0)
+- `@effected/lsp` ^0.4.0 -> ^0.5.0 (peer ^0.5.0)
+- `@effected/markdown` ^0.19.0 -> ^0.20.0 (peer ^0.20.0)
+- `@effected/mcp` ^0.8.0 -> ^0.9.0 (peer ^0.9.0)
+- `@effected/memfs` ^0.17.0 -> ^0.18.0 (peer ^0.18.0)
+- `@effected/npm` ^0.23.0 -> ^0.24.0 (peer ^0.24.0)
+- `@effected/package-json` ^0.23.0 -> ^0.24.0 (peer ^0.24.0)
+- `@effected/runtimes` ^0.13.1 -> ^0.14.0 (peer ^0.14.0)
+- `@effected/sbom` ^0.13.0 -> ^0.14.0 (peer ^0.14.0)
+- `@effected/schema-org` ^0.10.0 -> ^0.11.0 (peer ^0.11.0)
+- `@effected/schemastore` ^0.24.0 -> ^0.25.0 (peer ^0.25.0)
+- `@effected/schemastore-cli` ^0.24.0 -> ^0.25.0 (peer ^0.25.0)
+- `@effected/semver` ^0.14.0 -> ^0.15.0 (peer ^0.15.0)
+- `@effected/spdx` ^0.15.0 -> ^0.16.0 (peer ^0.16.0)
+- `@effected/store` ^0.16.0 -> ^0.17.0 (peer ^0.17.0)
+- `@effected/templates` ^0.13.0 -> ^0.14.0 (peer ^0.14.0)
+- `@effected/toml` ^0.14.0 -> ^0.15.0 (peer ^0.15.0)
+- `@effected/tsconfig-json` ^0.16.0 -> ^0.17.0 (peer ^0.17.0)
+- `@effected/walker` ^0.18.0 -> ^0.19.0 (peer ^0.19.0)
+- `@effected/workspaces` ^0.35.0 -> ^0.36.0 (peer ^0.36.0)
+- `@effected/xdg` ^0.12.0 -> ^0.13.0 (peer ^0.13.0)
+- `@effected/yaml` ^0.22.0 -> ^0.23.0 (peer ^0.23.0) [#1039][#1039]
+
+### Thanks
+
+Thanks to [@spencerbeggs](https://github.com/spencerbeggs) for their contributions!
+
+[#1039]: https://github.com/spencerbeggs/effected/pull/1039
+
+## 0.17.2
+
+### Maintenance
+
+#### Updates 2 catalog:effected versions
+
+- `@effected/github-actions` ^0.23.0 -> ^0.23.1 (peer ^0.23.0)
+- `@effected/markdown` ^0.18.0 -> ^0.19.0 (peer ^0.19.0)
+
+### Thanks
+
+Thanks to [@spencerbeggs\[bot\]](<[@spencerbeggs[bot]](https://github.com/spencerbeggs%5Bbot%5D)>) for their contributions!
+
+## 0.17.1
+
+### Maintenance
+
+#### Updates 1 catalog:effected version
+
+- `@effected/runtimes` ^0.13.0 -> ^0.13.1 (peer ^0.13.0)
+
+### Thanks
+
+Thanks to [@spencerbeggs\[bot\]](<[@spencerbeggs[bot]](https://github.com/spencerbeggs%5Bbot%5D)>) for their contributions!
+
+## 0.17.0
+
+### Maintenance
+
+- Upgrades core Effect library dependencies to v4.0.5 [#1019][#1019]
+
+#### Updates 38 catalog:effected versions
+
+- `@effected/app` ^0.23.0 -> ^0.24.0 (peer ^0.24.0)
+- `@effected/cli` ^0.18.0 -> ^0.19.0 (peer ^0.19.0)
+- `@effected/commands` ^0.13.0 -> ^0.14.0 (peer ^0.14.0)
+- `@effected/config-file` ^0.16.0 -> ^0.17.0 (peer ^0.17.0)
+- `@effected/engine` ^0.6.0 -> ^0.7.0 (peer ^0.7.0)
+- `@effected/env` ^0.3.0 -> ^0.4.0 (peer ^0.4.0)
+- `@effected/git` ^0.22.0 -> ^0.23.0 (peer ^0.23.0)
+- `@effected/github` ^0.20.0 -> ^0.21.0 (peer ^0.21.0)
+- `@effected/github-actions` ^0.22.0 -> ^0.23.0 (peer ^0.23.0)
+- `@effected/github-commands` ^0.4.0 -> ^0.5.0 (peer ^0.5.0)
+- `@effected/github-references` ^0.9.0 -> ^0.10.0 (peer ^0.10.0)
+- `@effected/glob` ^0.12.0 -> ^0.13.0 (peer ^0.13.0)
+- `@effected/images` ^0.3.0 -> ^0.4.0 (peer ^0.4.0)
+- `@effected/jsonc` ^0.17.0 -> ^0.18.0 (peer ^0.18.0)
+- `@effected/jsonl` ^0.13.0 -> ^0.14.0 (peer ^0.14.0)
+- `@effected/jwt` ^0.3.0 -> ^0.4.0 (peer ^0.4.0)
+- `@effected/lockfiles` ^0.17.0 -> ^0.18.0 (peer ^0.18.0)
+- `@effected/lsp` ^0.3.0 -> ^0.4.0 (peer ^0.4.0)
+- `@effected/markdown` ^0.17.0 -> ^0.18.0 (peer ^0.18.0)
+- `@effected/mcp` ^0.7.0 -> ^0.8.0 (peer ^0.8.0)
+- `@effected/memfs` ^0.16.0 -> ^0.17.0 (peer ^0.17.0)
+- `@effected/npm` ^0.22.0 -> ^0.23.0 (peer ^0.23.0)
+- `@effected/package-json` ^0.22.0 -> ^0.23.0 (peer ^0.23.0)
+- `@effected/runtimes` ^0.12.1 -> ^0.13.0 (peer ^0.13.0)
+- `@effected/sbom` ^0.12.0 -> ^0.13.0 (peer ^0.13.0)
+- `@effected/schema-org` ^0.9.0 -> ^0.10.0 (peer ^0.10.0)
+- `@effected/schemastore` ^0.23.0 -> ^0.24.0 (peer ^0.24.0)
+- `@effected/schemastore-cli` ^0.23.0 -> ^0.24.0 (peer ^0.24.0)
+- `@effected/semver` ^0.13.0 -> ^0.14.0 (peer ^0.14.0)
+- `@effected/spdx` ^0.14.0 -> ^0.15.0 (peer ^0.15.0)
+- `@effected/store` ^0.15.0 -> ^0.16.0 (peer ^0.16.0)
+- `@effected/templates` ^0.12.0 -> ^0.13.0 (peer ^0.13.0)
+- `@effected/toml` ^0.13.0 -> ^0.14.0 (peer ^0.14.0)
+- `@effected/tsconfig-json` ^0.15.0 -> ^0.16.0 (peer ^0.16.0)
+- `@effected/walker` ^0.17.0 -> ^0.18.0 (peer ^0.18.0)
+- `@effected/workspaces` ^0.34.1 -> ^0.35.0 (peer ^0.35.0)
+- `@effected/xdg` ^0.11.0 -> ^0.12.0 (peer ^0.12.0)
+- `@effected/yaml` ^0.21.0 -> ^0.22.0 (peer ^0.22.0) [#1019][#1019]
+
+### Thanks
+
+Thanks to [@spencerbeggs](https://github.com/spencerbeggs) for their contributions!
+
+[#1019]: https://github.com/spencerbeggs/effected/pull/1019
+
+## 0.16.1
+
+### Maintenance
+
+#### Updates 27 catalog:effect versions
+
+- `@effect/ai-anthropic` ^4.0.4 -> ^4.0.5 (peer ^4.0.0)
+- `@effect/ai-openai` ^4.0.4 -> ^4.0.5 (peer ^4.0.0)
+- `@effect/ai-openai-compat` ^4.0.4 -> ^4.0.5 (peer ^4.0.0)
+- `@effect/ai-openrouter` ^4.0.4 -> ^4.0.5 (peer ^4.0.0)
+- `@effect/atom-react` ^4.0.4 -> ^4.0.5 (peer ^4.0.0)
+- `@effect/atom-solid` ^4.0.4 -> ^4.0.5 (peer ^4.0.0)
+- `@effect/atom-vue` ^4.0.4 -> ^4.0.5 (peer ^4.0.0)
+- `@effect/openapi-generator` ^4.0.4 -> ^4.0.5 (peer ^4.0.0)
+- `@effect/opentelemetry` ^4.0.4 -> ^4.0.5 (peer ^4.0.0)
+- `@effect/platform-browser` ^4.0.4 -> ^4.0.5 (peer ^4.0.0)
+- `@effect/platform-bun` ^4.0.4 -> ^4.0.5 (peer ^4.0.0)
+- `@effect/platform-node` ^4.0.4 -> ^4.0.5 (peer ^4.0.0)
+- `@effect/platform-node-shared` ^4.0.4 -> ^4.0.5 (peer ^4.0.0)
+- `@effect/sql-clickhouse` ^4.0.4 -> ^4.0.5 (peer ^4.0.0)
+- `@effect/sql-d1` ^4.0.4 -> ^4.0.5 (peer ^4.0.0)
+- `@effect/sql-libsql` ^4.0.4 -> ^4.0.5 (peer ^4.0.0)
+- `@effect/sql-mssql` ^4.0.4 -> ^4.0.5 (peer ^4.0.0)
+- `@effect/sql-mysql2` ^4.0.4 -> ^4.0.5 (peer ^4.0.0)
+- `@effect/sql-pg` ^4.0.4 -> ^4.0.5 (peer ^4.0.0)
+- `@effect/sql-pglite` ^4.0.4 -> ^4.0.5 (peer ^4.0.0)
+- `@effect/sql-sqlite-bun` ^4.0.4 -> ^4.0.5 (peer ^4.0.0)
+- `@effect/sql-sqlite-do` ^4.0.4 -> ^4.0.5 (peer ^4.0.0)
+- `@effect/sql-sqlite-node` ^4.0.4 -> ^4.0.5 (peer ^4.0.0)
+- `@effect/sql-sqlite-react-native` ^4.0.4 -> ^4.0.5 (peer ^4.0.0)
+- `@effect/sql-sqlite-wasm` ^4.0.4 -> ^4.0.5 (peer ^4.0.0)
+- `@effect/vitest` ^4.0.4 -> ^4.0.5 (peer ^4.0.0)
+- `effect` ^4.0.4 -> ^4.0.5
+
+#### Updates 1 catalog:effected version
+
+- `@effected/runtimes` ^0.12.0 -> ^0.12.1 (peer ^0.12.0)
+
+### Thanks
+
+Thanks to [@spencerbeggs\[bot\]](<[@spencerbeggs[bot]](https://github.com/spencerbeggs%5Bbot%5D)>) for their contributions!
+
+## 0.16.0
+
+### Maintenance
+
+- Upgrades core Effect library dependencies to v4.0.4 [#1008][#1008]
+
+#### Updates 38 catalog:effected versions
+
+- `@effected/app` ^0.22.0 -> ^0.23.0 (peer ^0.23.0)
+- `@effected/cli` ^0.17.0 -> ^0.18.0 (peer ^0.18.0)
+- `@effected/commands` ^0.12.0 -> ^0.13.0 (peer ^0.13.0)
+- `@effected/config-file` ^0.15.0 -> ^0.16.0 (peer ^0.16.0)
+- `@effected/engine` ^0.5.0 -> ^0.6.0 (peer ^0.6.0)
+- `@effected/env` ^0.2.0 -> ^0.3.0 (peer ^0.3.0)
+- `@effected/git` ^0.21.0 -> ^0.22.0 (peer ^0.22.0)
+- `@effected/github` ^0.19.0 -> ^0.20.0 (peer ^0.20.0)
+- `@effected/github-actions` ^0.21.0 -> ^0.22.0 (peer ^0.22.0)
+- `@effected/github-commands` ^0.3.0 -> ^0.4.0 (peer ^0.4.0)
+- `@effected/github-references` ^0.8.0 -> ^0.9.0 (peer ^0.9.0)
+- `@effected/glob` ^0.11.0 -> ^0.12.0 (peer ^0.12.0)
+- `@effected/images` ^0.2.0 -> ^0.3.0 (peer ^0.3.0)
+- `@effected/jsonc` ^0.16.0 -> ^0.17.0 (peer ^0.17.0)
+- `@effected/jsonl` ^0.12.0 -> ^0.13.0 (peer ^0.13.0)
+- `@effected/jwt` ^0.2.0 -> ^0.3.0 (peer ^0.3.0)
+- `@effected/lockfiles` ^0.16.0 -> ^0.17.0 (peer ^0.17.0)
+- `@effected/lsp` ^0.2.0 -> ^0.3.0 (peer ^0.3.0)
+- `@effected/markdown` ^0.16.0 -> ^0.17.0 (peer ^0.17.0)
+- `@effected/mcp` ^0.6.0 -> ^0.7.0 (peer ^0.7.0)
+- `@effected/memfs` ^0.15.0 -> ^0.16.0 (peer ^0.16.0)
+- `@effected/npm` ^0.21.0 -> ^0.22.0 (peer ^0.22.0)
+- `@effected/package-json` ^0.21.0 -> ^0.22.0 (peer ^0.22.0)
+- `@effected/runtimes` ^0.11.0 -> ^0.12.0 (peer ^0.12.0)
+- `@effected/sbom` ^0.11.0 -> ^0.12.0 (peer ^0.12.0)
+- `@effected/schema-org` ^0.8.0 -> ^0.9.0 (peer ^0.9.0)
+- `@effected/schemastore` ^0.22.0 -> ^0.23.0 (peer ^0.23.0)
+- `@effected/schemastore-cli` ^0.22.0 -> ^0.23.0 (peer ^0.23.0)
+- `@effected/semver` ^0.12.0 -> ^0.13.0 (peer ^0.13.0)
+- `@effected/spdx` ^0.13.0 -> ^0.14.0 (peer ^0.14.0)
+- `@effected/store` ^0.14.0 -> ^0.15.0 (peer ^0.15.0)
+- `@effected/templates` ^0.11.0 -> ^0.12.0 (peer ^0.12.0)
+- `@effected/toml` ^0.12.0 -> ^0.13.0 (peer ^0.13.0)
+- `@effected/tsconfig-json` ^0.14.0 -> ^0.15.0 (peer ^0.15.0)
+- `@effected/walker` ^0.16.0 -> ^0.17.0 (peer ^0.17.0)
+- `@effected/workspaces` ^0.33.0 -> ^0.34.0 (peer ^0.34.0)
+- `@effected/xdg` ^0.10.0 -> ^0.11.0 (peer ^0.11.0)
+- `@effected/yaml` ^0.20.0 -> ^0.21.0 (peer ^0.21.0) [#1008][#1008]
+
+### Thanks
+
+Thanks to [@spencerbeggs](https://github.com/spencerbeggs) for their contributions!
+
+[#1008]: https://github.com/spencerbeggs/effected/pull/1008
+
+## 0.15.0
+
+### Features
+
+#### Catalog-derived Effect overrides
+
+- The hand-written 27-entry hold override block is replaced by `overridesFromCatalogs: { catalog: "effect" }`. At build time it derives one line-scoped `"<name>@^4.0.0": "<catalog version>"` override per family member, and `"@effect/tsgo@^0.51.0": "0.51.1"` for tsgo on its own 0.x line, so the pins move with the catalog. The whole 4.x graph, devDependencies and their closures included, resolves to the catalog's `effect`, and a missing core now fails the install loudly.
+
+- The `effect` catalog returns to carets under `lock-minor` (`@effect/tsgo` stays exact), now at `^4.0.3`. The two platform-node-shared bridge entries stay. [#1000][#1000]
+
+### Dependencies
+
+| Dependency | Type | Action | From | To |
+| --- | --- | --- | --- | --- |
+| rolldown-pnpm-config | devDependency | updated | ^2.0.3 | ^2.1.0 |
+
+### Maintenance
+
+#### Updates 38 catalog:effected versions
+
+- `@effected/app` ^0.21.3 -> ^0.22.0 (peer ^0.22.0)
+- `@effected/cli` ^0.16.2 -> ^0.17.0 (peer ^0.17.0)
+- `@effected/commands` ^0.11.1 -> ^0.12.0 (peer ^0.12.0)
+- `@effected/config-file` ^0.14.3 -> ^0.15.0 (peer ^0.15.0)
+- `@effected/engine` ^0.4.1 -> ^0.5.0 (peer ^0.5.0)
+- `@effected/env` ^0.1.2 -> ^0.2.0 (peer ^0.2.0)
+- `@effected/git` ^0.20.1 -> ^0.21.0 (peer ^0.21.0)
+- `@effected/github` ^0.18.0 -> ^0.19.0 (peer ^0.19.0)
+- `@effected/github-actions` ^0.20.4 -> ^0.21.0 (peer ^0.21.0)
+- `@effected/github-commands` ^0.2.2 -> ^0.3.0 (peer ^0.3.0)
+- `@effected/github-references` ^0.7.1 -> ^0.8.0 (peer ^0.8.0)
+- `@effected/glob` ^0.10.1 -> ^0.11.0 (peer ^0.11.0)
+- `@effected/images` ^0.1.2 -> ^0.2.0 (peer ^0.2.0)
+- `@effected/jsonc` ^0.15.2 -> ^0.16.0 (peer ^0.16.0)
+- `@effected/jsonl` ^0.11.1 -> ^0.12.0 (peer ^0.12.0)
+- `@effected/jwt` ^0.1.1 -> ^0.2.0 (peer ^0.2.0)
+- `@effected/lockfiles` ^0.15.1 -> ^0.16.0 (peer ^0.16.0)
+- `@effected/lsp` ^0.1.2 -> ^0.2.0 (peer ^0.2.0)
+- `@effected/markdown` ^0.15.2 -> ^0.16.0 (peer ^0.16.0)
+- `@effected/mcp` ^0.5.1 -> ^0.6.0 (peer ^0.6.0)
+- `@effected/memfs` ^0.14.1 -> ^0.15.0 (peer ^0.15.0)
+- `@effected/npm` ^0.20.1 -> ^0.21.0 (peer ^0.21.0)
+- `@effected/package-json` ^0.20.2 -> ^0.21.0 (peer ^0.21.0)
+- `@effected/runtimes` ^0.10.3 -> ^0.11.0 (peer ^0.11.0)
+- `@effected/sbom` ^0.10.2 -> ^0.11.0 (peer ^0.11.0)
+- `@effected/schema-org` ^0.7.1 -> ^0.8.0 (peer ^0.8.0)
+- `@effected/schemastore` ^0.21.5 -> ^0.22.0 (peer ^0.22.0)
+- `@effected/schemastore-cli` ^0.21.5 -> ^0.22.0 (peer ^0.22.0)
+- `@effected/semver` ^0.11.1 -> ^0.12.0 (peer ^0.12.0)
+- `@effected/spdx` ^0.12.1 -> ^0.13.0 (peer ^0.13.0)
+- `@effected/store` ^0.13.2 -> ^0.14.0 (peer ^0.14.0)
+- `@effected/templates` ^0.10.1 -> ^0.11.0 (peer ^0.11.0)
+- `@effected/toml` ^0.11.2 -> ^0.12.0 (peer ^0.12.0)
+- `@effected/tsconfig-json` ^0.13.1 -> ^0.14.0 (peer ^0.14.0)
+- `@effected/walker` ^0.15.1 -> ^0.16.0 (peer ^0.16.0)
+- `@effected/workspaces` ^0.32.1 -> ^0.33.0 (peer ^0.33.0)
+- `@effected/xdg` ^0.9.1 -> ^0.10.0 (peer ^0.10.0)
+- `@effected/yaml` ^0.19.2 -> ^0.20.0 (peer ^0.20.0) [#1000][#1000]
+
+### Thanks
+
+Thanks to [@spencerbeggs](https://github.com/spencerbeggs) for their contributions!
+
+[#1000]: https://github.com/spencerbeggs/effected/pull/1000
+
+## 0.14.0
+
+### Bug Fixes
+
+#### Hold every Effect package at exactly 4.0.2
+
+- 0\.13.15 catalogued the `@effect/*` packages at `^4.0.3` while `effect` stayed at `^4.0.2`. `effect@4.0.3` never reached npm (Effect-TS/effect#8994), so a project that adopted 0.13.15 resolved 4.0.3 packages next to `effect@4.0.2`, and the program crashed when it imported them.
+
+- Every entry in the `effect` catalog is now an exact version (`4.0.2`, and `0.51.1` for `@effect/tsgo`) with `strategy: "lock"`, so `catalog:effect` and `catalog:effect:peers` both resolve exactly that version.
+
+- New `overrides` pin `effect` and all 26 `@effect/*` packages to `4.0.2` for any `^4.0.0` request anywhere in the dependency graph. They also cover packages pulled in by other packages, which a catalog cannot reach. They are scoped to the 4.x line, so a tool still built on an Effect release candidate keeps its own version.
+
+- The overrides will be removed once `effect@4.0.3` is on npm. [#997][#997]
+
+### Maintenance
+
+#### Updates 38 catalog:effected versions
+
+- `@effected/app` ^0.21.2 -> ^0.21.3 (peer ^0.21.0)
+- `@effected/cli` ^0.16.1 -> ^0.16.2 (peer ^0.16.0)
+- `@effected/commands` ^0.11.0 -> ^0.11.1 (peer ^0.11.0)
+- `@effected/config-file` ^0.14.2 -> ^0.14.3 (peer ^0.14.0)
+- `@effected/engine` ^0.4.0 -> ^0.4.1 (peer ^0.4.0)
+- `@effected/env` ^0.1.1 -> ^0.1.2 (peer ^0.1.0)
+- `@effected/git` ^0.20.0 -> ^0.20.1 (peer ^0.20.0)
+- `@effected/github` ^0.17.0 -> ^0.18.0 (peer ^0.18.0)
+- `@effected/github-actions` ^0.20.3 -> ^0.20.4 (peer ^0.20.0)
+- `@effected/github-commands` ^0.2.1 -> ^0.2.2 (peer ^0.2.0)
+- `@effected/github-references` ^0.7.0 -> ^0.7.1 (peer ^0.7.0)
+- `@effected/glob` ^0.10.0 -> ^0.10.1 (peer ^0.10.0)
+- `@effected/images` ^0.1.1 -> ^0.1.2 (peer ^0.1.0)
+- `@effected/jsonc` ^0.15.1 -> ^0.15.2 (peer ^0.15.0)
+- `@effected/jsonl` ^0.11.0 -> ^0.11.1 (peer ^0.11.0)
+- `@effected/jwt` ^0.1.0 -> ^0.1.1 (peer ^0.1.0)
+- `@effected/lockfiles` ^0.15.0 -> ^0.15.1 (peer ^0.15.0)
+- `@effected/lsp` ^0.1.1 -> ^0.1.2 (peer ^0.1.0)
+- `@effected/markdown` ^0.15.1 -> ^0.15.2 (peer ^0.15.0)
+- `@effected/mcp` ^0.5.0 -> ^0.5.1 (peer ^0.5.0)
+- `@effected/memfs` ^0.14.0 -> ^0.14.1 (peer ^0.14.0)
+- `@effected/npm` ^0.20.0 -> ^0.20.1 (peer ^0.20.0)
+- `@effected/package-json` ^0.20.1 -> ^0.20.2 (peer ^0.20.0)
+- `@effected/runtimes` ^0.10.2 -> ^0.10.3 (peer ^0.10.0)
+- `@effected/sbom` ^0.10.1 -> ^0.10.2 (peer ^0.10.0)
+- `@effected/schema-org` ^0.7.0 -> ^0.7.1 (peer ^0.7.0)
+- `@effected/schemastore` ^0.21.4 -> ^0.21.5 (peer ^0.21.0)
+- `@effected/schemastore-cli` ^0.21.4 -> ^0.21.5 (peer ^0.21.0)
+- `@effected/semver` ^0.11.0 -> ^0.11.1 (peer ^0.11.0)
+- `@effected/spdx` ^0.12.0 -> ^0.12.1 (peer ^0.12.0)
+- `@effected/store` ^0.13.1 -> ^0.13.2 (peer ^0.13.0)
+- `@effected/templates` ^0.10.0 -> ^0.10.1 (peer ^0.10.0)
+- `@effected/toml` ^0.11.1 -> ^0.11.2 (peer ^0.11.0)
+- `@effected/tsconfig-json` ^0.13.0 -> ^0.13.1 (peer ^0.13.0)
+- `@effected/walker` ^0.15.0 -> ^0.15.1 (peer ^0.15.0)
+- `@effected/workspaces` ^0.32.0 -> ^0.32.1 (peer ^0.32.0)
+- `@effected/xdg` ^0.9.0 -> ^0.9.1 (peer ^0.9.0)
+- `@effected/yaml` ^0.19.1 -> ^0.19.2 (peer ^0.19.0)
+
+### Thanks
+
+Thanks to [@spencerbeggs](https://github.com/spencerbeggs) and [@spencerbeggs\[bot\]](<[@spencerbeggs[bot]](https://github.com/spencerbeggs%5Bbot%5D)>) for their contributions!
+
+[#997]: https://github.com/spencerbeggs/effected/pull/997
+
+## 0.13.15
+
+### Maintenance
+
+#### Updates 26 catalog:effect versions
+
+- `@effect/ai-anthropic` ^4.0.2 -> ^4.0.3 (peer ^4.0.0)
+- `@effect/ai-openai` ^4.0.2 -> ^4.0.3 (peer ^4.0.0)
+- `@effect/ai-openai-compat` ^4.0.2 -> ^4.0.3 (peer ^4.0.0)
+- `@effect/ai-openrouter` ^4.0.2 -> ^4.0.3 (peer ^4.0.0)
+- `@effect/atom-react` ^4.0.2 -> ^4.0.3 (peer ^4.0.0)
+- `@effect/atom-solid` ^4.0.2 -> ^4.0.3 (peer ^4.0.0)
+- `@effect/atom-vue` ^4.0.2 -> ^4.0.3 (peer ^4.0.0)
+- `@effect/openapi-generator` ^4.0.2 -> ^4.0.3 (peer ^4.0.0)
+- `@effect/opentelemetry` ^4.0.2 -> ^4.0.3 (peer ^4.0.0)
+- `@effect/platform-browser` ^4.0.2 -> ^4.0.3 (peer ^4.0.0)
+- `@effect/platform-bun` ^4.0.2 -> ^4.0.3 (peer ^4.0.0)
+- `@effect/platform-node` ^4.0.2 -> ^4.0.3 (peer ^4.0.0)
+- `@effect/platform-node-shared` ^4.0.2 -> ^4.0.3 (peer ^4.0.0)
+- `@effect/sql-clickhouse` ^4.0.2 -> ^4.0.3 (peer ^4.0.0)
+- `@effect/sql-d1` ^4.0.2 -> ^4.0.3 (peer ^4.0.0)
+- `@effect/sql-libsql` ^4.0.2 -> ^4.0.3 (peer ^4.0.0)
+- `@effect/sql-mssql` ^4.0.2 -> ^4.0.3 (peer ^4.0.0)
+- `@effect/sql-mysql2` ^4.0.2 -> ^4.0.3 (peer ^4.0.0)
+- `@effect/sql-pg` ^4.0.2 -> ^4.0.3 (peer ^4.0.0)
+- `@effect/sql-pglite` ^4.0.2 -> ^4.0.3 (peer ^4.0.0)
+- `@effect/sql-sqlite-bun` ^4.0.2 -> ^4.0.3 (peer ^4.0.0)
+- `@effect/sql-sqlite-do` ^4.0.2 -> ^4.0.3 (peer ^4.0.0)
+- `@effect/sql-sqlite-node` ^4.0.2 -> ^4.0.3 (peer ^4.0.0)
+- `@effect/sql-sqlite-react-native` ^4.0.2 -> ^4.0.3 (peer ^4.0.0)
+- `@effect/sql-sqlite-wasm` ^4.0.2 -> ^4.0.3 (peer ^4.0.0)
+- `@effect/vitest` ^4.0.2 -> ^4.0.3 (peer ^4.0.0)
+
+#### Updates 1 catalog:effected version
+
+- `@effected/runtimes` ^0.10.1 -> ^0.10.2 (peer ^0.10.0)
+
+### Thanks
+
+Thanks to [@spencerbeggs\[bot\]](<[@spencerbeggs[bot]](https://github.com/spencerbeggs%5Bbot%5D)>) for their contributions!
+
+## 0.13.14
+
+### Maintenance
+
+#### Updates 7 catalog:effected versions
+
+- `@effected/cli` ^0.16.0 -> ^0.16.1 (peer ^0.16.0)
+- `@effected/env` ^0.1.0 -> ^0.1.1 (peer ^0.1.0)
+- `@effected/github` ^0.16.0 -> ^0.17.0 (peer ^0.17.0)
+- `@effected/github-actions` ^0.20.2 -> ^0.20.3 (peer ^0.20.0)
+- `@effected/github-commands` ^0.2.0 -> ^0.2.1 (peer ^0.2.0)
+- `@effected/images` ^0.1.0 -> ^0.1.1 (peer ^0.1.0)
+- `@effected/lsp` ^0.1.0 -> ^0.1.1 (peer ^0.1.0)
+
+### Thanks
+
+Thanks to [@spencerbeggs\[bot\]](<[@spencerbeggs[bot]](https://github.com/spencerbeggs%5Bbot%5D)>) for their contributions!
+
+## 0.13.13
+
+### Features
+
+- The `effected` catalog lists `@effected/jwt` at `^0.1.0`. [#984][#984]
+
+### Maintenance
+
+#### Updates 2 catalog:effected versions
+
+- `@effected/github` ^0.15.1 -> ^0.16.0 (peer ^0.16.0)
+- `@effected/github-actions` ^0.20.1 -> ^0.20.2 (peer ^0.20.0)
+
+### Thanks
+
+Thanks to [@spencerbeggs](https://github.com/spencerbeggs) and [@spencerbeggs\[bot\]](<[@spencerbeggs[bot]](https://github.com/spencerbeggs%5Bbot%5D)>) for their contributions!
+
+[#984]: https://github.com/spencerbeggs/effected/pull/984
+
+## 0.13.12
+
+### Maintenance
+
+#### Updates 3 catalog:effected versions
+
+- `@effected/cli` ^0.15.0 -> ^0.16.0 (peer ^0.16.0)
+- `@effected/schemastore` ^0.21.3 -> ^0.21.4 (peer ^0.21.0)
+- `@effected/schemastore-cli` ^0.21.3 -> ^0.21.4 (peer ^0.21.0)
+
+### Thanks
+
+Thanks to [@spencerbeggs\[bot\]](<[@spencerbeggs[bot]](https://github.com/spencerbeggs%5Bbot%5D)>) for their contributions!
+
+## 0.13.11
+
+### Features
+
+- The `effected` catalog lists `@effected/images` at `^0.1.0`. [#977][#977]
+
+### Thanks
+
+Thanks to [@spencerbeggs](https://github.com/spencerbeggs) for their contributions!
+
+[#977]: https://github.com/spencerbeggs/effected/pull/977
+
+## 0.13.10
+
+### Maintenance
+
+#### Updates 1 catalog:effected version
+
+- `@effected/runtimes` ^0.10.0 -> ^0.10.1 (peer ^0.10.0)
+
+### Thanks
+
+Thanks to [@spencerbeggs\[bot\]](<[@spencerbeggs[bot]](https://github.com/spencerbeggs%5Bbot%5D)>) for their contributions!
+
+## 0.13.9
+
+### Maintenance
+
+#### Updates 1 catalog:effected version
+
+- `@effected/jsonl` ^0.10.0 -> ^0.11.0 (peer ^0.11.0)
+
+### Thanks
+
+Thanks to [@spencerbeggs\[bot\]](<[@spencerbeggs[bot]](https://github.com/spencerbeggs%5Bbot%5D)>) for their contributions!
+
+## 0.13.8
+
+### Maintenance
+
+#### Updates 3 catalog:effected versions
+
+- `@effected/cli` ^0.14.0 -> ^0.15.0 (peer ^0.15.0)
+- `@effected/schemastore` ^0.21.2 -> ^0.21.3 (peer ^0.21.0)
+- `@effected/schemastore-cli` ^0.21.2 -> ^0.21.3 (peer ^0.21.0)
+
+### Thanks
+
+Thanks to [@spencerbeggs\[bot\]](<[@spencerbeggs[bot]](https://github.com/spencerbeggs%5Bbot%5D)>) for their contributions!
+
+## 0.13.7
+
+### Maintenance
+
+- The `effect` catalog ranges move from `^4.0.1` to `^4.0.2`, tracking the Effect 4.0.2 patch release. [#959][#959]
+
+#### Updates 7 catalog:effected versions
+
+- `@effected/cli` ^0.13.0 -> ^0.14.0 (peer ^0.14.0)
+- `@effected/github-commands` ^0.1.0 -> ^0.2.0 (peer ^0.2.0)
+- `@effected/package-json` ^0.20.0 -> ^0.20.1 (peer ^0.20.0)
+- `@effected/sbom` ^0.10.0 -> ^0.10.1 (peer ^0.10.0)
+- `@effected/schemastore` ^0.21.1 -> ^0.21.2 (peer ^0.21.0)
+- `@effected/schemastore-cli` ^0.21.1 -> ^0.21.2 (peer ^0.21.0)
+- `@effected/spdx` ^0.11.0 -> ^0.12.0 (peer ^0.12.0) [#959][#959]
+
+### Thanks
+
+Thanks to [@spencerbeggs](https://github.com/spencerbeggs) for their contributions!
+
+[#959]: https://github.com/spencerbeggs/effected/pull/959
+
+## 0.13.6
+
+### Features
+
+- The `effected` catalog lists `@effected/lsp` at `^0.1.0`.
+
+### Maintenance
+
+#### Updates 11 catalog:effected versions
+
+- `@effected/app` ^0.21.1 -> ^0.21.2 (peer ^0.21.0)
+- `@effected/cli` ^0.12.0 -> ^0.13.0 (peer ^0.13.0)
+- `@effected/engine` ^0.3.0 -> ^0.4.0 (peer ^0.4.0)
+- `@effected/jsonc` ^0.15.0 -> ^0.15.1 (peer ^0.15.0)
+- `@effected/markdown` ^0.15.0 -> ^0.15.1 (peer ^0.15.0)
+- `@effected/mcp` ^0.4.0 -> ^0.5.0 (peer ^0.5.0)
+- `@effected/schemastore` ^0.21.0 -> ^0.21.1 (peer ^0.21.0)
+- `@effected/schemastore-cli` ^0.21.0 -> ^0.21.1 (peer ^0.21.0)
+- `@effected/store` ^0.13.0 -> ^0.13.1 (peer ^0.13.0)
+- `@effected/workspaces` ^0.31.0 -> ^0.32.0 (peer ^0.32.0)
+- `@effected/yaml` ^0.19.0 -> ^0.19.1 (peer ^0.19.0) [#944][#944]
+
+* The `effect` catalog moves `@effect/tsgo` to `0.48.1` (peer `0.48.0`). [#944][#944]
+
+### Thanks
+
+Thanks to [@spencerbeggs](https://github.com/spencerbeggs) for their contributions!
+
+[#944]: https://github.com/spencerbeggs/effected/pull/944
+
+## 0.13.5
+
+### Maintenance
+
+#### Updates 27 catalog:effect versions
+
+- `@effect/ai-anthropic` ^4.0.0 -> ^4.0.1 (peer ^4.0.0)
+- `@effect/ai-openai` ^4.0.0 -> ^4.0.1 (peer ^4.0.0)
+- `@effect/ai-openai-compat` ^4.0.0 -> ^4.0.1 (peer ^4.0.0)
+- `@effect/ai-openrouter` ^4.0.0 -> ^4.0.1 (peer ^4.0.0)
+- `@effect/atom-react` ^4.0.0 -> ^4.0.1 (peer ^4.0.0)
+- `@effect/atom-solid` ^4.0.0 -> ^4.0.1 (peer ^4.0.0)
+- `@effect/atom-vue` ^4.0.0 -> ^4.0.1 (peer ^4.0.0)
+- `@effect/openapi-generator` ^4.0.0 -> ^4.0.1 (peer ^4.0.0)
+- `@effect/opentelemetry` ^4.0.0 -> ^4.0.1 (peer ^4.0.0)
+- `@effect/platform-browser` ^4.0.0 -> ^4.0.1 (peer ^4.0.0)
+- `@effect/platform-bun` ^4.0.0 -> ^4.0.1 (peer ^4.0.0)
+- `@effect/platform-node` ^4.0.0 -> ^4.0.1 (peer ^4.0.0)
+- `@effect/platform-node-shared` ^4.0.0 -> ^4.0.1 (peer ^4.0.0)
+- `@effect/sql-clickhouse` ^4.0.0 -> ^4.0.1 (peer ^4.0.0)
+- `@effect/sql-d1` ^4.0.0 -> ^4.0.1 (peer ^4.0.0)
+- `@effect/sql-libsql` ^4.0.0 -> ^4.0.1 (peer ^4.0.0)
+- `@effect/sql-mssql` ^4.0.0 -> ^4.0.1 (peer ^4.0.0)
+- `@effect/sql-mysql2` ^4.0.0 -> ^4.0.1 (peer ^4.0.0)
+- `@effect/sql-pg` ^4.0.0 -> ^4.0.1 (peer ^4.0.0)
+- `@effect/sql-pglite` ^4.0.0 -> ^4.0.1 (peer ^4.0.0)
+- `@effect/sql-sqlite-bun` ^4.0.0 -> ^4.0.1 (peer ^4.0.0)
+- `@effect/sql-sqlite-do` ^4.0.0 -> ^4.0.1 (peer ^4.0.0)
+- `@effect/sql-sqlite-node` ^4.0.0 -> ^4.0.1 (peer ^4.0.0)
+- `@effect/sql-sqlite-react-native` ^4.0.0 -> ^4.0.1 (peer ^4.0.0)
+- `@effect/sql-sqlite-wasm` ^4.0.0 -> ^4.0.1 (peer ^4.0.0)
+- `@effect/vitest` ^4.0.0 -> ^4.0.1 (peer ^4.0.0)
+- `effect` ^4.0.0 -> ^4.0.1
+
+#### Updates 1 catalog:effected version
+
+- `@effected/toml` ^0.11.0 -> ^0.11.1 (peer ^0.11.0)
+
+### Thanks
+
+Thanks to [@spencerbeggs\[bot\]](<[@spencerbeggs[bot]](https://github.com/spencerbeggs%5Bbot%5D)>) for their contributions!
+
+## 0.13.4
+
+### Maintenance
+
+#### Updates 2 catalog:effected versions
+
+- `@effected/app` ^0.21.0 -> ^0.21.1 (peer ^0.21.0)
+- `@effected/config-file` ^0.14.1 -> ^0.14.2 (peer ^0.14.0)
+
+### Thanks
+
+Thanks to [@spencerbeggs\[bot\]](<[@spencerbeggs[bot]](https://github.com/spencerbeggs%5Bbot%5D)>) for their contributions!
+
+## 0.13.3
+
+### Maintenance
+
+#### Updates 7 catalog:effected versions
+
+- `@effected/app` ^0.20.0 -> ^0.21.0 (peer ^0.21.0)
+- `@effected/cli` ^0.11.0 -> ^0.12.0 (peer ^0.12.0)
+- `@effected/config-file` ^0.14.0 -> ^0.14.1 (peer ^0.14.0)
+- `@effected/github` ^0.15.0 -> ^0.15.1 (peer ^0.15.0)
+- `@effected/schemastore` ^0.20.0 -> ^0.21.0 (peer ^0.21.0)
+- `@effected/schemastore-cli` ^0.20.0 -> ^0.21.0 (peer ^0.21.0)
+- `@effected/store` ^0.12.0 -> ^0.13.0 (peer ^0.13.0)
+
+### Thanks
+
+Thanks to [@spencerbeggs\[bot\]](<[@spencerbeggs[bot]](https://github.com/spencerbeggs%5Bbot%5D)>) for their contributions!
+
+## 0.13.2
+
+### Maintenance
+
+#### Updates 2 catalog:effected versions
+
+- `@effected/schemastore` ^0.19.0 -> ^0.20.0 (peer ^0.20.0)
+- `@effected/schemastore-cli` ^0.19.0 -> ^0.20.0 (peer ^0.20.0)
+
+### Thanks
+
+Thanks to [@spencerbeggs\[bot\]](<[@spencerbeggs[bot]](https://github.com/spencerbeggs%5Bbot%5D)>) for their contributions!
+
+## 0.13.1
+
+### Maintenance
+
+#### Updates 2 catalog:effected versions
+
+- `@effected/schemastore` ^0.18.0 -> ^0.19.0 (peer ^0.19.0)
+- `@effected/schemastore-cli` ^0.18.0 -> ^0.19.0 (peer ^0.19.0)
+
+### Thanks
+
+Thanks to [@spencerbeggs\[bot\]](<[@spencerbeggs[bot]](https://github.com/spencerbeggs%5Bbot%5D)>) for their contributions!
+
+## 0.13.0
+
+### Breaking Changes
+
+- The `effect` and `effect:peers` catalogs give `effect` and every `@effect/*` package the range `^4.0.0` under the `lock-minor` strategy, in place of an exact release-candidate pin. Your lockfile now holds the exact `effect` version, so a fresh resolve can pick up a newer `4.x`. `@effect/tsgo` is `0.47.2` (peer `0.47.0`).
+- `catalog:effected` names every `@effected` package at its new minor. Bump the `configDependencies` pin (version and integrity together), then reinstall without the old lockfile, or the previous catalog versions keep resolving.
+
+### Features
+
+- The managed `catalog:effected` now covers the kit's two new packages, each at `^0.1.0` (peer `^0.1.0`, `lock-minor`): `@effected/env`, environment and audience detection, and `@effected/github-commands`, the GitHub Actions workflow-command grammar. [#905][#905]
+
+### Bug Fixes
+
+- The scoped `@effect/platform-node-shared` override now also covers the `4.0.0-rc.118` parent. Tools still built on that release candidate take `@effect/platform-node-shared` with a caret, which a fresh resolve would pair with the stable `4.0.0` package built for a different `effect`. The override keeps it at `4.0.0-rc.118` under that parent only, so a stable install is never touched. [#910][#910]
+
+### Maintenance
+
+#### Updates 33 catalog:effected versions
+
+- `@effected/app` ^0.19.1 -> ^0.20.0 (peer ^0.20.0)
+- `@effected/cli` ^0.10.0 -> ^0.11.0 (peer ^0.11.0)
+- `@effected/commands` ^0.10.0 -> ^0.11.0 (peer ^0.11.0)
+- `@effected/config-file` ^0.13.1 -> ^0.14.0 (peer ^0.14.0)
+- `@effected/engine` ^0.2.0 -> ^0.3.0 (peer ^0.3.0)
+- `@effected/git` ^0.19.0 -> ^0.20.0 (peer ^0.20.0)
+- `@effected/github` ^0.14.0 -> ^0.15.0 (peer ^0.15.0)
+- `@effected/github-actions` ^0.19.1 -> ^0.20.0 (peer ^0.20.0)
+- `@effected/github-references` ^0.6.0 -> ^0.7.0 (peer ^0.7.0)
+- `@effected/glob` ^0.9.0 -> ^0.10.0 (peer ^0.10.0)
+- `@effected/jsonc` ^0.14.0 -> ^0.15.0 (peer ^0.15.0)
+- `@effected/jsonl` ^0.8.0 -> ^0.9.0 (peer ^0.9.0)
+- `@effected/lockfiles` ^0.14.0 -> ^0.15.0 (peer ^0.15.0)
+- `@effected/markdown` ^0.14.0 -> ^0.15.0 (peer ^0.15.0)
+- `@effected/mcp` ^0.3.0 -> ^0.4.0 (peer ^0.4.0)
+- `@effected/memfs` ^0.13.1 -> ^0.14.0 (peer ^0.14.0)
+- `@effected/npm` ^0.19.1 -> ^0.20.0 (peer ^0.20.0)
+- `@effected/package-json` ^0.19.1 -> ^0.20.0 (peer ^0.20.0)
+- `@effected/runtimes` ^0.9.0 -> ^0.10.0 (peer ^0.10.0)
+- `@effected/sbom` ^0.9.1 -> ^0.10.0 (peer ^0.10.0)
+- `@effected/schema-org` ^0.6.0 -> ^0.7.0 (peer ^0.7.0)
+- `@effected/schemastore` ^0.17.0 -> ^0.18.0 (peer ^0.18.0)
+- `@effected/schemastore-cli` ^0.17.0 -> ^0.18.0 (peer ^0.18.0)
+- `@effected/semver` ^0.10.1 -> ^0.11.0 (peer ^0.11.0)
+- `@effected/spdx` ^0.10.0 -> ^0.11.0 (peer ^0.11.0)
+- `@effected/store` ^0.11.0 -> ^0.12.0 (peer ^0.12.0)
+- `@effected/templates` ^0.9.1 -> ^0.10.0 (peer ^0.10.0)
+- `@effected/toml` ^0.10.0 -> ^0.11.0 (peer ^0.11.0)
+- `@effected/tsconfig-json` ^0.12.2 -> ^0.13.0 (peer ^0.13.0)
+- `@effected/walker` ^0.14.1 -> ^0.15.0 (peer ^0.15.0)
+- `@effected/workspaces` ^0.30.4 -> ^0.31.0 (peer ^0.31.0)
+- `@effected/xdg` ^0.8.2 -> ^0.9.0 (peer ^0.9.0)
+- `@effected/yaml` ^0.18.0 -> ^0.19.0 (peer ^0.19.0)
+
+### Thanks
+
+Thanks to [@spencerbeggs](https://github.com/spencerbeggs) and [@spencerbeggs\[bot\]](<[@spencerbeggs[bot]](https://github.com/spencerbeggs%5Bbot%5D)>) for their contributions!
+
+[#905]: https://github.com/spencerbeggs/effected/pull/905
+
+[#910]: https://github.com/spencerbeggs/effected/pull/910
+
+## 0.12.8
+
+### Maintenance
+
+#### Updates 6 catalog:effected versions
+
+- `@effected/app` ^0.19.0 -> ^0.19.1 (peer ^0.19.0)
+- `@effected/memfs` ^0.13.0 -> ^0.13.1 (peer ^0.13.0)
+- `@effected/npm` ^0.19.0 -> ^0.19.1 (peer ^0.19.0)
+- `@effected/tsconfig-json` ^0.12.1 -> ^0.12.2 (peer ^0.12.0)
+- `@effected/walker` ^0.14.0 -> ^0.14.1 (peer ^0.14.0)
+- `@effected/workspaces` ^0.30.3 -> ^0.30.4 (peer ^0.30.0)
+
+### Thanks
+
+Thanks to [@spencerbeggs\[bot\]](<[@spencerbeggs[bot]](https://github.com/spencerbeggs%5Bbot%5D)>) for their contributions!
+
+## 0.12.7
+
+### Maintenance
+
+#### Updates 1 catalog:effected version
+
+- `@effected/workspaces` ^0.30.2 -> ^0.30.3 (peer ^0.30.0)
+
+### Thanks
+
+Thanks to [@spencerbeggs\[bot\]](<[@spencerbeggs[bot]](https://github.com/spencerbeggs%5Bbot%5D)>) for their contributions!
+
+## 0.12.6
+
+### Maintenance
+
+#### Updates 2 catalog:effected versions
+
+- `@effected/memfs` ^0.12.0 -> ^0.13.0 (peer ^0.13.0)
+- `@effected/xdg` ^0.8.1 -> ^0.8.2 (peer ^0.8.0) [#890][#890]
+
+### Thanks
+
+Thanks to [@spencerbeggs](https://github.com/spencerbeggs) for their contributions!
+
+[#890]: https://github.com/spencerbeggs/effected/pull/890
+
+## 0.12.5
+
+### Maintenance
+
+#### Updates 8 catalog:effected versions
+
+- `@effected/config-file` ^0.13.0 -> ^0.13.1 (peer ^0.13.0)
+- `@effected/git` ^0.18.1 -> ^0.19.0 (peer ^0.19.0)
+- `@effected/github-actions` ^0.19.0 -> ^0.19.1 (peer ^0.19.0)
+- `@effected/memfs` ^0.11.0 -> ^0.12.0 (peer ^0.12.0)
+- `@effected/tsconfig-json` ^0.12.0 -> ^0.12.1 (peer ^0.12.0)
+- `@effected/walker` ^0.13.0 -> ^0.14.0 (peer ^0.14.0)
+- `@effected/workspaces` ^0.30.1 -> ^0.30.2 (peer ^0.30.0)
+- `@effected/xdg` ^0.8.0 -> ^0.8.1 (peer ^0.8.0)
+
+### Thanks
+
+Thanks to [@spencerbeggs\[bot\]](<[@spencerbeggs[bot]](https://github.com/spencerbeggs%5Bbot%5D)>) for their contributions!
+
+## 0.12.4
+
+### Maintenance
+
+#### Updates 1 catalog:effected version
+
+- `@effected/github-actions` ^0.18.1 -> ^0.19.0 (peer ^0.19.0)
+
+### Thanks
+
+Thanks to [@spencerbeggs\[bot\]](<[@spencerbeggs[bot]](https://github.com/spencerbeggs%5Bbot%5D)>) for their contributions!
+
+## 0.12.3
+
+### Maintenance
+
+#### Updates 2 catalog:effected versions
+
+- `@effected/schemastore` ^0.16.1 -> ^0.17.0 (peer ^0.17.0)
+- `@effected/schemastore-cli` ^0.16.1 -> ^0.17.0 (peer ^0.17.0)
+
+### Thanks
+
+Thanks to [@spencerbeggs\[bot\]](<[@spencerbeggs[bot]](https://github.com/spencerbeggs%5Bbot%5D)>) for their contributions!
+
+## 0.12.2
+
+### Maintenance
+
+#### Updates 2 catalog:effected versions
+
+- `@effected/schemastore` ^0.16.0 -> ^0.16.1 (peer ^0.16.0)
+- `@effected/schemastore-cli` ^0.16.0 -> ^0.16.1 (peer ^0.16.0)
+
+### Thanks
+
+Thanks to [@spencerbeggs\[bot\]](<[@spencerbeggs[bot]](https://github.com/spencerbeggs%5Bbot%5D)>) for their contributions!
+
+## 0.12.1
+
+### Bug Fixes
+
+- Consumers get a scoped override that keeps tools still built on effect rc.117 from crashing at startup. `@effect/platform-node@4.0.0-rc.117` takes `@effect/platform-node-shared` with a caret, so a fresh resolve paired it with the rc.118 shared package. That package imports `effect/process/ChildProcess`, which rc.117 does not ship. The override pins the shared package to `4.0.0-rc.117` under that parent only, so no install on rc.118 is touched, and a consumer's own `overrides` are kept alongside it; a consumer value for the same selector wins. [#866][#866]
+
+### Maintenance
+
+#### Updates 7 catalog:effected versions
+
+- `@effected/git` ^0.18.0 -> ^0.18.1 (peer ^0.18.0)
+- `@effected/github-actions` ^0.18.0 -> ^0.18.1 (peer ^0.18.0)
+- `@effected/package-json` ^0.19.0 -> ^0.19.1 (peer ^0.19.0)
+- `@effected/sbom` ^0.9.0 -> ^0.9.1 (peer ^0.9.0)
+- `@effected/semver` ^0.10.0 -> ^0.10.1 (peer ^0.10.0)
+- `@effected/templates` ^0.9.0 -> ^0.9.1 (peer ^0.9.0)
+- `@effected/workspaces` ^0.30.0 -> ^0.30.1 (peer ^0.30.0)
+
+### Thanks
+
+Thanks to [@spencerbeggs](https://github.com/spencerbeggs) and [@spencerbeggs\[bot\]](<[@spencerbeggs[bot]](https://github.com/spencerbeggs%5Bbot%5D)>) for their contributions!
+
+[#866]: https://github.com/spencerbeggs/effected/pull/866
+
+## 0.12.0
+
+### Breaking Changes
+
+- The kit now builds on and peers `effect` `4.0.0-rc.118`, pinned exactly. Consumers must move `effect` and every `@effect/*` package to `4.0.0-rc.118` in the same install. Effect removed the `effect/unstable/*` export paths in this release, so an `@effected` package built on rc.118 cannot share an install with `effect` rc.117.
+
+- Moving the pin also closes a fresh-install failure on rc.117. `@effect/platform-node@4.0.0-rc.117` depends on `@effect/platform-node-shared` with a caret, so an install without a lockfile paired the rc.118 shared package with `effect` rc.117 and failed at startup with `ERR_MODULE_NOT_FOUND`.
+
+- Consumers moving to this release: effect removed the `effect/unstable/*` export paths (imports become `effect/<module>`), moved `Arbitrary` to `effect`, split `effect/Encoding` into `effect/encoding/Base64`, `Base64Url` and `Hex`, and renamed the `Schema` range and string checks (`isLengthBetween` → `isBetweenLength`, `isStartsWith` → `isStartingWith`, and so on). Kit exports are otherwise unchanged; the kit's own imports moved onto the new paths. [#864][#864]
+
+### Features
+
+- The `effect` and `effect:peers` catalogs pin `effect` and every `@effect/*` package to exactly `4.0.0-rc.118`, and `catalog:effected` names every `@effected` package at its new minor (for example `@effected/workspaces ^0.30.0`). Bump the `configDependencies` pin (version and integrity together), then reinstall without the old lockfile, or the previous catalog versions keep resolving. [#864][#864]
+
+### Thanks
+
+Thanks to [@spencerbeggs](https://github.com/spencerbeggs) for their contributions!
+
+[#864]: https://github.com/spencerbeggs/effected/pull/864
+
+## 0.11.4
+
+### Maintenance
+
+#### Updates 6 catalog:effected versions
+
+- `@effected/github-actions` ^0.17.0 -> ^0.17.1 (peer ^0.17.0)
+- `@effected/lockfiles` ^0.12.0 -> ^0.13.0 (peer ^0.13.0)
+- `@effected/markdown` ^0.12.1 -> ^0.13.0 (peer ^0.13.0)
+- `@effected/npm` ^0.17.0 -> ^0.18.0 (peer ^0.18.0)
+- `@effected/package-json` ^0.18.0 -> ^0.18.1 (peer ^0.18.0)
+- `@effected/workspaces` ^0.28.0 -> ^0.29.0 (peer ^0.29.0)
+
+### Thanks
+
+Thanks to [@spencerbeggs\[bot\]](<[@spencerbeggs[bot]](https://github.com/spencerbeggs%5Bbot%5D)>) for their contributions!
+
+## 0.11.3
+
+### Maintenance
+
+#### Updates 6 catalog:effected versions
+
+- `@effected/github-actions` ^0.16.1 -> ^0.17.0 (peer ^0.17.0)
+- `@effected/lockfiles` ^0.11.0 -> ^0.12.0 (peer ^0.12.0)
+- `@effected/npm` ^0.16.0 -> ^0.17.0 (peer ^0.17.0)
+- `@effected/package-json` ^0.17.0 -> ^0.18.0 (peer ^0.18.0)
+- `@effected/sbom` ^0.8.0 -> ^0.8.1 (peer ^0.8.0)
+- `@effected/workspaces` ^0.27.0 -> ^0.28.0 (peer ^0.28.0)
+
+### Thanks
+
+Thanks to [@spencerbeggs\[bot\]](<[@spencerbeggs[bot]](https://github.com/spencerbeggs%5Bbot%5D)>) for their contributions!
+
+## 0.11.2
+
+### Maintenance
+
+#### Updates 6 catalog:effected versions
+
+- `@effected/cli` ^0.8.0 -> ^0.9.0 (peer ^0.9.0)
+- `@effected/mcp` ^0.1.1 -> ^0.2.0 (peer ^0.2.0)
+- `@effected/memfs` ^0.9.0 -> ^0.10.0 (peer ^0.10.0)
+- `@effected/schemastore` ^0.15.1 -> ^0.15.2 (peer ^0.15.0)
+- `@effected/schemastore-cli` ^0.15.1 -> ^0.15.2 (peer ^0.15.0)
+- `@effected/workspaces` ^0.26.0 -> ^0.27.0 (peer ^0.27.0) [#840][#840]
+
+### Thanks
+
+Thanks to [@spencerbeggs](https://github.com/spencerbeggs) for their contributions!
+
+[#840]: https://github.com/spencerbeggs/effected/pull/840
+
+## 0.11.1
+
+### Maintenance
+
+#### Updates 2 catalog:effected versions
+
+- `@effected/github` ^0.12.0 -> ^0.13.0 (peer ^0.13.0)
+- `@effected/github-actions` ^0.16.0 -> ^0.16.1 (peer ^0.16.0) [#824][#824]
+
+### Thanks
+
+Thanks to [@spencerbeggs](https://github.com/spencerbeggs) for their contributions!
+
+[#824]: https://github.com/spencerbeggs/effected/pull/824
+
+## 0.11.0
+
+### Features
+
+- The managed `catalog:effected` now covers the kit's two new packages, each at `^0.1.0` (peer `^0.1.0`, `lock-minor`): `@effected/engine`, the platform-free primitives shared across a tool's front ends, and `@effected/mcp`, the MCP server boundary. [#821][#821]
+
+### Maintenance
+
+#### Updates 1 catalog:effected version
+
+- `@effected/schemastore-cli` ^0.15.0 -> ^0.15.1 (peer ^0.15.0) [#821][#821]
+
+### Thanks
+
+Thanks to [@spencerbeggs](https://github.com/spencerbeggs) for their contributions!
+
+[#821]: https://github.com/spencerbeggs/effected/pull/821
+
+## 0.10.1
+
+### Maintenance
+
+#### Updates 1 catalog:effected version
+
+- `@effected/runtimes` ^0.8.0 -> ^0.8.1 (peer ^0.8.0)
+
+### Thanks
+
+Thanks to [@spencerbeggs\[bot\]](<[@spencerbeggs[bot]](https://github.com/spencerbeggs%5Bbot%5D)>) for their contributions!
+
+## 0.10.0
+
+### Features
+
+- Upgrades core Effect to `rc-117` [#812][#812]
+
+### Maintenance
+
+#### Updates 31 catalog:effected versions
+
+- `@effected/app` ^0.17.0 -> ^0.18.0 (peer ^0.18.0)
+- `@effected/cli` ^0.6.0 -> ^0.7.0 (peer ^0.7.0)
+- `@effected/commands` ^0.8.0 -> ^0.9.0 (peer ^0.9.0)
+- `@effected/config-file` ^0.11.1 -> ^0.12.0 (peer ^0.12.0)
+- `@effected/git` ^0.16.0 -> ^0.17.0 (peer ^0.17.0)
+- `@effected/github` ^0.11.0 -> ^0.12.0 (peer ^0.12.0)
+- `@effected/github-actions` ^0.15.0 -> ^0.16.0 (peer ^0.16.0)
+- `@effected/github-references` ^0.4.0 -> ^0.5.0 (peer ^0.5.0)
+- `@effected/glob` ^0.7.0 -> ^0.8.0 (peer ^0.8.0)
+- `@effected/jsonc` ^0.12.0 -> ^0.13.0 (peer ^0.13.0)
+- `@effected/jsonl` ^0.6.0 -> ^0.7.0 (peer ^0.7.0)
+- `@effected/lockfiles` ^0.10.0 -> ^0.11.0 (peer ^0.11.0)
+- `@effected/markdown` ^0.11.0 -> ^0.12.0 (peer ^0.12.0)
+- `@effected/memfs` ^0.8.1 -> ^0.9.0 (peer ^0.9.0)
+- `@effected/npm` ^0.15.0 -> ^0.16.0 (peer ^0.16.0)
+- `@effected/package-json` ^0.16.0 -> ^0.17.0 (peer ^0.17.0)
+- `@effected/runtimes` ^0.7.1 -> ^0.8.0 (peer ^0.8.0)
+- `@effected/sbom` ^0.7.0 -> ^0.8.0 (peer ^0.8.0)
+- `@effected/schema-org` ^0.4.0 -> ^0.5.0 (peer ^0.5.0)
+- `@effected/schemastore` ^0.14.0 -> ^0.15.0 (peer ^0.15.0)
+- `@effected/schemastore-cli` ^0.14.0 -> ^0.15.0 (peer ^0.15.0)
+- `@effected/semver` ^0.8.0 -> ^0.9.0 (peer ^0.9.0)
+- `@effected/spdx` ^0.8.0 -> ^0.9.0 (peer ^0.9.0)
+- `@effected/store` ^0.9.0 -> ^0.10.0 (peer ^0.10.0)
+- `@effected/templates` ^0.7.0 -> ^0.8.0 (peer ^0.8.0)
+- `@effected/toml` ^0.8.0 -> ^0.9.0 (peer ^0.9.0)
+- `@effected/tsconfig-json` ^0.10.1 -> ^0.11.0 (peer ^0.11.0)
+- `@effected/walker` ^0.11.0 -> ^0.12.0 (peer ^0.12.0)
+- `@effected/workspaces` ^0.24.1 -> ^0.25.0 (peer ^0.25.0)
+- `@effected/xdg` ^0.6.1 -> ^0.7.0 (peer ^0.7.0)
+- `@effected/yaml` ^0.16.0 -> ^0.17.0 (peer ^0.17.0)
+
+### Thanks
+
+Thanks to [@spencerbeggs](https://github.com/spencerbeggs) and [@spencerbeggs\[bot\]](<[@spencerbeggs[bot]](https://github.com/spencerbeggs%5Bbot%5D)>) for their contributions!
+
+[#812]: https://github.com/spencerbeggs/effected/pull/812
+
+## 0.9.3
+
+### Maintenance
+
+#### Updates 1 catalog:effected version
+
+- `@effected/runtimes` ^0.7.0 -> ^0.7.1 (peer ^0.7.0)
+
+### Thanks
+
+Thanks to [@spencerbeggs\[bot\]](<[@spencerbeggs[bot]](https://github.com/spencerbeggs%5Bbot%5D)>) for their contributions!
+
+## 0.9.2
+
+### Maintenance
+
+#### Updates 7 catalog:effected versions
+
+- `@effected/config-file` ^0.11.0 -> ^0.11.1 (peer ^0.11.0)
+- `@effected/github-actions` ^0.14.0 -> ^0.15.0 (peer ^0.15.0)
+- `@effected/memfs` ^0.8.0 -> ^0.8.1 (peer ^0.8.0)
+- `@effected/tsconfig-json` ^0.10.0 -> ^0.10.1 (peer ^0.10.0)
+- `@effected/walker` ^0.10.0 -> ^0.11.0 (peer ^0.11.0)
+- `@effected/workspaces` ^0.24.0 -> ^0.24.1 (peer ^0.24.0)
+- `@effected/xdg` ^0.6.0 -> ^0.6.1 (peer ^0.6.0)
+
+### Thanks
+
+Thanks to [@spencerbeggs\[bot\]](<[@spencerbeggs[bot]](https://github.com/spencerbeggs%5Bbot%5D)>) for their contributions!
+
+## 0.9.1
+
+### Maintenance
+
+#### Updates 1 catalog:effected version
+
+- `@effected/workspaces` ^0.23.0 -> ^0.24.0 (peer ^0.24.0) [#797][#797]
+
+### Thanks
+
+Thanks to [@spencerbeggs](https://github.com/spencerbeggs) for their contributions!
+
+[#797]: https://github.com/spencerbeggs/effected/pull/797
+
+## 0.9.0
+
+### Breaking Changes
+
+#### The whole kit tracks Effect `4.0.0-rc.116`
+
+- Every package's `effect` peer moves from `4.0.0-rc.115` to `4.0.0-rc.116`. The kit uses exact prerelease pins rather than a caret, so a consumer must move with it. No `@effected` API changes shape on this advance; the kit itself needed one edit (`Stream.scan` now takes a lazy initial state, met once in `@effected/jsonl`'s `Journal.projection`). A consumer that upgrades meets the rc.116 renames on its own code:
+
+- `SchemaTransformation.make` is `makeTransformation`, and `Transformation#compose` is the dual standalone `SchemaTransformation.composeTransformation`.
+
+- `SchemaGetter.Getter` is a tagged union exposing only `pipe`: `new SchemaGetter.Getter`, `onSome` and `onNone` are gone in favour of `SchemaGetter.map` / `compose` / `run` and `transformEffect` / `transformOptionalEffect`.
+
+- `Stream.scan` and `Stream.scanEffect` take `() => initial`; `Stream.partition` returns `[passes, fails]`; `Stream.mapBoth` takes `onElement` / `onError`.
+
+- `Effect.orElseSucceed` passes the error to its fallback and `Effect.isEffect` narrows to `Effect<unknown, unknown, unknown>`.
+
+- `ByteSize.Input` string literals are checked at compile time; parse external strings with `ByteSize.fromString`.
+
+- Arbitrary shrinking changed, so property-test replay tokens recorded at rc.115 no longer reproduce.
+
+### Documentation
+
+#### The Claude Code and Copilot plugins teach the rc.116 surface
+
+- The `effect-v4-schema` transformation reference composes transformations with `SchemaTransformation.composeTransformation` and describes the `Getter` surface rc.116 left behind; the source-lookup and testing skills report rc.116 as the kit's pin and the two-copy lockfile shape the bridge now produces (`rc.115` for the toolchain, `rc.116` for the kit); the session-start briefing reports rc.116.
+
+### Dependencies
+
+| Dependency | Type | Action | From | To |
+| --- | --- | --- | --- | --- |
+| @effect/platform-node | devDependency | updated | 4.0.0-rc.115 | 4.0.0-rc.116 |
+| @effect/vitest | devDependency | updated | 4.0.0-rc.115 | 4.0.0-rc.116 |
+| effect | devDependency | updated | 4.0.0-rc.115 | 4.0.0-rc.116 |
+| effect | peerDependency | updated | 4.0.0-rc.115 | 4.0.0-rc.116 |
+
+### Maintenance
+
+#### The rc.115 `packageExtensions` bridge is retired
+
+- The toolchain (`@savvy-web/tsdown-plugins`, `rolldown-pnpm-config`, `@vitest-agent/*`) has republished declaring `effect` and its `@effected/*` inputs as regular dependencies, so the workspace no longer needs the `packageExtensions` block that pinned them by hand. Its ten keys named versions no longer installed and the lockfile diff on removal was the checksum line alone. Nothing published changes; this is the workspace's own install shape. [#792][#792]
+
+#### Updates 31 catalog:effected versions
+
+- `@effected/app` ^0.16.3 -> ^0.17.0 (peer ^0.17.0)
+- `@effected/cli` ^0.5.2 -> ^0.6.0 (peer ^0.6.0)
+- `@effected/commands` ^0.7.2 -> ^0.8.0 (peer ^0.8.0)
+- `@effected/config-file` ^0.10.1 -> ^0.11.0 (peer ^0.11.0)
+- `@effected/git` ^0.15.2 -> ^0.16.0 (peer ^0.16.0)
+- `@effected/github` ^0.10.2 -> ^0.11.0 (peer ^0.11.0)
+- `@effected/github-actions` ^0.13.4 -> ^0.14.0 (peer ^0.14.0)
+- `@effected/github-references` ^0.3.1 -> ^0.4.0 (peer ^0.4.0)
+- `@effected/glob` ^0.6.1 -> ^0.7.0 (peer ^0.7.0)
+- `@effected/jsonc` ^0.11.1 -> ^0.12.0 (peer ^0.12.0)
+- `@effected/jsonl` ^0.5.1 -> ^0.6.0 (peer ^0.6.0)
+- `@effected/lockfiles` ^0.9.1 -> ^0.10.0 (peer ^0.10.0)
+- `@effected/markdown` ^0.10.1 -> ^0.11.0 (peer ^0.11.0)
+- `@effected/memfs` ^0.7.1 -> ^0.8.0 (peer ^0.8.0)
+- `@effected/npm` ^0.14.2 -> ^0.15.0 (peer ^0.15.0)
+- `@effected/package-json` ^0.15.1 -> ^0.16.0 (peer ^0.16.0)
+- `@effected/runtimes` ^0.6.2 -> ^0.7.0 (peer ^0.7.0)
+- `@effected/sbom` ^0.6.2 -> ^0.7.0 (peer ^0.7.0)
+- `@effected/schema-org` ^0.3.1 -> ^0.4.0 (peer ^0.4.0)
+- `@effected/schemastore` ^0.13.1 -> ^0.14.0 (peer ^0.14.0)
+- `@effected/schemastore-cli` ^0.13.1 -> ^0.14.0 (peer ^0.14.0)
+- `@effected/semver` ^0.7.1 -> ^0.8.0 (peer ^0.8.0)
+- `@effected/spdx` ^0.7.1 -> ^0.8.0 (peer ^0.8.0)
+- `@effected/store` ^0.8.1 -> ^0.9.0 (peer ^0.9.0)
+- `@effected/templates` ^0.6.1 -> ^0.7.0 (peer ^0.7.0)
+- `@effected/toml` ^0.7.1 -> ^0.8.0 (peer ^0.8.0)
+- `@effected/tsconfig-json` ^0.9.2 -> ^0.10.0 (peer ^0.10.0)
+- `@effected/walker` ^0.9.1 -> ^0.10.0 (peer ^0.10.0)
+- `@effected/workspaces` ^0.22.1 -> ^0.23.0 (peer ^0.23.0)
+- `@effected/xdg` ^0.5.3 -> ^0.6.0 (peer ^0.6.0)
+- `@effected/yaml` ^0.15.2 -> ^0.16.0 (peer ^0.16.0) [#792][#792]
+
+### Thanks
+
+Thanks to [@spencerbeggs](https://github.com/spencerbeggs) for their contributions!
+
+[#792]: https://github.com/spencerbeggs/effected/pull/792
+
+## 0.8.15
+
+### Maintenance
+
+#### Updates 2 catalog:effected versions
+
+- `@effected/github-actions` ^0.13.3 -> ^0.13.4 (peer ^0.13.0)
+- `@effected/npm` ^0.14.1 -> ^0.14.2 (peer ^0.14.0)
+
+### Thanks
+
+Thanks to [@spencerbeggs\[bot\]](<[@spencerbeggs[bot]](https://github.com/spencerbeggs%5Bbot%5D)>) for their contributions!
+
+## 0.8.14
+
+### Bug Fixes
+
+- Fixes closure issues in all packages.
+
+### Maintenance
+
+#### Updates 31 catalog:effected versions
+
+- `@effected/app` ^0.16.2 -> ^0.16.3 (peer ^0.16.0)
+- `@effected/cli` ^0.5.1 -> ^0.5.2 (peer ^0.5.0)
+- `@effected/commands` ^0.7.1 -> ^0.7.2 (peer ^0.7.0)
+- `@effected/config-file` ^0.10.0 -> ^0.10.1 (peer ^0.10.0)
+- `@effected/git` ^0.15.1 -> ^0.15.2 (peer ^0.15.0)
+- `@effected/github` ^0.10.1 -> ^0.10.2 (peer ^0.10.0)
+- `@effected/github-actions` ^0.13.2 -> ^0.13.3 (peer ^0.13.0)
+- `@effected/github-references` ^0.3.0 -> ^0.3.1 (peer ^0.3.0)
+- `@effected/glob` ^0.6.0 -> ^0.6.1 (peer ^0.6.0)
+- `@effected/jsonc` ^0.11.0 -> ^0.11.1 (peer ^0.11.0)
+- `@effected/jsonl` ^0.5.0 -> ^0.5.1 (peer ^0.5.0)
+- `@effected/lockfiles` ^0.9.0 -> ^0.9.1 (peer ^0.9.0)
+- `@effected/markdown` ^0.10.0 -> ^0.10.1 (peer ^0.10.0)
+- `@effected/memfs` ^0.7.0 -> ^0.7.1 (peer ^0.7.0)
+- `@effected/npm` ^0.14.0 -> ^0.14.1 (peer ^0.14.0)
+- `@effected/package-json` ^0.15.0 -> ^0.15.1 (peer ^0.15.0)
+- `@effected/runtimes` ^0.6.1 -> ^0.6.2 (peer ^0.6.0)
+- `@effected/sbom` ^0.6.1 -> ^0.6.2 (peer ^0.6.0)
+- `@effected/schema-org` ^0.3.0 -> ^0.3.1 (peer ^0.3.0)
+- `@effected/schemastore` ^0.13.0 -> ^0.13.1 (peer ^0.13.0)
+- `@effected/schemastore-cli` ^0.13.0 -> ^0.13.1 (peer ^0.13.0)
+- `@effected/semver` ^0.7.0 -> ^0.7.1 (peer ^0.7.0)
+- `@effected/spdx` ^0.7.0 -> ^0.7.1 (peer ^0.7.0)
+- `@effected/store` ^0.8.0 -> ^0.8.1 (peer ^0.8.0)
+- `@effected/templates` ^0.6.0 -> ^0.6.1 (peer ^0.6.0)
+- `@effected/toml` ^0.7.0 -> ^0.7.1 (peer ^0.7.0)
+- `@effected/tsconfig-json` ^0.9.1 -> ^0.9.2 (peer ^0.9.0)
+- `@effected/walker` ^0.9.0 -> ^0.9.1 (peer ^0.9.0)
+- `@effected/workspaces` ^0.22.0 -> ^0.22.1 (peer ^0.22.0)
+- `@effected/xdg` ^0.5.2 -> ^0.5.3 (peer ^0.5.0)
+- `@effected/yaml` ^0.15.1 -> ^0.15.2 (peer ^0.15.0)
+
+### Thanks
+
+Thanks to [@spencerbeggs](https://github.com/spencerbeggs) and [@spencerbeggs\[bot\]](<[@spencerbeggs[bot]](https://github.com/spencerbeggs%5Bbot%5D)>) for their contributions!
+
+## 0.8.13
+
+### Maintenance
+
+#### Updates 1 catalog:effected version
+
+- `@effected/github-actions` ^0.13.1 -> ^0.13.2 (peer ^0.13.0)
+
+### Thanks
+
+Thanks to [@spencerbeggs\[bot\]](<[@spencerbeggs[bot]](https://github.com/spencerbeggs%5Bbot%5D)>) for their contributions!
+
+## 0.8.12
+
+### Maintenance
+
+#### Updates 1 catalog:effected version
+
+- `@effected/github-actions` ^0.13.0 -> ^0.13.1 (peer ^0.13.0)
+
+### Thanks
+
+Thanks to [@spencerbeggs\[bot\]](<[@spencerbeggs[bot]](https://github.com/spencerbeggs%5Bbot%5D)>) for their contributions!
+
+## 0.8.11
+
+### Maintenance
+
+#### Updates 1 catalog:effected version
+
+- `@effected/runtimes` ^0.6.0 -> ^0.6.1 (peer ^0.6.0)
+
+### Thanks
+
+Thanks to [@spencerbeggs\[bot\]](<[@spencerbeggs[bot]](https://github.com/spencerbeggs%5Bbot%5D)>) for their contributions!
+
+## 0.8.10
+
+### Maintenance
+
+#### Updates 2 catalog:effected versions
+
+- `@effected/schemastore` ^0.12.0 -> ^0.13.0 (peer ^0.13.0)
+- `@effected/schemastore-cli` ^0.12.0 -> ^0.13.0 (peer ^0.13.0)
+
+### Thanks
+
+Thanks to [@spencerbeggs\[bot\]](<[@spencerbeggs[bot]](https://github.com/spencerbeggs%5Bbot%5D)>) for their contributions!
+
+## 0.8.9
+
+### Maintenance
+
+#### Updates 2 catalog:effected versions
+
+- `@effected/schemastore` ^0.11.0 -> ^0.12.0 (peer ^0.12.0)
+- `@effected/schemastore-cli` ^0.11.0 -> ^0.12.0 (peer ^0.12.0) [#746][#746]
+
+### Thanks
+
+Thanks to [@spencerbeggs](https://github.com/spencerbeggs) for their contributions!
+
+[#746]: https://github.com/spencerbeggs/effected/pull/746
+
+## 0.8.8
+
+### Maintenance
+
+#### Updates 2 catalog:effected versions
+
+- `@effected/schemastore` ^0.10.0 -> ^0.11.0 (peer ^0.11.0)
+- `@effected/schemastore-cli` ^0.10.0 -> ^0.11.0 (peer ^0.11.0)
+
+### Thanks
+
+Thanks to [@spencerbeggs\[bot\]](<[@spencerbeggs[bot]](https://github.com/spencerbeggs%5Bbot%5D)>) for their contributions!
+
+## 0.8.7
+
+### Maintenance
+
+#### Updates 4 catalog:effected versions
+
+- `@effected/app` ^0.16.1 -> ^0.16.2 (peer ^0.16.0)
+- `@effected/cli` ^0.5.0 -> ^0.5.1 (peer ^0.5.0)
+- `@effected/config-file` ^0.9.0 -> ^0.10.0 (peer ^0.10.0)
+- `@effected/xdg` ^0.5.1 -> ^0.5.2 (peer ^0.5.0)
+
+### Thanks
+
+Thanks to [@spencerbeggs\[bot\]](<[@spencerbeggs[bot]](https://github.com/spencerbeggs%5Bbot%5D)>) for their contributions!
+
+## 0.8.6
+
+### Maintenance
+
+#### Updates 3 catalog:effected versions
+
+- `@effected/cli` ^0.4.1 -> ^0.5.0 (peer ^0.5.0)
+- `@effected/schemastore` ^0.9.0 -> ^0.9.1 (peer ^0.9.0)
+- `@effected/schemastore-cli` ^0.9.0 -> ^0.9.1 (peer ^0.9.0)
+
+### Thanks
+
+Thanks to [@spencerbeggs\[bot\]](<[@spencerbeggs[bot]](https://github.com/spencerbeggs%5Bbot%5D)>) for their contributions!
+
+## 0.8.5
+
+### Maintenance
+
+#### Updates 1 catalog:effected version
+
+- `@effected/commands` ^0.7.0 -> ^0.7.1 (peer ^0.7.0)
+
+### Thanks
+
+Thanks to [@spencerbeggs\[bot\]](<[@spencerbeggs[bot]](https://github.com/spencerbeggs%5Bbot%5D)>) for their contributions!
+
+## 0.8.4
+
+### Maintenance
+
+#### Updates 2 catalog:effected versions
+
+- `@effected/github-actions` ^0.12.0 -> ^0.13.0 (peer ^0.13.0)
+- `@effected/workspaces` ^0.21.1 -> ^0.22.0 (peer ^0.22.0)
+
+### Thanks
+
+Thanks to [@spencerbeggs\[bot\]](<[@spencerbeggs[bot]](https://github.com/spencerbeggs%5Bbot%5D)>) for their contributions!
+
+## 0.8.3
+
+### Maintenance
+
+#### Updates 1 catalog:effected version
+
+- `@effected/github` ^0.10.0 -> ^0.10.1 (peer ^0.10.0)
+
+### Thanks
+
+Thanks to [@spencerbeggs\[bot\]](<[@spencerbeggs[bot]](https://github.com/spencerbeggs%5Bbot%5D)>) for their contributions!
+
+## 0.8.2
+
+### Maintenance
+
+#### Updates 2 catalog:effected versions
+
+- `@effected/git` ^0.15.0 -> ^0.15.1 (peer ^0.15.0)
+- `@effected/yaml` ^0.15.0 -> ^0.15.1 (peer ^0.15.0) [#693][#693]
+
+### Thanks
+
+Thanks to [@spencerbeggs](https://github.com/spencerbeggs) for their contributions!
+
+[#693]: https://github.com/spencerbeggs/effected/pull/693
+
+## 0.8.1
+
+### Maintenance
+
+#### Updates 1 catalog:effected version
+
+- `@effected/schemastore` ^0.7.0 -> ^0.8.0 (peer ^0.8.0)
+
+### Thanks
+
+Thanks to [@spencerbeggs\[bot\]](<[@spencerbeggs[bot]](https://github.com/spencerbeggs%5Bbot%5D)>) for their contributions!
+
+## 0.8.0
+
+### Breaking Changes
+
+#### The whole kit tracks Effect `4.0.0-rc.115`
+
+- Every package's `effect` peer moves from `4.0.0-rc.112` to `4.0.0-rc.115`. The kit uses exact prerelease pins rather than a caret, so a consumer must move with it. This advance is the first whose Effect changes are not source-compatible with the previous pin, so a consumer that upgrades meets the same renames the kit did:
+
+- `SchemaTransformation.transformOrFail` and `SchemaGetter.transformOrFail` are `transformEffect`.
+
+- The `Config` constructors are PascalCase (`Config.String`, `Config.Redacted`, `Config.Int`, `Config.Boolean`, …) and `Config.mapOrFail` is `Config.mapEffect`.
+
+- `FileSystem.Size` and `FileSystem.SizeInput` are gone in favour of the `ByteSize` module: `File.Info.size` is a `ByteSize`, `File.seek` takes a `bigint`, `read`/`write` return a `number`.
+
+- The fast-check bridge (`effect/testing/FastCheck`, `Schema.toArbitrary`, the `fastCheck` property-test option) is removed in favour of `effect/unstable/arbitrary/Arbitrary`; `it.effect.prop` takes `arbitrary: { runs, size, seed, … }`.
+
+#### `@effected/schemastore` documents are open unless told otherwise
+
+- `Schema.ToJsonSchemaOptions.additionalProperties` became `onExcessProperty: "ignore" | "error"` upstream, and its default now mirrors the decoder's: generated object schemas carry `additionalProperties: true` unless `jsonSchema: { onExcessProperty: "error" }` is passed. `StoreDocument.fromSchema` passes the option through unchanged, so a document that was closed by default at rc.112 is open by default now. Pass `onExcessProperty: "error"` to keep a closed document; a generator that silently disagreed with the decoder it is paired with would be the worse default.
+
+#### `@effected/memfs` seeks before the start of a file fail
+
+- `File.seek` gained a `PlatformError` channel upstream, and memfs now matches Node: a seek whose resulting position would be negative fails with `BadArgument` ("Cannot seek before the start of the file") and leaves the cursor unchanged, where it previously stored the negative position and failed on the next read. No memfs-declared type changes; the `File`/`File.Info` shape changes are Effect's own, reaching consumers through the peer.
+
+### Documentation
+
+#### A `Schema.Class` root is annotated on the `Struct` it wraps
+
+- [Effect-TS/effect#8084](https://github.com/Effect-TS/effect/issues/8084), which the rc.112 notes carried as an open limitation, was closed upstream as by design: annotations passed as `Schema.Class`'s second argument sit on the class node, while the `$defs` entry is generated from the encoded fields `Struct`. Annotate that `Struct` — `Schema.Class<X>("X")(Schema.Struct({ … }).annotate({ title, description, "x-taplo": … }))` — and every key reaches the document. `@effected/schemastore`'s design doc and context files now state the rule instead of the limitation.
+
+#### The Claude Code and Copilot plugins teach the rc.115 surface
+
+- The `effect-v4-schema`, `effect-v4-testing` and `effect-v4-module-index` skills describe the native `Arbitrary` module in place of the fast-check bridge, including the migration traps met on this advance: the `size` clamp (default 10) that silently shrinks a property's string and array domains, the `-0` the generator's near-zero bias emits for an unbounded `Schema.Int` or any `Schema.Number`, which JSON and YAML cannot round-trip, and the absence of `oneof`/`constantFrom`/`array` combinators. `ByteSize` has a module-index row, the `Config` and CLI constructors are shown in their PascalCase spellings, and the session-start briefing reports rc.115 as the kit's pin. [#686][#686]
+
+### Dependencies
+
+| Dependency | Type | Action | From | To |
+| --- | --- | --- | --- | --- |
+| @effect/platform-node | devDependency | updated | 4.0.0-rc.112 | 4.0.0-rc.115 |
+| @effect/tsgo | devDependency | updated | 0.41.0 | 0.45.0 |
+| @effect/vitest | devDependency | updated | 4.0.0-rc.112 | 4.0.0-rc.115 |
+| effect | devDependency | updated | 4.0.0-rc.112 | 4.0.0-rc.115 |
+| effect | peerDependency | updated | 4.0.0-rc.112 | 4.0.0-rc.115 |
+
+### Maintenance
+
+#### Updates 30 catalog:effected versions
+
+- `@effected/app` ^0.15.0 -> ^0.16.0 (peer ^0.16.0)
+- `@effected/cli` ^0.3.1 -> ^0.4.0 (peer ^0.4.0)
+- `@effected/commands` ^0.6.1 -> ^0.7.0 (peer ^0.7.0)
+- `@effected/config-file` ^0.7.1 -> ^0.8.0 (peer ^0.8.0)
+- `@effected/git` ^0.14.0 -> ^0.15.0 (peer ^0.15.0)
+- `@effected/github` ^0.9.0 -> ^0.10.0 (peer ^0.10.0)
+- `@effected/github-actions` ^0.11.0 -> ^0.12.0 (peer ^0.12.0)
+- `@effected/github-references` ^0.2.0 -> ^0.3.0 (peer ^0.3.0)
+- `@effected/glob` ^0.5.0 -> ^0.6.0 (peer ^0.6.0)
+- `@effected/jsonc` ^0.10.0 -> ^0.11.0 (peer ^0.11.0)
+- `@effected/jsonl` ^0.4.0 -> ^0.5.0 (peer ^0.5.0)
+- `@effected/lockfiles` ^0.8.2 -> ^0.9.0 (peer ^0.9.0)
+- `@effected/markdown` ^0.9.2 -> ^0.10.0 (peer ^0.10.0)
+- `@effected/memfs` ^0.6.0 -> ^0.7.0 (peer ^0.7.0)
+- `@effected/npm` ^0.13.0 -> ^0.14.0 (peer ^0.14.0)
+- `@effected/package-json` ^0.14.1 -> ^0.15.0 (peer ^0.15.0)
+- `@effected/runtimes` ^0.5.2 -> ^0.6.0 (peer ^0.6.0)
+- `@effected/sbom` ^0.5.0 -> ^0.6.0 (peer ^0.6.0)
+- `@effected/schema-org` ^0.2.0 -> ^0.3.0 (peer ^0.3.0)
+- `@effected/schemastore` ^0.6.1 -> ^0.7.0 (peer ^0.7.0)
+- `@effected/semver` ^0.6.0 -> ^0.7.0 (peer ^0.7.0)
+- `@effected/spdx` ^0.6.0 -> ^0.7.0 (peer ^0.7.0)
+- `@effected/store` ^0.7.0 -> ^0.8.0 (peer ^0.8.0)
+- `@effected/templates` ^0.5.0 -> ^0.6.0 (peer ^0.6.0)
+- `@effected/toml` ^0.6.0 -> ^0.7.0 (peer ^0.7.0)
+- `@effected/tsconfig-json` ^0.8.2 -> ^0.9.0 (peer ^0.9.0)
+- `@effected/walker` ^0.7.0 -> ^0.8.0 (peer ^0.8.0)
+- `@effected/workspaces` ^0.20.3 -> ^0.21.0 (peer ^0.21.0)
+- `@effected/xdg` ^0.4.1 -> ^0.5.0 (peer ^0.5.0)
+- `@effected/yaml` ^0.14.0 -> ^0.15.0 (peer ^0.15.0)
+
+### Thanks
+
+Thanks to [@spencerbeggs](https://github.com/spencerbeggs) and [@spencerbeggs\[bot\]](<[@spencerbeggs[bot]](https://github.com/spencerbeggs%5Bbot%5D)>) for their contributions!
+
+[#686]: https://github.com/spencerbeggs/effected/pull/686
+
+## 0.7.7
+
+### Maintenance
+
+#### Updates 6 catalog:effected versions
+
+- `@effected/config-file` ^0.7.0 -> ^0.7.1 (peer ^0.7.0)
+- `@effected/jsonc` ^0.9.0 -> ^0.10.0 (peer ^0.10.0)
+- `@effected/lockfiles` ^0.8.1 -> ^0.8.2 (peer ^0.8.0)
+- `@effected/markdown` ^0.9.1 -> ^0.9.2 (peer ^0.9.0)
+- `@effected/package-json` ^0.14.0 -> ^0.14.1 (peer ^0.14.0)
+- `@effected/tsconfig-json` ^0.8.1 -> ^0.8.2 (peer ^0.8.0)
+
+### Thanks
+
+Thanks to [@spencerbeggs\[bot\]](<[@spencerbeggs[bot]](https://github.com/spencerbeggs%5Bbot%5D)>) for their contributions!
+
+## 0.7.6
+
+### Maintenance
+
+#### Updates 1 catalog:effected version
+
+- `@effected/schemastore` ^0.6.0 -> ^0.6.1 (peer ^0.6.0)
+
+### Thanks
+
+Thanks to [@spencerbeggs\[bot\]](<[@spencerbeggs[bot]](https://github.com/spencerbeggs%5Bbot%5D)>) for their contributions!
+
+## 0.7.5
+
+### Maintenance
+
+#### Updates 1 catalog:effected version
+
+- `@effected/runtimes` ^0.5.1 -> ^0.5.2 (peer ^0.5.0)
+
+### Thanks
+
+Thanks to [@spencerbeggs\[bot\]](<[@spencerbeggs[bot]](https://github.com/spencerbeggs%5Bbot%5D)>) for their contributions!
+
+## 0.7.4
+
+### Maintenance
+
+#### Updates 2 catalog:effected versions
+
+- `@effected/git` ^0.13.0 -> ^0.14.0 (peer ^0.14.0)
+- `@effected/workspaces` ^0.20.2 -> ^0.20.3 (peer ^0.20.0)
+
+### Thanks
+
+Thanks to [@spencerbeggs\[bot\]](<[@spencerbeggs[bot]](https://github.com/spencerbeggs%5Bbot%5D)>) for their contributions!
+
+## 0.7.3
+
+### Maintenance
+
+#### Updates 2 catalog:effected versions
+
+- `@effected/git` ^0.12.0 -> ^0.13.0 (peer ^0.13.0)
+- `@effected/workspaces` ^0.20.1 -> ^0.20.2 (peer ^0.20.0)
+
+### Thanks
+
+Thanks to [@spencerbeggs\[bot\]](<[@spencerbeggs[bot]](https://github.com/spencerbeggs%5Bbot%5D)>) for their contributions!
+
+## 0.7.2
+
+### Maintenance
+
+#### Updates 1 catalog:effected version
+
+- `@effected/runtimes` ^0.5.0 -> ^0.5.1 (peer ^0.5.0)
+
+### Thanks
+
+Thanks to [@spencerbeggs\[bot\]](<[@spencerbeggs[bot]](https://github.com/spencerbeggs%5Bbot%5D)>) for their contributions!
+
+## 0.7.1
+
+### Maintenance
+
+#### Updates 12 catalog:effected versions
+
+- `@effected/app` ^0.14.0 -> ^0.15.0 (peer ^0.15.0)
+- `@effected/cli` ^0.3.0 -> ^0.3.1 (peer ^0.3.0)
+- `@effected/commands` ^0.6.0 -> ^0.6.1 (peer ^0.6.0)
+- `@effected/config-file` ^0.6.0 -> ^0.7.0 (peer ^0.7.0)
+- `@effected/git` ^0.11.0 -> ^0.12.0 (peer ^0.12.0)
+- `@effected/lockfiles` ^0.8.0 -> ^0.8.1 (peer ^0.8.0)
+- `@effected/markdown` ^0.9.0 -> ^0.9.1 (peer ^0.9.0)
+- `@effected/tsconfig-json` ^0.8.0 -> ^0.8.1 (peer ^0.8.0)
+- `@effected/walker` ^0.6.0 -> ^0.7.0 (peer ^0.7.0)
+- `@effected/workspaces` ^0.20.0 -> ^0.20.1 (peer ^0.20.0)
+- `@effected/xdg` ^0.4.0 -> ^0.4.1 (peer ^0.4.0)
+- `@effected/yaml` ^0.13.0 -> ^0.14.0 (peer ^0.14.0)
+
+### Thanks
+
+Thanks to [@spencerbeggs\[bot\]](<[@spencerbeggs[bot]](https://github.com/spencerbeggs%5Bbot%5D)>) for their contributions!
+
 ## 0.7.0
 
 ### Breaking Changes
@@ -212,7 +1786,8 @@ Thanks to [@spencerbeggs\[bot\]](<[@spencerbeggs[bot]](https://github.com/spence
 
 - The README told you the command "fills in the version and the required
   integrity hash for you." Reproduced on pnpm 11.24.0, it does neither: the
-  entry it adds is written with no `+sha512-…` suffix, and every **other**&#10;`configDependencies` entry loses its suffix too.
+  entry it adds is written with no `+sha512-…` suffix, and every **other**
+  `configDependencies` entry loses its suffix too.
 
 ```text
 BEFORE: "@savvy-web/pnpm-plugin-silk": 0.30.0+sha512-B3vQOdaC…
@@ -225,7 +1800,8 @@ AFTER:  "@effected/pnpm-plugin-effect": 0.6.11     ← added without integrity
   can run hooks, so this silently removes the guard on the packages with the
   most reach.
 
-- The README now documents the hazard and the remediation — recover a hash with&#10;`npm view <pkg> dist.integrity` and write it in by hand — beside the install
+- The README now documents the hazard and the remediation — recover a hash with
+  `npm view <pkg> dist.integrity` and write it in by hand — beside the install
   step that causes it. Found by a consumer following that step. [#543][#543]
 
 ### Thanks
@@ -260,7 +1836,8 @@ Thanks to [@spencerbeggs](https://github.com/spencerbeggs) for their contributio
 * The upgrade CLI they delegate to walks the catalog literal, so a publishable
   package absent from it was invisible: `catalog:check` reported "Catalogs are in
   sync" on a tree whose catalog was incomplete, and the only thing that noticed
-  was a test computing membership separately. `check` now exits non-zero and&#10;`sync` refuses before writing, both naming the missing packages and how to add
+  was a test computing membership separately. `check` now exits non-zero and
+  `sync` refuses before writing, both naming the missing packages and how to add
   them.
 
 * The membership test stays, pinning the same rule independently: the gate and
@@ -518,7 +2095,8 @@ Thanks to [@spencerbeggs](https://github.com/spencerbeggs) for their contributio
   	}
   }
   ```
-  Because each key names the exact satellite version it covers, an `@effect`&#10;satellite one beta ahead of or behind the pinned `effect` no longer raises a
+  Because each key names the exact satellite version it covers, an `@effect`
+  satellite one beta ahead of or behind the pinned `effect` no longer raises a
   peer warning, while a same-named Effect v3 satellite's genuinely unmet peer
   still does. The table is materialized into the plugin's config between
   sentinel comments and regenerated by the package's `pnpm:export` flow, so

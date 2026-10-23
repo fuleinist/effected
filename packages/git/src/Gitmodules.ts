@@ -22,7 +22,7 @@ export class GitmodulesEntry extends Schema.Class<GitmodulesEntry>("GitmodulesEn
 	 * lines — so the check bites only on hand-built entries, matching
 	 * `GitConfig.addSection`'s refusal of `[\n\r\0]` subsections.
 	 */
-	name: Schema.String.check(Schema.isPattern(/^[^\n\r\0]*$/)),
+	name: Schema.String.check(Schema.isPattern(/^[^\n\r\0]*$/u)),
 	/** The submodule's path relative to the superproject root (`submodule.<name>.path`). */
 	path: Schema.String,
 	/** The submodule's remote URL (`submodule.<name>.url`). */
@@ -269,7 +269,7 @@ export class Gitmodules extends Schema.Class<Gitmodules>("Gitmodules")({
 			// `decodeTo` unifies the transformation against the target's Encoded
 			// type, which no longer satisfies the method-bearing instance type
 			// once the class carries `stringify`.
-			SchemaTransformation.transformOrFail<(typeof Gitmodules)["Encoded"], string>({
+			SchemaTransformation.transformEffect<(typeof Gitmodules)["Encoded"], string>({
 				decode: (text: string) => {
 					const result = Gitmodules.parseResult(text);
 					return Result.isSuccess(result)

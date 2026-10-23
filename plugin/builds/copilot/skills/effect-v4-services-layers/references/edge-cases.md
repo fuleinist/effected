@@ -1,0 +1,261 @@
+# Service and layer edge cases
+
+Narrow situations that are dead ends until you have seen them once. None is
+day-to-day wiring; each costs a full session the first time.
+
+## Split graphs: two resolved copies of one package are two services
+
+Observed 2026-08-14 during the consumer-unblock release wave.
+
+**At the type level** a `Context.Service` tag's identity is the class itself —
+the module instance that declared it. When a dependency graph resolves TWO
+copies of one `@effected` package — e.g. a consumer's caret range and a
+sibling's newer 0.x minor resolving separately (on the 0.x line every minor is
+major-like to semver, so `^0.12.0` and `0.13.0` do not unify) — each copy
+declares its own tag. A layer built from one copy cannot satisfy a requirement
+expressed by the other, even though the source text is byte-identical.
+
+The failure mode is the trap: it surfaces as **"service not provided" in a
+graph that visibly provides it** — never as a version error — so the reader
+goes hunting a signature change that never happened. Check the resolution
+first: `pnpm why @effected/<pkg>` (or `npm ls @effected/<pkg>`) listing the
+package twice IS the diagnosis.
+
+**At runtime, identity is the id string, not the class** — `Context` is a map
+keyed by `key.key`, and `Context.Service` stores the id you passed verbatim
+(`self.key = key`, `Context.ts:261`; lookups go through `lookup(self,
+key.key)`, `Context.ts:936`). Two copies therefore carry the *same* runtime id
+and do interoperate if a value ever crosses between them. That is why the split
+graph is a compile-time failure and a duplicated bundle can be silently
+benign — and it is what makes the bundle probe below work.
+
+### Counting copies in a bundle: grep the tag id, never the class name
+
+`pnpm why` answers what *resolves*; this answers what actually got *inlined*. A
+duplicate that resolves does not necessarily reach `dist`, so both checks earn
+their place.
+
+Because the id is a string literal the runtime keys on, a minifier cannot mangle
+or drop it, and it appears **exactly once per class declaration**. The class
+name is an ordinary identifier that also matches method names, log strings and
+re-exports. Measured over `@effected/workspaces`' emitted JS:
+
+| service | bare class name | `@effected/workspaces/<Name>` |
+| --- | --- | --- |
+| `WorkspaceCatalogs` | 58 | **1** |
+| `WorkspaceDiscovery` | 71 | **1** |
+| `WorkspaceRoot` | 43 | **1** |
+
+All three genuinely have one copy. Read naively the bare column reports three
+duplicates that do not exist — and the danger is not the confusing number: a
+bare count that happens to *agree* with the truth validates the wrong method,
+which then outlives the measurement.
+
+```bash
+# One hit per copy. Two hits = two copies inlined.
+grep -o "@effected/<pkg>/<Service>" dist/main.js | wc -l
+```
+
+**Pair it with a control, or it proves nothing** — a probe returning 1 for
+everything is indistinguishable from a broken grep. Use a service you know is
+single-copy (`@effected/npm/NpmRegistry`, `@effected/github/GitBranch`), and
+confirm the probe can report 2 at all before believing a 1.
+
+Mitigation:
+
+- **Keep ranges converged across the graph** — one resolvable version of each
+  `@effected` package per consumer tree.
+- **When releasing a breaking 0.x minor, coordinate the dependents' range
+  widening in the same wave**, so no window exists in which two copies
+  resolve side by side.
+
+## Sync facades: per-call service values, not layers
+
+When a library exposes a synchronous escape hatch over consumer-supplied ops
+(build-tool plugin hooks, config-time contexts), build service **values** and
+provide them per call — do not reach for a Layer:
+
+- `FileSystem.makeNoop({ exists, readFileString })` overrides only the ops the
+  pipeline uses; every non-overridden member fails **typed `NotFound`** (core
+  behavior: `makeNoop` at `FileSystem.ts:654`, its `notFound` at `:592`) — document that asymmetry if your hand-rolled
+  counterparts throw defects instead.
+- Core `Path` has **no `makeNoop`/`layerNoop` analog** (`Path.ts` exports
+  `layer` at `:926` and nothing noop-shaped) — hand-roll a
+  `Path.Path` value (`Path.Path.of` with `[Path.TypeId]`, `Path.ts:34`), back
+  the members you use with the consumer's ops, and throw an informative defect
+  from the rest.
+- Wire with `Effect.provideService` per call. No Layer means no
+  memoize-by-reference trap when consecutive calls carry different ops.
+- Run with `Effect.runSyncExit` and unwrap the Exit honestly:
+  `Cause.findErrorOption` → throw the typed error as itself;
+  `Cause.findDefect` (returns a `Result`) → rethrow the defect. Never leak a
+  fiber-failure wrapper to a sync caller.
+
+Worked example: `@effected/tsconfig-json`'s `TsconfigLoaderSync`. The async
+pipeline stays the single implementation; the facade only adapts ops and
+unwraps.
+
+## A layer that must be fresh on every provide
+
+**Layers memoize by reference across provides.** When the same layer object
+is required at two places in one layer graph — two sibling layers that both
+depend on it, a nested `CliRuntime.main` and a test helper, two `it.effect`
+cases a `layer()` block shares — Effect builds it **once** and hands the
+same built service to every consumer, exactly the sharing that makes a pure
+service cheap to depend on repeatedly. A layer holding **per-run mutable
+state** — a findings cell, a counter, anything that should start over each
+time it is provided — breaks under that memoization: two logically separate
+"provides" quietly read and write the one cell the first provide built.
+
+`Layer.fresh(Layer.sync(...))` is the fix: it opts the layer out of
+reference memoization, so every site that provides it gets its own build.
+`@effected/cli`'s `CliExit.layer` is exactly this shape — a fresh
+`MutableRef` cell per provide, so a nested run or a test never inherits a
+prior run's exit code.
+
+```ts
+import { Context, Effect, Layer } from "effect"
+
+class Counter extends Context.Service<Counter, { readonly next: () => number }>()(
+  "edge-cases/Counter",
+) {}
+class A extends Context.Service<A, { readonly useA: () => number }>()("edge-cases/A") {}
+class B extends Context.Service<B, { readonly useB: () => number }>()("edge-cases/B") {}
+
+const makeCounterLayer = (): Layer.Layer<Counter> =>
+  Layer.sync(Counter, () => {
+    let n = 0
+    return { next: () => ++n }
+  })
+
+const layerA = (counter: Layer.Layer<Counter>) =>
+  Layer.effect(A, Effect.map(Counter, (c) => ({ useA: () => c.next() }))).pipe(Layer.provide(counter))
+const layerB = (counter: Layer.Layer<Counter>) =>
+  Layer.effect(B, Effect.map(Counter, (c) => ({ useB: () => c.next() }))).pipe(Layer.provide(counter))
+
+const readBoth = (counter: Layer.Layer<Counter>) =>
+  Effect.gen(function* () {
+    const a = yield* A
+    const b = yield* B
+    return [a.useA(), b.useB()] as const
+  }).pipe(Effect.provide(Layer.mergeAll(layerA(counter), layerB(counter))))
+
+const shared = makeCounterLayer()
+console.log("shared, no Layer.fresh:", await Effect.runPromise(readBoth(shared)))
+
+const fresh = Layer.fresh(makeCounterLayer())
+console.log("Layer.fresh:", await Effect.runPromise(readBoth(fresh)))
+```
+
+Prints `shared, no Layer.fresh: [ 1, 2 ]` then `Layer.fresh: [ 1, 1 ]`. Without
+`Layer.fresh`, `A` and `B` share one built `Counter`, so the second read
+continues the first's count. With it, each site's `Counter` starts at zero —
+the shape a per-run cell needs.
+
+## Heterogeneous requirement unions: annotate the collection up front
+
+When a wrapper collects several values that are generic in a requirements
+union — an array of resolvers, a list of layers feeding one generic
+parameter — TypeScript pins the type parameter from the **first** element and
+rejects the later, wider elements instead of widening the union:
+
+```ts
+import type { ConfigResolver } from "@effected/config-file"
+import { AppDirs, Xdg, XdgConfig } from "@effected/xdg"
+import type { FileSystem, Path } from "effect"
+
+declare const takeChain: <RR>(rs: ReadonlyArray<ConfigResolver<RR>>) => RR
+
+// WRONG — RR pins from the first element (AppDirs | FileSystem.FileSystem |
+// Path.Path); the second, wider element is rejected instead of widening the union.
+takeChain([
+  XdgConfig.resolver({ filename: "config.json" }),
+  // @ts-expect-error — Xdg is not assignable to the pinned AppDirs|FileSystem|Path union
+  XdgConfig.nativeResolver({ namespace: "mytool", filename: "config.json" }),
+])
+
+// RIGHT — state the full union where the collection is BUILT:
+const chain: ReadonlyArray<ConfigResolver<AppDirs | Xdg | FileSystem.FileSystem | Path.Path>> = [
+  XdgConfig.resolver({ filename: "config.json" }),
+  XdgConfig.nativeResolver({ namespace: "mytool", filename: "config.json" }),
+]
+takeChain(chain) // compiles
+```
+
+The annotation looks redundant — each element is individually assignable to
+it — but deleting it re-breaks inference at the call site; leave a comment
+saying so. Probed from inside `packages/app` (control `Effect.catchAll`
+failed to compile; the bare two-element chain failed on its second element;
+the annotated chain compiled clean). Surfaced by `AppConfig.layer` wrapping
+`ConfigFile.layer` in the `@effected/app` port.
+
+## A "takes your key over shape X" parameter accepts wider shapes
+
+A factory that provides a consumer-defined key — `layerAs(tag, options)`,
+`ConfigFile.layer(tag, options)` — usually types the key as
+`Context.Key<I, Shape>` or `Context.Service<I, Shape>`. Both accept a key over a
+**wider** shape:
+
+```ts
+class Wider extends Context.Service<Wider, StoreShape & { readonly extra: string }>()("app/Wider") {}
+
+declare const layerAs: <I>(tag: Context.Service<I, StoreShape>) => Layer.Layer<I>
+layerAs(Wider) // compiles — and the layer hands `Wider` a value with no `extra`
+```
+
+`Context.Key` declares its shape `out` (covariant), and although `Service` is
+`in out`, a class key is compared to the parameter **structurally**: its
+`of`/`use` members are methods, method parameters are bivariant, so the check
+is effectively covariant. A key whose shape adds members passes, and the
+consumer's `yield* Wider` then reads members the layer never supplied.
+
+Pin the shape. Infer it as `S`, then refuse any `S` that adds members:
+
+```ts
+declare const layerAs: <I, S extends StoreShape>(
+  tag: Context.Key<I, S> & ([StoreShape] extends [S] ? unknown : never),
+) => Layer.Layer<I>
+// inside: Layer.effect(tag as Context.Key<I, StoreShape>, make) — sound up to the limit below
+```
+
+An unrelated shape still fails with the usual "missing the following
+properties" message. A wider one fails as `Argument of type 'typeof Wider' is
+not assignable to parameter of type 'never'` — cryptic, so say so in the
+factory's TSDoc. Classes made by `Context.Service<I, StoreShape>()(id)` and
+function-style keys both still infer `I` cleanly. When the parameter list
+already has explicit-type-argument callers, add `S` last with a default
+(`S extends Shape = Shape`) so those calls keep compiling.
+
+**A generic shape needs the plain key back.** When the shape mentions a type
+parameter the factory infers, say `A` in `ConfigFileShape<A>`, the bare pin
+removes the key as an inference site for `A`: the key now infers only `S`.
+Any argument that relies on `A` coming from the key then breaks. A bare
+`MergeStrategy.firstMatch()` in the options is one, because it has no `A` of
+its own. `A` falls to `unknown`, and a correctly shaped key fails as "not
+assignable to parameter of type `Key<Self, ConfigFileShape<unknown>>`". Put
+the plain key back into the intersection so `A` is inferred from it again,
+and wrap the conditional's `A` in `NoInfer` so the conditional only checks:
+
+```ts
+declare const layer: <Self, A, I, S extends ConfigFileShape<A> = ConfigFileShape<A>>(
+  tag: Context.Key<Self, S> &
+    Context.Key<Self, ConfigFileShape<A>> &
+    ([ConfigFileShape<NoInfer<A>>] extends [S] ? unknown : never),
+  options: ConfigFileOptions<A, I>,
+) => Layer.Layer<Self>
+// inside: Layer.effect(tag, make) — the plain-key member makes the cast unnecessary
+```
+
+The plain-key member does the work here. `NoInfer` on its own does not
+restore inference, so test the factory with an argument whose type comes only
+from the key.
+
+**The limit.** `S extends Shape` plus `[Shape] extends [S]` proves only
+mutual assignability, not identity, and assignability between shapes is still
+subject to method bivariance. A shape that redeclares a member in **method**
+syntax with a wider parameter — `rollback(toId: number | string)` where
+`StoreShape` declares `(toId: number)` — is assignable both ways, so it passes
+the pin, and the consumer may call `rollback("x")` on an implementation that
+only takes numbers. The pin rejects added members and incompatible shapes; it
+cannot see through method-syntax parameter bivariance. Document that limit
+next to the pin rather than calling the key "exactly" the shape.

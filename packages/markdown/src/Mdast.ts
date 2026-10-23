@@ -1,29 +1,6 @@
-/**
- * The remark-ecosystem interop boundary: projection between this package's
- * node classes and plain mdast JSON.
- *
- * @remarks
- * `Mdast.toMdast` projects a parsed {@link Root} to plain spec-valid mdast
- * objects — fidelity extras stripped, optional fields spelled the way
- * `mdast-util-from-markdown` spells them (explicit `null`/`false` where the
- * reference utility emits them), so the output deep-equals what the remark
- * ecosystem produces and consumes. `Mdast.fromMdast` admits foreign plain
- * mdast back into the package's Schema node classes, synthesizing zero-width
- * sentinel positions where unist leaves them optional.
- *
- * The emission target is `mdast-util-from-markdown@2.0.3` (the vendored
- * interop corpus pin): `list.ordered`/`start`/`spread` and
- * `listItem.spread`/`checked` always explicit (`null` for unknown `start`/
- * `checked`), `code.lang`/`meta` and every `title` explicit `null` when
- * absent, `image.alt`/`imageReference.alt` always a string. Under unist's
- * null-equals-absent convention for optional fields this stays spec-valid
- * mdast; it is also byte-identical to the reference utility's output, which
- * is what interop means operationally. GFM shapes follow the same convention
- * from `mdast-util-gfm`; the frontmatter capture projects to mdast's
- * `yaml`/`toml` literal nodes, and a `json` capture projects to a
- * `json`-typed literal node per the `mdast-util-frontmatter` custom-preset
- * convention (presets name the node type after the language).
- */
+// The remark-ecosystem interop boundary: projection between this package's
+// node classes and plain mdast JSON. The emission conventions are documented on
+// the exported `Mdast` class.
 
 import { Effect, Result, Schema, SchemaIssue } from "effect";
 import { MAX_NESTING_DEPTH } from "./internal/limits.js";
@@ -56,15 +33,26 @@ export interface MdastNode {
 }
 
 /**
+ * Options for {@link Mdast.toText}, matching `mdast-util-to-string`'s.
+ *
+ * @public
+ */
+export interface MdastToTextOptions {
+	/** Whether an `image` or `imageReference` contributes its `alt` text. Defaults to `true`. */
+	readonly includeImageAlt?: boolean;
+	/** Whether an `html` node contributes its raw value. Defaults to `true`. */
+	readonly includeHtml?: boolean;
+}
+
+/**
  * Indicates that foreign mdast input failed to decode into the package's
  * node classes.
  *
  * @remarks
  * `issue` carries the **structured** schema failure — at runtime a
  * `SchemaIssue.Issue` tree, reachable through `_tag` and nested `issues` —
- * never a stringified rendering (the `FrontmatterValidationError`
- * precedent). It is typed `unknown` because v4 exposes no `Schema` for
- * `Issue`; narrow it with the `SchemaIssue` module.
+ * never a stringified rendering. It is typed `unknown` because core exposes
+ * no `Schema` for `Issue`; narrow it with the `SchemaIssue` module.
  *
  * @public
  */
@@ -104,7 +92,7 @@ const projectChildren = (children: ReadonlyArray<AnyNode>): Array<Record<string,
 	children.map((child) => projectNode(child));
 
 // This package's Code.value carries its final line terminator (the engine's
-// convention, pinned since P1); mdast-util-from-markdown stores the value
+// convention); mdast-util-from-markdown stores the value
 // without it and lets renderers re-add it. The projection translates: strip
 // one final line ending going out, restore it coming back in.
 const stripFinalLineEnding = (value: string): string =>
@@ -153,6 +141,12 @@ const projectNode = (node: AnyNode): Record<string, unknown> => {
 		case "heading":
 			return { type: "heading", depth: node.depth, children: projectChildren(node.children), position };
 		case "text":
+			return {
+				type: "text",
+				value: node.value,
+				...(node.escapeStyle === undefined ? {} : { escapeStyle: node.escapeStyle }),
+				position,
+			};
 		case "html":
 		case "inlineCode":
 			return { type: node.type, value: node.value, position };
@@ -311,7 +305,11 @@ const admittedFields: Readonly<Record<string, ReadonlyArray<string>>> = {
 	tableCell: [],
 	break: [],
 	thematicBreak: [],
-	text: ["value"],
+	// `escapeStyle` is this package's emitter instruction, not spec mdast,
+	// but it is the one extra a plain tree must be able to carry in: a
+	// consumer building mdast for `Markdown.stringify` has no decoded node to
+	// set it on until after admission.
+	text: ["value", "escapeStyle"],
 	html: ["value"],
 	inlineCode: ["value"],
 	heading: ["depth"],
@@ -458,7 +456,41 @@ const normalizeMdxAttribute = (value: unknown): unknown => {
 const decodeRoot = Schema.decodeUnknownResult(Root);
 
 /**
- * The mdast projection facade — the remark-ecosystem interop boundary.
+ * Projects parsed markdown trees to plain mdast JSON and admits foreign mdast
+ * back into this package's node classes, for interop with the remark
+ * ecosystem.
+ *
+ * @remarks
+ * `Mdast.toMdast` projects a parsed {@link Root} to plain spec-valid mdast
+ * objects — fidelity extras stripped, optional fields spelled the way
+ * `mdast-util-from-markdown@2.0.3` spells them (explicit `null`/`false` where
+ * the reference utility emits them), so the output deep-equals what the
+ * remark ecosystem produces and consumes: `list.ordered`/`start`/`spread` and
+ * `listItem.spread`/`checked` are always explicit (`null` for unknown
+ * `start`/`checked`), `code.lang`/`meta` and every `title` are explicit
+ * `null` when absent, and `image.alt`/`imageReference.alt` are always
+ * strings. Under unist's null-equals-absent convention for optional fields
+ * this stays spec-valid mdast. GFM shapes follow the same convention from
+ * `mdast-util-gfm`; the frontmatter capture projects to mdast's `yaml`/`toml`
+ * literal nodes, and a `json` capture projects to a `json`-typed literal node
+ * per the `mdast-util-frontmatter` custom-preset convention (presets name the
+ * node type after the language).
+ *
+ * `Mdast.fromMdast` admits foreign plain mdast back into the package's Schema
+ * node classes, synthesizing zero-width sentinel positions where unist leaves
+ * them optional.
+ *
+ * @example
+ * ```ts
+ * import { Markdown, Mdast } from "@effected/markdown";
+ * import { Effect } from "effect";
+ *
+ * const program = Effect.gen(function* () {
+ *   const root = yield* Markdown.parse("# Hello\n");
+ *   const plain = Mdast.toMdast(root); // plain mdast JSON
+ *   return yield* Mdast.fromMdast(plain); // back to node classes
+ * });
+ * ```
  *
  * @public
  */
@@ -507,6 +539,12 @@ export class Mdast {
 	 * admits spec mdast and nothing else) but it is silent, which is why it is
 	 * called out here.
 	 *
+	 * **One exception: `escapeStyle` on a `text` node is admitted.** It
+	 * records no source spelling; it is the caller's instruction to the
+	 * emitter (`"literal"` writes the value verbatim, see {@link Text}), so a
+	 * plain tree built for `Markdown.stringify` can carry it straight in. A
+	 * value outside `"canonical" | "literal"` fails the decode typed.
+	 *
 	 * @param input - A plain mdast tree, typically a `root`.
 	 * @returns A `Result` succeeding with the decoded {@link Root}, or
 	 *   failing with {@link MdastDecodeError} carrying the structured issue.
@@ -522,9 +560,11 @@ export class Mdast {
 			return Result.mapError(decodeRoot(normalizeNode(input)), (error) => new MdastDecodeError({ issue: error.issue }));
 		} catch (error) {
 			if (!(error instanceof NestingDepthExceededError)) throw error;
-			return Result.fail(new MdastDecodeError({
-				issue: new SchemaIssue.InvalidValue({ message: error.message }),
-			}));
+			return Result.fail(
+				new MdastDecodeError({
+					issue: new SchemaIssue.InvalidValue({ message: error.message }),
+				}),
+			);
 		}
 	}
 
@@ -540,4 +580,60 @@ export class Mdast {
 	static readonly fromMdast = Effect.fn("Mdast.fromMdast")((input: unknown) =>
 		Effect.fromResult(Mdast.fromMdastResult(input)),
 	);
+
+	/**
+	 * The plain-text content of a node, defined as `mdast-util-to-string`
+	 * applied to the node's {@link Mdast.toMdast} projection.
+	 *
+	 * @remarks
+	 * A node carrying a string `value` yields it (an `html` node only when
+	 * `includeHtml`); an `image` or `imageReference` yields its non-empty
+	 * `alt` when `includeImageAlt`; a node with children yields the
+	 * concatenation of its children's text; anything else — a `break`, a
+	 * `thematicBreak`, a `definition` — yields `""`. Both options default to
+	 * `true`. Pure and total.
+	 *
+	 * **Values are read as the projection spells them.** The one value the
+	 * projection changes is a `code` node's: this package keeps the final line
+	 * ending of a code block's content, plain mdast does not, so `toText`
+	 * strips it exactly as {@link Mdast.toMdast} does — `"let x"`, not
+	 * `"let x\n"`, for a fenced block holding one line.
+	 *
+	 * This is the remark-ecosystem derivation, and it deliberately differs
+	 * from the display derivation behind `DocumentHeading.text` and
+	 * `DocumentSection.text`, which render a hard break as a space and drop
+	 * raw HTML. Reach for `toText` when matching what remark tooling computes
+	 * (slugs, search indexes); reach for the document accessors for display.
+	 *
+	 * The walk recurses once per nesting level. Every tree `Markdown.parse` or
+	 * `Mdast.fromMdast` produces stays within the package's nesting cap, but a
+	 * hand-built tree nested far deeper than that can overflow the call stack.
+	 *
+	 * @param node - The node to flatten.
+	 * @param options - Optional {@link MdastToTextOptions}.
+	 * @returns The node's text content.
+	 */
+	static toText(node: MarkdownNode, options?: MdastToTextOptions): string {
+		return nodeText(node, options?.includeImageAlt ?? true, options?.includeHtml ?? true);
+	}
+}
+
+/** `mdast-util-to-string`'s `one`, over the node classes as `toMdast` projects them. */
+function nodeText(node: MarkdownNode, includeImageAlt: boolean, includeHtml: boolean): string {
+	if ("value" in node) {
+		if (node.type === "html") return includeHtml ? node.value : "";
+		// Read the value as `toMdast` projects it — the one value it changes.
+		return node.type === "code" ? stripFinalLineEnding(node.value) : node.value;
+	}
+	if (includeImageAlt && "alt" in node && node.alt) {
+		return node.alt;
+	}
+	if ("children" in node) {
+		let text = "";
+		for (const child of node.children as ReadonlyArray<MarkdownNode>) {
+			text += nodeText(child, includeImageAlt, includeHtml);
+		}
+		return text;
+	}
+	return "";
 }

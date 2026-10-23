@@ -1,6 +1,5 @@
 import { assert, describe, it } from "@effect/vitest";
-import { Redacted } from "effect";
-import { FastCheck } from "effect/testing";
+import { Arbitrary, Redacted, Schema } from "effect";
 import { REDACTED, Redaction } from "../src/Redaction.js";
 
 const secret = (value: string) => Redacted.make(value);
@@ -92,21 +91,21 @@ describe("Redaction.scrubArgs (heuristic backstop)", () => {
 
 describe("Redaction properties", () => {
 	// The invariant with teeth: a counterexample here is a leaked credential.
-	// Secrets made only of the placeholder's own characters are excluded —
-	// replacing "*" with "***" reintroduces the needle, which is a documented
-	// limitation rather than a defect.
-	it.prop(
-		"no secret value survives apply",
-		[FastCheck.string({ minLength: 1 }).filter((s) => !REDACTED.includes(s)), FastCheck.string(), FastCheck.string()],
-		([value, before, after]) => {
-			const text = `${before}${value}${after}`;
-			return !Redaction.apply(text, [secret(value)]).includes(value);
-		},
-	);
+	// Secrets containing the placeholder's own character are excluded — the
+	// "***" written in place of "*l" plus a following "l" spells "*l" again,
+	// and "aa***bb" scrubbed of "a***b" IS "a***b". A placeholder can always be
+	// re-formed from itself and its neighbours; that is a documented limitation
+	// rather than a defect.
+	const secretValue = Arbitrary.schema(Schema.NonEmptyString).pipe(Arbitrary.filter((s) => !s.includes("*")));
+
+	it.prop("no secret value survives apply", [secretValue, Schema.String, Schema.String], ([value, before, after]) => {
+		const text = `${before}${value}${after}`;
+		return !Redaction.apply(text, [secret(value)]).includes(value);
+	});
 
 	it.prop(
 		"no secret value survives applyArgs, in any position",
-		[FastCheck.string({ minLength: 1 }).filter((s) => !REDACTED.includes(s)), FastCheck.array(FastCheck.string())],
+		[secretValue, Schema.Array(Schema.String)],
 		([value, rest]) => {
 			const args = [...rest, value, `prefix-${value}-suffix`];
 			return Redaction.applyArgs(args, [secret(value)]).every((arg) => !arg.includes(value));

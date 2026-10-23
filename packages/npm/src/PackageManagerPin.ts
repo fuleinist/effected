@@ -1,9 +1,8 @@
 // The corepack pin triple `<name>@<version>[+<integrity>]` as a first-class
-// schema — e.g. `pnpm@11.17.0+sha512.abc…`. Previously the grammar existed only
-// as `@effected/package-json`'s `PackageManager.FromString` (bound to the
-// `packageManager` field); this module gives the triple itself a reusable home
-// beside the dependency vocabulary that already lives here (`IntegrityHash`,
-// `DependencySpecifier`).
+// schema — e.g. `pnpm@11.17.0+sha512.abc…`. `@effected/package-json`'s
+// `PackageManager.FromString` binds the same grammar to the `packageManager`
+// field; this module gives the triple itself a reusable home beside the
+// dependency vocabulary that lives here (`IntegrityHash`, `DependencySpecifier`).
 //
 // The one load-bearing grammar rule: the FIRST `+` after the version always
 // begins the integrity component. A pin's version NEVER carries semver build
@@ -60,9 +59,7 @@ export class InvalidPackageManagerPinError extends Schema.TaggedError<InvalidPac
  * Structurally identical to `@effected/workspaces`' `PackageManagerName` and
  * `@effected/commands`' `Launcher`, and assigns freely to both. It is
  * deliberately a mirror, not an import: either edge would point from this
- * package at a downstream consumer and invert the dependency tiers — the same
- * posture `@effected/github-actions`' `CheckState` takes toward
- * `@effected/github`'s conclusion literals.
+ * package at a downstream consumer and invert the dependency direction.
  *
  * **This four-literal set is narrower than the `packageManager` manifest field,
  * and the difference is deliberate.** `@effected/package-json`'s
@@ -170,7 +167,7 @@ export class PackageManagerPin extends Schema.Class<PackageManagerPin>("PackageM
 	static readonly FromString: Schema.Codec<PackageManagerPin, string> = Schema.String.pipe(
 		Schema.decodeTo(
 			Schema.instanceOf(PackageManagerPin),
-			SchemaTransformation.transformOrFail({
+			SchemaTransformation.transformEffect({
 				decode: (input: string) => {
 					const parsed = PackageManagerPin.parseResult(input);
 					return Result.isSuccess(parsed)
@@ -254,12 +251,20 @@ export class PackageManagerPin extends Schema.Class<PackageManagerPin>("PackageM
 	);
 
 	/**
+	 * The pin without its integrity: `<name>@<version>`
+	 * (`pnpm@12.6.0+sha512.<hex>` → `pnpm@12.6.0`), the bare form pnpm itself
+	 * writes to the `packageManager` field.
+	 */
+	get bare(): string {
+		return `${this.name}@${this.version.toString()}`;
+	}
+
+	/**
 	 * The canonical pin string: `<name>@<version>` or
 	 * `<name>@<version>+<integrity>`. The encode direction of
 	 * {@link PackageManagerPin.FromString} prints exactly this.
 	 */
 	override toString(): string {
-		const base = `${this.name}@${this.version.toString()}`;
-		return this.integrity === undefined ? base : `${base}+${this.integrity}`;
+		return this.integrity === undefined ? this.bare : `${this.bare}+${this.integrity}`;
 	}
 }

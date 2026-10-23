@@ -11,6 +11,7 @@ import { scanFrontmatter } from "./internal/blocks/frontmatter.js";
 import { MAX_NESTING_DEPTH } from "./internal/limits.js";
 import { preprocessLines } from "./internal/preprocess.js";
 import { normalizeLabelText } from "./internal/references.js";
+import { rootHeadingBounds } from "./internal/sectionBounds.js";
 import type { MarkdownParseError, MarkdownParseOptions } from "./Markdown.js";
 import { parsePassResult } from "./Markdown.js";
 import { MarkdownDiagnostic } from "./MarkdownDiagnostic.js";
@@ -285,26 +286,35 @@ const phrasingText = (nodes: ReadonlyArray<PhrasingContent>): string => {
  *
  * @remarks
  * The document is the lossless unit — `source` is retained so offsets on the
- * tree stay meaningful and so P4's edit/format layer can splice against the
- * exact bytes that were parsed.
+ * tree stay meaningful and so the edit and format layer can splice against
+ * the exact bytes that were parsed.
  *
  * `definitions` is an index over the {@link Definition} nodes that remain in
  * the tree, keyed by case-folded label with the first definition winning; it
  * is not a place they were moved to. References are emitted unresolved, so
  * resolution happens against this map.
  *
- * `diagnostics` is empty for every input the P1 parser accepts, and that is
- * the current state of the world rather than a missing feature: the plumbing
- * from the engine through to this field is real and exercised, but no P1
- * construct emits a non-fatal diagnostic yet. The producers arrive with the
- * conditions that warrant them — unresolved link references, and
- * present-but-unparseable frontmatter in P3. Read an empty array as "nothing
- * to report", not as "not implemented", and do not code against it staying
- * empty.
+ * `diagnostics` is empty for every input the parser currently accepts: the
+ * plumbing from the engine through to this field exists, but no construct
+ * emits a non-fatal diagnostic yet. Read an empty array as "nothing to
+ * report", and do not code against it staying empty — fatal conditions fail
+ * through `MarkdownParseError` instead.
  *
  * The navigation accessors (`headings`, `sections`, `links`) are derived
  * getters over the tree — no stored state, no parse-time cost, and they can
  * never disagree with the tree they read.
+ *
+ * @example
+ * ```ts
+ * import { MarkdownDocument } from "@effected/markdown";
+ * import { Effect } from "effect";
+ *
+ * const program = Effect.gen(function* () {
+ *   const doc = yield* MarkdownDocument.parse("# Title\n\nSee [docs](./docs.md).\n\n## Usage\n");
+ *   doc.headings.map((heading) => heading.text); // ["Title", "Usage"]
+ *   doc.links.map((link) => link.url); // ["./docs.md"]
+ * });
+ * ```
  *
  * @public
  */
@@ -391,47 +401,11 @@ export class MarkdownDocument extends Schema.Class<MarkdownDocument>("MarkdownDo
 	get sections(): ReadonlyArray<DocumentSection> {
 		const blocks = this.root.children;
 		const sections: Array<DocumentSection> = [];
-		const headings: Array<{ readonly index: number; readonly node: Heading }> = [];
-		for (let index = 0; index < blocks.length; index += 1) {
-			const block = blocks[index];
-			if (block !== undefined && block.type === "heading") {
-				headings.push({ index, node: block });
-			}
-		}
-		// `sections` boundaries are defined by ROOT headings only. Building that
-		// index once lets the boundary pass scan heading-to-heading instead of
-		// re-walking non-heading blocks for every section.
-		const nextByDepth: Array<number | undefined> = [
-			undefined,
-			undefined,
-			undefined,
-			undefined,
-			undefined,
-			undefined,
-			undefined,
-		];
-		const boundaryByHeading = new Array<number | undefined>(headings.length);
-		for (let index = headings.length - 1; index >= 0; index -= 1) {
-			const current = headings[index]?.node;
-			if (current === undefined) continue;
-			let boundary: number | undefined;
-			for (let depth = 1; depth <= current.depth; depth += 1) {
-				const candidate = nextByDepth[depth];
-				if (candidate !== undefined && (boundary === undefined || candidate < boundary)) {
-					boundary = candidate;
-				}
-			}
-			boundaryByHeading[index] = boundary;
-			nextByDepth[current.depth] = index;
-		}
-		for (let index = 0; index < headings.length; index += 1) {
-			const current = headings[index];
-			if (current === undefined) continue;
-			const block = current.node;
-			const boundaryHeading = boundaryByHeading[index];
-			const boundaryNode = boundaryHeading === undefined ? undefined : headings[boundaryHeading]?.node;
+		// `sections` boundaries are defined by ROOT headings only; the shared
+		// helper owns that rule so `MarkdownTransform.sections` cannot drift.
+		for (const { heading: block, index, end } of rootHeadingBounds(blocks)) {
+			const boundaryNode = blocks[end];
 			const boundary = boundaryNode === undefined ? this.source.length : boundaryNode.position.start.offset;
-			const end = boundaryHeading === undefined ? blocks.length : (headings[boundaryHeading]?.index ?? blocks.length);
 			const start = block.position.start.offset;
 			const bodyStart = block.position.end.offset;
 			sections.push(
@@ -440,7 +414,7 @@ export class MarkdownDocument extends Schema.Class<MarkdownDocument>("MarkdownDo
 					depth: block.depth,
 					range: MarkdownRange.make({ offset: start, length: boundary - start }),
 					children: blocks
-						.slice(current.index + 1, end)
+						.slice(index + 1, end)
 						// Navigation is prose-oriented: the frontmatter block and MDX
 						// ESM statements are metadata, not section content, so both
 						// are excluded — which is also what keeps this predicate's

@@ -1,5 +1,5 @@
 import { Cache, Context, Duration, Effect, Exit, Layer, Option, Schema } from "effect";
-import { ChildProcess, ChildProcessSpawner } from "effect/unstable/process";
+import { ChildProcess, ChildProcessSpawner } from "effect/process";
 import type { LocalExecError } from "./LocalExec.js";
 import { ExecContext, LocalExec } from "./LocalExec.js";
 import { Run } from "./Run.js";
@@ -196,8 +196,8 @@ const extractVersion = (probe: VersionProbe, stdout: string): Option.Option<stri
  * Presence is decided by whether the process **ran**, never by its exit code:
  * a tool whose `--version` exits non-zero still exists. Absence is a spawn
  * failure, which is why `Run.collect`'s typed failure is the signal here and
- * no shell (`command -v`) is involved — v3 interpolated the tool name into
- * `sh -c`, which was both an injection hazard and broken on Windows.
+ * no shell (`command -v`) is involved, so a tool name is never interpolated
+ * into a command line.
  */
 const probeLocation = (
 	command: ChildProcess.Command,
@@ -231,17 +231,17 @@ const make = Effect.fnUntraced(function* () {
 
 	// Cache the EVIDENCE, not the answer: `source` and `onMismatch` are applied
 	// per call, so a second Tool with different constraints gets the right answer
-	// without a second probe. v3 keyed resolved answers by name and silently
-	// handed the first caller's policy decision to the second.
+	// without a second probe.
 	//
 	// The key is (name, version probe) — exactly what the evidence depends on —
 	// as a `Schema.Class`, whose structural `Equal`/`Hash` the cache's
-	// `MutableHashMap` uses (verified against beta.101, nested union members
-	// included). Two tools differing only in policy share one probe; two
-	// differing in how they ask for a version do not.
+	// `MutableHashMap` uses, nested union members included. Two tools differing
+	// only in policy share one probe; two differing in how they ask for a
+	// version do not — pinned by "the cache stores EVIDENCE, so a second Tool
+	// with different constraints is answered correctly".
 	//
 	// `timeToLive` is not decoration: with a fixed TTL, core `Cache` memoizes a
-	// FAILED lookup for the entry's lifetime (probed 2026-07-25), so one
+	// FAILED lookup for the entry's lifetime, so one
 	// transient probe failure would mark a tool permanently absent.
 	const cache = yield* Cache.makeWith(
 		(key: EvidenceKey) =>
@@ -261,12 +261,13 @@ const make = Effect.fnUntraced(function* () {
 			// only the first:
 			//
 			// 1. A failed lookup (the LocalExec mechanism erroring) is memoized for
-			//    the entry's whole TTL by default — probed against beta.101 — so a
-			//    transient failure would stick for the process lifetime.
+			//    the entry's whole TTL by default, so a transient failure would
+			//    stick for the process lifetime.
 			// 2. "Not found" is a SUCCESSFUL lookup carrying negative evidence. Left
 			//    memoized, a tool installed mid-process (an action that provisions a
 			//    runtime and then uses it) stays absent forever, with nothing to
-			//    suggest why.
+			//    suggest why — pinned by "ABSENCE is not memoized — a tool installed
+			//    mid-process is found".
 			//
 			// A tool that exists does not stop existing; a tool that does not exist
 			// very often starts to.
@@ -375,9 +376,38 @@ const notStubbed = (method: string) => () =>
  * @remarks
  * Presence is proven by **running** the tool, never by a shell `command -v` and
  * never by a filesystem scan: a spawn that completes proves existence whatever
- * the exit code, and a spawn failure proves absence. That is one probe instead
- * of v3's two, it needs no shell (so a tool name is never interpolated into a
+ * the exit code, and a spawn failure proves absence. That is one probe per
+ * location, it needs no shell (so a tool name is never interpolated into a
  * command line), and it behaves the same on Windows.
+ *
+ * Discovery caches what probing learned (presence and versions), not the
+ * answer: each call applies its own `Tool.source` and `Tool.onMismatch` to the
+ * cached evidence. Only a tool that was found is remembered, so one installed
+ * mid-process is picked up on the next call; call `invalidate` to force a
+ * re-probe of a tool that changed.
+ *
+ * @example
+ * ```ts
+ * import { LocalExec, Run, Tool, ToolDiscovery } from "@effected/commands";
+ * import { NodeServices } from "@effect/platform-node";
+ * import { Effect, Layer } from "effect";
+ *
+ * const program = Effect.gen(function* () {
+ *   const discovery = yield* ToolDiscovery;
+ *   if (yield* discovery.isAvailable(Tool.named("git"))) {
+ *     const git = yield* discovery.resolve(Tool.named("git"));
+ *     return yield* Run.text(git.command("--version"));
+ *   }
+ *   return "no git";
+ * });
+ *
+ * const AppLayer = ToolDiscovery.layer.pipe(
+ *   Layer.provide(LocalExec.layerNone),
+ *   Layer.provide(NodeServices.layer),
+ * );
+ *
+ * Effect.runPromise(program.pipe(Effect.provide(AppLayer)));
+ * ```
  *
  * @public
  */

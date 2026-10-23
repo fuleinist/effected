@@ -2,7 +2,7 @@
 	"repos": {
 		"effect": {
 			"url": "https://github.com/Effect-TS/effect.git",
-			"ref": "effect@4.0.0-rc.112",
+			"ref": "effect@4.0.6",
 			"purpose": "Read-only Effect v4 source pinned to the tag matching the effect catalog — the authority on what v4 actually exports, plus the v3→v4 migration notes and the @effect/vitest reference implementation. Tracks the main Effect-TS/effect monorepo (v4 development moved back there on 2026-07-19 when the effect-smol repo was archived); vendored at .repos/effect since the 2026-07-24 rename, matching the path a consuming repo would use.",
 			"sparse": [
 				"packages/effect",
@@ -16,7 +16,6 @@
 				"layout": "Sparse checkout: packages/effect (core source + package.json exports map), packages/vitest (@effect/vitest reference implementation), migration/ (per-domain v3→v4 notes), ai-docs/, LLMS.md, MIGRATION.md.",
 				"keyPaths": {
 					"effect-source": "packages/effect/src",
-					"unstable-modules": "packages/effect/src/unstable",
 					"migration-notes": "migration",
 					"vitest-reference": "packages/vitest/src"
 				},
@@ -24,10 +23,64 @@
 			},
 			"notes": [
 				{
-					"id": "n-e776",
-					"date": "2026-09-05",
-					"ref": "effect@4.0.0-rc.112",
-					"note": "rc.112 (PR #7420) made JSON Schema dialect conversion PRESERVE custom keywords: the Draft-07 lowering carries unknown/custom keys through as opaque values, in place, including across prefixItems[i]->items[i] and trailing items->additionalItems. RESOLVED in @effected/schemastore this pin: AnnotationCarriers deleted as redundant (six preservation cases now pinned in __test__/annotation-carrying.test.ts, asserting on raw toDocumentDraft07 output), and the declared-family gate is now the package's own typed failure (UndeclaredAnnotationKeyError) instead of a side effect of core's drop. STILL OPEN: a Schema.Class's class-level annotations never reach the document (core emits from the encoded AST); a hoisted Schema.Struct keeps its own - Effect-TS/effect#8084, effected#606."
+					"id": "n-7921",
+					"date": "2026-09-19",
+					"ref": "effect@4.0.0-rc.116",
+					"note": "rc.115→rc.116 advance (2026-09-19): one kit source break — Stream.scan / Stream.scanEffect take a LazyArg initial state (Stream.scan(() => initial, fold)); hit once in jsonl Journal.projection. The other rc.116 breaks did not touch the kit but bite consumers: SchemaTransformation.make is makeTransformation, Transformation#compose is the dual SchemaTransformation.composeTransformation, new SchemaGetter.Getter / onSome / onNone are gone (Getter is a tagged union exposing only pipe; use SchemaGetter.map/compose/run and transformOptionalEffect), SchemaAST.Context.constructorDefault holds the Effect directly (no Link), ByteSize.Input string literals are checked at compile time (parse external strings with ByteSize.fromString), Effect.orElseSucceed passes the error to its fallback, Effect.isEffect narrows to Effect<unknown, unknown, unknown>, Stream.partition returns [passes, fails] with a capacity option, Stream.mapBoth takes onElement/onError. Arbitrary shrinking changed so replay tokens from rc.115 no longer reproduce. Published kit stayed bound to rc.115 through the packageExtensions bridge (grep \"@effected/[a-z-]+@[0-9.]+\\(effect@4\\.0\\.0-rc\\.116\\)\" in the lockfile must be empty until the toolchain republishes)."
+				},
+				{
+					"id": "n-99ea",
+					"date": "2026-09-22",
+					"ref": "effect@4.0.0-rc.117",
+					"note": "rc.116→rc.117 advance (2026-09-22): zero kit source breaks; a patch-only release. Consumer-visible changes: Queue.shutdown now returns false when the queue was already shut down or completed (previously always true), and Queue.shutdownUnsafe is new; Decision.Probability.criteria is optional (guard before reading criteria.true); SqlClient gains a releaseSavepoint option and the bundled clients (sqlite-node included) now RELEASE savepoints after nested transactions; Pool.makeWithTTL leak fixed; Schema gains ~40 NetAddress refinements (Ip/Mac Multicast/Unicast/Broadcast/Loopback/LinkLocal + FromString forms) and NetAddress.toCanonical/formatNativeHost/formatMulticastInterface; MCP output schemas normalize to object roots. unstable/cli and @effect/vitest peers unchanged. The toolchain still binds effect@rc.116 through its own regular deps (two copies by intent, no bridge)."
+				},
+				{
+					"id": "n-36d8",
+					"date": "2026-10-01",
+					"ref": "effect@4.0.0",
+					"note": "rc.118→4.0.0 GA advance (2026-10-01): zero kit source breaks; the catalog moves from lock (exact prerelease) to lock-minor (^4.0.0), so the installed effect is now the LOCKFILE's resolution, not the catalog literal — re-pin this tree when the lockfile's effect moves. Consumer-visible 4.0.0 changes: Array/Chunk/Effect/Record partition, their separate helpers and Option.partitionMap return [successes, failures] (was [failures, successes]; silent when both sides share a type); Schema.brand takes one identifier and is type-only (no AST annotation, not preserved by SchemaRepresentation); TestSchema.verifyLosslessTransformation is verifyRoundTrip and TestSchema is @stability unstable; Queue.State.takers holds Queue.Taker (entry.resume); Effect.race* interrupts losers still starting; RpcMessage.ExitEncoded interrupt fiberId admits null. Stability: APIs tagged @stability unstable may break in a minor; untagged APIs follow semver. src/unstable no longer exists — modules live at src/<area> (the keyPaths.unstable-modules entry is stale). Published kit stays on rc.118 via its own regular deps (two effect copies by intent); the pnpm-plugin-effect overrides pin platform-node-shared under the rc.117 and rc.118 platform-node parents."
+				},
+				{
+					"id": "n-c0ed",
+					"date": "2026-10-05",
+					"ref": "effect@4.0.1",
+					"note": "4.0.0→4.0.1 advance (2026-10-05): one kit source break — @effect/sql-sqlite-node SqliteClient.layer now fails with a typed SqlError (open, configure, WAL switch; Effect-TS/effect#8708) instead of dying, and retries a contended first WAL switch within busyTimeout (closes effected#932; the store warm-up workaround is retired). Store/Cache.layerSqlite map it via internal/sqlite.ts mapSetupError to their setup error. A missing parent directory is therefore TYPED now, not a defect. Layer has no mapError/fail in v4: re-raise via Layer.catchTag(..., () => Layer.effect(Tag, Effect.fail(e))). Other consumer-visible fixes: Stream.scan emits its initial state for empty streams; Effect.cached/Cache/RcRef treat interruption as abandonment; @effect/vitest deepStrictEqual no longer throws TypeError without a message; RPC stdio drains responses after stdin EOF; MCP optional class-decoded fields encode; ChildProcess honours forceKillAfter after a non-zero leader exit. sql-sqlite-node source is not vendored (sparse tree is packages/effect + vitest) — read it under node_modules/.pnpm."
+				},
+				{
+					"id": "n-5f95",
+					"date": "2026-10-07",
+					"ref": "effect@4.0.2",
+					"note": "4.0.1→4.0.2 advance (2026-10-07): zero kit source breaks. Every module and directly importable export now carries an explicit @stability tag (stable = strict semver, unstable = may break in a minor); newly unstable top-level modules include the platform contracts the kit requires in R — FileSystem, Path, PlatformError, Stdio, Terminal — plus Crypto, Graph, ByteSize, ErrorReporter, ExecutionPlan, LayerMap/LayerRef, Newtype, TxChunk, testing/TestConsole and the new Version module; encoding/Base64|Base64Url|Hex|EncodingError are stable. The added tag lines shifted most src line numbers (skill-anchors.json re-derived through the 460272d3..269a7c86 diff). Consumer-visible semantics: Effect.retry no longer retries a cause carrying a defect or interruption; Config.orElse recovers plain failures only and Config parsing preserves provider defects; Config.Record keeps separators inside values; Yaml.parse keep-chomping (|+ >+) and Toml.parse multiline-string CRLF trimming fixed (core parsers used by config-file, markdown frontmatter, lockfiles); Map/Set schema equivalence no longer equates proper subsets; Stream.peel/tapSink/zipLatest/groupBy/slidingSize fixes; Schema.toTaggedUnion/TaggedUnion expose .tag; interrupt-only spans are Unset with effect.fiber.interrupted; Cause.pretty drops the internal stack frame for non-object failures; AI tracing renamed to OTel GenAI (gen_ai.provider.name; WellKnownSystem/BaseAttributes/TokenAttributes removed); RPC span names default to the method; HTTP/SQL/OTLP tracing realigned to OTel conventions; McpServer.layerHttp gains allowSessionTermination."
+				},
+				{
+					"id": "n-504f",
+					"date": "2026-10-09",
+					"ref": "effect@4.0.2",
+					"note": "Supersedes n-36d8's stability line (\"untagged APIs follow semver\"): since 4.0.2 there are no untagged exports — every module and directly importable export carries an explicit @stability (stable = strict semver, unstable = may break in a minor; see n-5f95). Read the tag on the export itself, never infer stability from its absence. n-36d8's other facts (partition order, Schema.brand, lock-minor re-pin rule) still hold."
+				},
+				{
+					"id": "n-c0e4",
+					"date": "2026-10-11",
+					"ref": "effect@4.0.3",
+					"note": "4.0.2→4.0.3 advance (2026-10-11): zero kit TYPE breaks (forced workspace typecheck clean), but core published a day after its satellites (Effect-TS/effect#8994) and the kit now guards that permanently: pnpm-plugin-effect derives graph-wide `\"<name>@^4.0.0\": \"<catalog version>\"` overrides from the catalog via rolldown-pnpm-config's overridesFromCatalogs, so a missing core fails every consumer install loudly instead of pairing at import time. Kit changes the release forced or enabled: FileSystem File.read/readAlloc take { position?: bigint } and FileSystem.open takes noFollow (memfs implements both; the ReadOptions interface is tagged @since 4.1.0 in the 4.0.3 source yet already present); Stdio.stderrIsTerminal exists on the interface but the real TTY detection lives in @effect/platform-node-shared's NodeStdio.layer, Stdio.make defaults it to false (env TerminalEnv now reads it; the process.stderr.isTTY option is an override only); Prompt.Theme carries colors: boolean read by the wizard, filled by Ansi.detectColors() = stdout.isTTY && !NO_COLOR, which ignores FORCE_COLOR/TERM=dumb/agent audience, so cli's promptTheme sets it from the kit's own decision; Esc-cancels-a-prompt is NOT in 4.0.3 despite release notes suggesting it (zero escape handling in cli/Prompt.ts); Crypto.randomUUIDv4/v7 are now calls with optional { format: \"hex\" | \"bytes\" }; Schema.Int emits safe-integer min/max in JSON Schema (composed bounds via allOf, consumers with published schemas will see DRIFT); SchemaError toJSON/inspect is compact { _tag, message }; TestCrypto.layer(seed) requires a base Crypto and keeps its digest; CliOutput.displayWidth disagrees with the kit's oracle on OSC-8 links and 8k astral code points, so cli keeps its own table. The Node FileSystem/Stdio implementations are still not vendored (sparse tree) — read @effect/platform-node-shared under node_modules."
+				},
+				{
+					"id": "n-aac8",
+					"date": "2026-10-13",
+					"ref": "effect@4.0.4",
+					"note": "4.0.3→4.0.4 advance (2026-10-13): zero kit source breaks, no kit workaround retired (Effect-TS/effect#8499 Eof is still open, so @effected/mcp's StdinFrames guard stays). Consumer-visible: JSON Schema export tightens colliding bounds in place instead of allOf (Schema.Natural → minimum 0; Int.check(isGreaterThan(0)) → exclusiveMinimum 0 with no safe-integer minimum); Sink.takeUntil/takeUntilEffect stop at the match and return the rest as leftovers (Stream.takeUntil unchanged); Stream.toReadableStreamWith takes a `signal`; new experimental effect/graphql; McpServer.layerHttpRequestScoped (sessionless adapters only) for serverless hosts; HttpClient.retryTransient honours Retry-After. Not a bug, despite looking like one: string isMinLength(n) exports minLength ceil(n/2) (UTF-16 units vs code points; #6336/#8358). New ai/McpServer.ts code shifted its line anchors by +154."
+				},
+				{
+					"id": "n-092b",
+					"date": "2026-10-19",
+					"ref": "effect@4.0.5",
+					"note": "4.0.4→4.0.5 advance (2026-10-19): two kit TYPE breaks, both contract shape. (1) FileSystem.File.Info dev/ino/rdev/nlink/blocks are bigint (dev bigint, rest Option<bigint>); memfs's volume and NodeSyncFileSystem build them as bigint, the node-sync adapter mirrors core's toUint64 (BigInt.asUintN(64, …): Node's BigInt64Array reports values ≥2^63 negative), mode/uid/gid stay number. (2) Path gains resolveWithin(root, input): Option<string>; Path.make derives it, but a hand-built Path.Path.of value (tsconfig-json TsconfigLoaderSync's adapter) must supply it. Also: FileSystem.WatchOptions.onReady is new and core says custom watch backends MUST call it after installation — memfs's watch does not yet; core's watch now prefers a caller-provided WatchBackend service. TestClock.layer now provides its own Scheduler alongside Clock, and a nested TestClock resolves the REAL clock behind the outer one as liveClock (probe: nested withLive returned 0 on 4.0.4, wall time on 4.0.5) — the testclock skill said the opposite. Schema.toTaggedUnion rejects duplicate discriminants at compile time AND still throws at runtime (probed). Kept: StdinFrames @effect/rpc/ guard (Effect-TS/effect#8499 still open). Not a bug: the ae-wrong-input-file-type / harvest warnings in images/jwt/jsonl/cli issues.json come from the bundler's per-module AE pass resolving a package's self-name import to src, not from this advance (okf decision ui-declarations-reference-the-root-by-name)."
+				},
+				{
+					"id": "n-ac1d",
+					"date": "2026-10-22",
+					"ref": "effect@4.0.6",
+					"note": "4.0.5→4.0.6 advance (2026-10-22): two kit breaks. (1) TYPE: FileSystem.make requires lstat (#6428) — memfs volume (resolve with followFinalSymbolicLink:false), NodeSyncFileSystem (lstatSync via a statWith helper mirroring the adapter's statFactory) and the fault wrapper (intercept \"lstat\"; MemoryFileSystemFaultMethod derives from the interface, so an un-intercepted lstat would have been an accepted-but-dead fault key). (2) RUNTIME: when a defect joins a typed failure, the typed failure is DEMOTED to a Die (#9433; probed: fail(Cancelled)+dying finalizer is Fail,Die on 4.0.5 and Die(Cancelled),Die on 4.0.6) — CliUi.run's crash-beats-cancel path collected all Die reasons and so re-carried the cancel; it now excludes Cancelled defects. Also the node adapter maps EPERM→PermissionDenied (was Unknown); memfs errnoTag follows, caught by the node run of ErrnoParityContract. Workarounds: none retired — Effect-TS/effect#8499 (McpServer stdio Eof) still OPEN, StdinFrames guard stays; #8084 remains closed-by-design (note n-5158 removed for the limit; the rule lives in okf/modules/schemastore.md). Not bugs: core TerminalCapabilities lets NO_COLOR beat FORCE_COLOR while @effected/env follows Node (FORCE_COLOR wins); an installed CliOutput.Formatter still wins, so CliRuntime.main help agrees with the kit. Layer memoization of composed layers by identity (#9634) left every kit count unchanged; only a Layer.fresh dependency INSIDE a shared composed layer now builds once. PackedInstall e2e failures on a dev machine are a user-global pnprServer in ~/.config/pnpm/config.yaml hit through the test's dead proxy, not the advance."
 				}
 			]
 		},

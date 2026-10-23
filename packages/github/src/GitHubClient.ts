@@ -1,5 +1,5 @@
 import type { Redacted } from "effect";
-import { Config, Context, Effect, Layer, Option, Schema, Stream } from "effect";
+import { Clock, Config, Context, Effect, Layer, Option, Schema, Stream } from "effect";
 import { GitHubError } from "./GitHubError.js";
 import type { GraphQLDocument } from "./GraphQL.js";
 import { GitHubGraphQLError } from "./GraphQL.js";
@@ -134,7 +134,7 @@ export interface GitHubClientOptions {
 
 /**
  * One call served by {@link GitHubClient.layerFixture}, as recorded in
- * {@link GitHubFixtures.requested}.
+ * {@link (GitHubFixtures:interface).requested}.
  *
  * @public
  */
@@ -150,6 +150,90 @@ export interface RecordedCall {
 }
 
 /**
+ * A raw HTTP failure recorded for {@link GitHubClient.layerFixture}, made by
+ * {@link (GitHubFixtures:variable).failure}.
+ *
+ * @remarks
+ * Branded, so a fixture's data payload that happens to have a `status` and a
+ * `body` is never mistaken for a failure: only a value built by
+ * `GitHubFixtures.failure` fails the call. The brand is a registered symbol
+ * rather than the class identity, so a failure built by another resolved copy
+ * of this package is still recognized.
+ *
+ * @public
+ */
+export class RawFailure {
+	/** The HTTP status. */
+	readonly status: number;
+	/** The response headers, in any case. */
+	readonly headers: Readonly<Record<string, string>> | undefined;
+	/** The JSON body GitHub would send. */
+	readonly body: unknown;
+
+	/** @internal */
+	constructor(response: {
+		readonly status: number;
+		readonly headers?: Readonly<Record<string, string>> | undefined;
+		readonly body?: unknown;
+	}) {
+		this.status = response.status;
+		this.headers = response.headers;
+		this.body = response.body;
+	}
+}
+
+/** The brand every {@link RawFailure} carries; registered, so it is shared across package copies. */
+const RawFailureBrand: unique symbol = Symbol.for("@effected/github/RawFailure") as never;
+
+Object.defineProperty(RawFailure.prototype, RawFailureBrand, { value: true });
+
+/** Whether `value` is a {@link RawFailure}, from this copy of the package or another. */
+const isRawFailure = (value: unknown): value is RawFailure =>
+	typeof value === "object" && value !== null && (value as { [RawFailureBrand]?: unknown })[RawFailureBrand] === true;
+
+/**
+ * Builders for {@link (GitHubFixtures:interface)} entries.
+ *
+ * @public
+ */
+export const GitHubFixtures: {
+	/**
+	 * A raw failure: what GitHub answered, classified at call time by the same
+	 * classifier the live client uses.
+	 *
+	 * @remarks
+	 * Record it wherever a fixture accepts a `GitHubError` (`request`, and so
+	 * `requestDecoded`, and `paginate`). Each call fails with
+	 * `GitHubError.fromResponse(route, response, now)`, `now` read from `Clock`,
+	 * so a rate-limit reset header is measured against the `TestClock`. Prefer it
+	 * to a hand-built `GitHubError` when the test is about GitHub's actual
+	 * response: the classification is then the package's, not the test's.
+	 *
+	 * @example
+	 * ```ts
+	 * import { GitHubClient, GitHubFixtures } from "@effected/github";
+	 *
+	 * const layer = GitHubClient.layerFixture({
+	 *   request: {
+	 *     "POST /repos/{owner}/{repo}/releases": GitHubFixtures.failure({
+	 *       status: 422,
+	 *       body: {
+	 *         message: "Validation Failed",
+	 *         errors: [{ resource: "Release", code: "already_exists", field: "tag_name" }],
+	 *       },
+	 *     }),
+	 *   },
+	 * });
+	 * ```
+	 */
+	readonly failure: (response: {
+		readonly status: number;
+		readonly headers?: Readonly<Record<string, string>> | undefined;
+		readonly body?: unknown;
+	}) => RawFailure;
+} = { failure: (response) => new RawFailure(response) };
+
+/**
  * A recorded response table for {@link GitHubClient.layerFixture}.
  *
  * @public
@@ -162,14 +246,19 @@ export interface GitHubFixtures {
 	 * A recorded **`GitHubError` is the response**: the call fails with it. That
 	 * is how a suite stubs a 404 (or a rate-limit, or a 422) deliberately,
 	 * rather than relying on a route's absence to produce one — absence is a
-	 * wiring mistake and {@link GitHubFixtures.unstubbed} treats it as such.
+	 * wiring mistake and {@link (GitHubFixtures:interface).unstubbed} treats it as
+	 * such. A {@link RawFailure} from {@link (GitHubFixtures:variable).failure}
+	 * fails it too, classified from GitHub's raw response.
+	 *
+	 * A value of `undefined` counts as unstubbed, so stub a route that answers
+	 * with no body (a 204) with `null`.
 	 */
 	readonly request?: Readonly<Record<string, unknown>> | undefined;
 	/**
 	 * Keyed by route; the value is the whole collection, paged on demand — or a
-	 * `GitHubError` the paginated read fails with.
+	 * `GitHubError` or {@link RawFailure} the paginated read fails with.
 	 */
-	readonly paginate?: Readonly<Record<string, ReadonlyArray<unknown> | GitHubError>> | undefined;
+	readonly paginate?: Readonly<Record<string, ReadonlyArray<unknown> | GitHubError | RawFailure>> | undefined;
 	/** Keyed by document name; the value is the raw payload to decode. */
 	readonly graphql?: Readonly<Record<string, unknown>> | undefined;
 	/**
@@ -179,19 +268,17 @@ export interface GitHubFixtures {
 	 * A missing fixture is a **test wiring** mistake, not a condition the code
 	 * under test should handle, so the default kills the fiber rather than
 	 * entering the error channel — the same treatment an absent `graphql`
-	 * fixture has always had.
+	 * fixture gets.
 	 *
-	 * The default used to be `"fail"`, and the reason it changed is worth
-	 * knowing before you set it back: **a typed failure is only loud in code
-	 * that does not catch.** A consumer whose methods each catch `GitHubError`
-	 * and report it — a per-resource sync, say — turns a missing stub into a
-	 * *different execution path* rather than a failure, and the assertions then
-	 * fail for a new reason with nothing in any message naming a fixture. That
-	 * cost `@spencerbeggs/reposets` 28 tests reading as ordinary logic bugs.
+	 * Prefer `"die"` to `"fail"`: **a typed failure is only loud in code that
+	 * does not catch.** Code whose methods each catch `GitHubError` and report
+	 * it — a per-resource sync, say — turns a missing stub into a *different
+	 * execution path* rather than a failure, and the assertions then fail for a
+	 * new reason with nothing in any message naming a fixture.
 	 *
 	 * - `"die"` — defect naming the route. Loud in every consumer.
-	 * - `"fail"` — the old behaviour: `GitHubError.notFound`. Rarely what you
-	 *   want now that a recorded `GitHubError` value stubs a failure explicitly:
+	 * - `"fail"` — fail with `GitHubError.notFound`. Rarely what you want, since
+	 *   a recorded `GitHubError` value stubs a failure explicitly:
 	 *   `{ "GET /repos/{owner}/{repo}": GitHubError.notFound("read", "repo") }`
 	 *   says which route fails and why, where absence says only "unwired".
 	 * - `"empty"` — serve `{}` for a request and no items for a paginated read.
@@ -212,11 +299,6 @@ export interface GitHubFixtures {
 	 * **params** they were called with, which is what lets a suite assert that a
 	 * method sent the right `owner`/`repo`/body rather than only the right
 	 * route. `graphql` records the document name as `route`.
-	 *
-	 * Recording params was added for the resource modules ported in from
-	 * `@spencerbeggs/reposets`, whose ~80-line hand-rolled harness existed
-	 * because every one of their methods goes through `request` and a fixture
-	 * could assert nothing about them.
 	 */
 	readonly requested?: Array<RecordedCall> | undefined;
 }
@@ -242,12 +324,27 @@ const unstubbed = (member: string): never => {
  * literal and gets both sides typed, with no callback, no type parameter to
  * invent, and no cast.
  *
- * That is the whole point of this package. The surface it replaces was
- * `rest<T>(operation: string, fn: (octokit: any) => Promise<{ data: T }>)`,
- * where `T` was whatever the caller wrote and nothing connected it to the
- * endpoint. Four consumer repos paid for that with sixteen cast sites and three
- * hand-written octokit interfaces, one of which gave up and typed its methods as
- * `Record<string, (p: unknown) => Promise<{ data: unknown }>>`.
+ * Nothing here asks the caller to invent a response type: the route literal is
+ * the only thing written, and a mismatch between a route and its parameters is
+ * a compile error.
+ *
+ * @example
+ * ```ts
+ * import { GitHubClient } from "@effected/github";
+ * import { Effect, Redacted } from "effect";
+ *
+ * const program = Effect.gen(function* () {
+ *   const client = yield* GitHubClient;
+ *   const release = yield* client.request("GET /repos/{owner}/{repo}/releases/latest", {
+ *     owner: "effect-ts",
+ *     repo: "effect",
+ *   });
+ *   return release.tag_name;
+ * });
+ *
+ * const layer = GitHubClient.layerFromToken({ token: Redacted.make("ghp_example") });
+ * Effect.runPromise(program.pipe(Effect.provide(layer)));
+ * ```
  *
  * @public
  */
@@ -272,10 +369,7 @@ export class GitHubClient extends Context.Service<GitHubClient, GitHubClientShap
 	 * provides a provider instead of mutating the environment and a non-Actions
 	 * consumer can source the token however it likes.
 	 *
-	 * Construction fails with core's `ConfigError` — an honest "no token is
-	 * configured". The layer this replaces failed with a **wire-failure** error
-	 * type instead, which is why one consumer wrapped it in `Layer.orDie` under a
-	 * five-line comment explaining that the error did not mean what it said.
+	 * Construction fails with core's `ConfigError` when no token is configured.
 	 */
 	static readonly layerFromConfig = (
 		options: Omit<GitHubClientOptions, "token"> & { readonly name?: string | undefined } = {},
@@ -283,7 +377,7 @@ export class GitHubClient extends Context.Service<GitHubClient, GitHubClientShap
 		Layer.effect(
 			this,
 			Effect.gen(function* () {
-				const token = yield* Config.redacted(options.name ?? "GITHUB_TOKEN");
+				const token = yield* Config.Redacted(options.name ?? "GITHUB_TOKEN");
 				return yield* makeClientShape({ ...options, token });
 			}),
 		);
@@ -318,19 +412,20 @@ export class GitHubClient extends Context.Service<GitHubClient, GitHubClientShap
 	 * A double over recorded responses that **pages them for real**.
 	 *
 	 * @remarks
-	 * The one recorded-response double in this package, and the single narrow
-	 * exception to the no-behavior-reimplementing-doubles rule — safe precisely
-	 * because it reimplements nothing: it builds a `PageSource` over the recorded
+	 * The recorded-response double in this package. It reimplements no behavior:
+	 * it builds a `PageSource` over the recorded
 	 * array and hands it to the same `paginate` engine the live client uses, so
 	 * `perPage` and `maxPages` cannot behave differently here than in production.
 	 *
-	 * The double it replaces named its pagination parameters `_options` and
-	 * ignored them, returning every recorded page regardless of what the caller
-	 * asked for — which made every truncation path in every consumer
-	 * structurally untestable.
-	 *
 	 * `fixtures.requested` is appended to as the test runs, so a suite can assert
-	 * which routes were walked and at what page size.
+	 * which routes were walked, with what params and at what page size.
+	 *
+	 * **It records every call it serves, including one that fails.** A call
+	 * answered by a recorded `GitHubError` or a
+	 * {@link (GitHubFixtures:variable).failure} is recorded before it fails, so
+	 * one fixture both records the calls and classifies a raw failure the way
+	 * the live client would; there is no need to classify by hand inside a
+	 * {@link GitHubClient.layerTest} handler.
 	 */
 	static readonly layerFixture = (fixtures: GitHubFixtures): Layer.Layer<GitHubClient> =>
 		Layer.succeed(GitHubClient, makeFixture(fixtures));
@@ -446,6 +541,7 @@ const makeFixture = (fixtures: GitHubFixtures): GitHubClientShape => {
 
 		const recorded = fixtures.paginate?.[route];
 		if (recorded instanceof GitHubError) return Stream.fail(recorded);
+		if (isRawFailure(recorded)) return Stream.fromEffect(failWith(route, recorded));
 		const items = recorded;
 		if (items === undefined) {
 			switch (fixtures.unstubbed ?? "die") {
@@ -459,6 +555,10 @@ const makeFixture = (fixtures: GitHubFixtures): GitHubClientShape => {
 		}
 		return paginate<Rest.Item<R>>(() => fromArray(items as ReadonlyArray<Rest.Item<R>>, perPage), options?.maxPages);
 	};
+
+	// A raw failure is classified per call, against the current Clock.
+	const failWith = (route: string, failure: RawFailure): Effect.Effect<never, GitHubError> =>
+		Effect.flatMap(Clock.currentTimeMillis, (now) => Effect.fail(GitHubError.fromResponse(route, failure, now)));
 
 	// A missing fixture is wiring, not a domain condition — see `unstubbed`.
 	const missing = <A>(method: string, route: string): Effect.Effect<A, GitHubError> => {
@@ -479,6 +579,7 @@ const makeFixture = (fixtures: GitHubFixtures): GitHubClientShape => {
 			if (data === undefined) return missing<Rest.Data<R>>("GitHubClient.request", route);
 			// A recorded GitHubError IS the response: this is how a suite stubs a
 			// 404 deliberately, rather than relying on a route's absence.
+			if (isRawFailure(data)) return failWith(route, data);
 			return data instanceof GitHubError ? Effect.fail(data) : Effect.succeed(data as Rest.Data<R>);
 		},
 		requestDecoded: <A, I>(route: string, params: Record<string, unknown>, schema: Schema.Codec<A, I>) => {
@@ -486,6 +587,7 @@ const makeFixture = (fixtures: GitHubFixtures): GitHubClientShape => {
 			const data = fixtures.request?.[route];
 			if (data === undefined) return missing<A>("GitHubClient.requestDecoded", route);
 			if (data instanceof GitHubError) return Effect.fail(data);
+			if (isRawFailure(data)) return failWith(route, data);
 			return Schema.decodeUnknownEffect(schema)(data).pipe(
 				Effect.catchTag("SchemaError", (error) =>
 					Effect.fail(GitHubError.decode(route, "fixture did not match its schema", error)),

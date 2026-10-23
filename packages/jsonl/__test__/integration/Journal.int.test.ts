@@ -14,9 +14,9 @@ import {
 	Schema,
 	Scope,
 	Stream,
-	SubscriptionRef,
 } from "effect";
 import { Envelope, Journal, JsonlEvent, Line } from "../../src/index.js";
+import { NodeJournalWatcher } from "../../src/node.js";
 
 /**
  * The only tests that provide a platform layer — the boundary discipline made
@@ -30,9 +30,20 @@ const Started = JsonlEvent.make("started", {
 });
 const events = [Started] as const;
 
-class TmpJournal extends Journal.Service<TmpJournal>()("test/TmpJournal", { events }) {}
+/** The temp file's path, known only at run time — what the config `Effect` reads. */
+class TmpPath extends Context.Service<TmpPath, string>()("test/TmpPath") {}
 
-const platform = Layer.mergeAll(NodeFileSystem.layer, NodePath.layer);
+class TmpJournal extends Journal.Service<TmpJournal>()("test/TmpJournal", {
+	events,
+	config: Effect.gen(function* () {
+		return { path: yield* TmpPath };
+	}),
+}) {}
+
+/** The journal at `file`. Each BUILD of it is its own journal, as a separate process's would be. */
+const journalAt = (file: string) => TmpJournal.layer.pipe(Layer.provide(Layer.succeed(TmpPath, file)));
+
+const platform = Layer.mergeAll(NodeFileSystem.layer, NodePath.layer, NodeJournalWatcher.layer);
 
 /** Run `body` against a real journal file in a scoped temp directory. */
 const withJournal = <A, E>(
@@ -44,7 +55,7 @@ const withJournal = <A, E>(
 		const dir = yield* fs.makeTempDirectoryScoped();
 		const file = path.join(dir, "journal.jsonl");
 		// Bound ONCE, as the const-binding rule requires.
-		const layer = TmpJournal.layer({ path: file });
+		const layer = journalAt(file);
 		return yield* Effect.gen(function* () {
 			const journal = yield* TmpJournal;
 			yield* journal.create;
@@ -103,7 +114,7 @@ describe("Journal integration", () => {
 			const path = yield* Path.Path;
 			const dir = yield* fs.makeTempDirectoryScoped();
 			const file = path.join(dir, "two-writers.jsonl");
-			const layer = TmpJournal.layer({ path: file });
+			const layer = journalAt(file);
 			const scope = yield* Scope.make();
 			const context = yield* Layer.build(layer).pipe(Effect.provideService(Scope.Scope, scope));
 			const journal = Context.get(context, TmpJournal);
@@ -133,10 +144,10 @@ describe("Journal integration", () => {
 			const text = yield* fs.readFileString(file);
 			const lines = Line.split(text);
 			assert.strictEqual(lines.length, 3, "three lines, one per writer's write");
-			assert.strictEqual(first.line.offset, lines[0]?.offset, "our first append is where the file says");
-			assert.strictEqual(first.line.end, lines[0]?.end);
-			assert.strictEqual(third.line.offset, lines[2]?.offset, "and so is the one that followed the foreign line");
-			assert.strictEqual(third.line.end, lines[2]?.end);
+			assert.strictEqual(first.position.offset, lines[0]?.offset, "our first append is where the file says");
+			assert.strictEqual(first.position.end, lines[0]?.end);
+			assert.strictEqual(third.position.offset, lines[2]?.offset, "and so is the one that followed the foreign line");
+			assert.strictEqual(third.position.end, lines[2]?.end);
 
 			const all = yield* Stream.runCollect(journal.query());
 			assert.deepStrictEqual(
@@ -145,7 +156,7 @@ describe("Journal integration", () => {
 				"every line reads back, in file order",
 			);
 			for (let index = 0; index < all.length - 1; index++) {
-				assert.strictEqual(all[index]?.line.end, all[index + 1]?.line.offset, "no gap and no overlap");
+				assert.strictEqual(all[index]?.position.end, all[index + 1]?.position.offset, "no gap and no overlap");
 			}
 			yield* Scope.close(scope, Exit.void);
 		}).pipe(Effect.scoped, Effect.provide(platform)),
@@ -158,7 +169,7 @@ describe("Journal integration", () => {
 			const dir = yield* fs.makeTempDirectoryScoped();
 			const file = path.join(dir, "journal.jsonl");
 
-			const first = TmpJournal.layer({ path: file });
+			const first = journalAt(file);
 			yield* Effect.gen(function* () {
 				const journal = yield* TmpJournal;
 				yield* journal.create;
@@ -167,10 +178,10 @@ describe("Journal integration", () => {
 
 			// A separate layer — a stand-in for a second process — seeds `latest`
 			// from disk at construction and sees the first's append.
-			const second = TmpJournal.layer({ path: file });
+			const second = journalAt(file);
 			const seen = yield* Effect.gen(function* () {
 				const journal = yield* TmpJournal;
-				return yield* SubscriptionRef.get(journal.latest);
+				return yield* journal.latest;
 			}).pipe(Effect.provide(second));
 
 			const envelope = Option.getOrThrow(seen);
@@ -192,16 +203,64 @@ describe("Journal integration", () => {
 			})}\n`;
 			yield* fs.writeFile(file, new TextEncoder().encode(`\uFEFF${line}`));
 
-			const layer = TmpJournal.layer({ path: file });
+			const layer = journalAt(file);
 			const seen = yield* Effect.gen(function* () {
 				const journal = yield* TmpJournal;
-				return yield* SubscriptionRef.get(journal.latest);
+				return yield* journal.latest;
 			}).pipe(Effect.provide(layer));
 
 			const envelope = Option.getOrThrow(seen);
-			assert.strictEqual(envelope.line.offset, 0, "offsets are post-BOM relative");
+			assert.strictEqual(envelope.position.offset, 0, "offsets are post-BOM relative");
 			assert.deepStrictEqual(envelope.data, { round: 1, phase: "p" });
 		}).pipe(Effect.scoped, Effect.provide(platform)),
+	);
+
+	// `it.live` for the same reason as the flagship below: it waits on real
+	// filesystem events, which a TestClock-bound timeout could never bound.
+	it.live(
+		"a journal REPLACED by a rename-over is followed onto the new file",
+		() =>
+			Effect.gen(function* () {
+				const fs = yield* FileSystem.FileSystem;
+				const path = yield* Path.Path;
+				const dir = yield* fs.makeTempDirectoryScoped();
+				const file = path.join(dir, "replaced.jsonl");
+				const lineFor = (round: number) =>
+					`${JSON.stringify({ at: "2026-01-01T00:00:00.000Z", event: "started", data: { round, phase: "theirs" } })}\n`;
+				yield* fs.writeFileString(file, lineFor(1));
+
+				const scope = yield* Scope.make();
+				const context = yield* Layer.build(journalAt(file)).pipe(Effect.provideService(Scope.Scope, scope));
+				const reader = Context.get(context, TmpJournal);
+
+				const reaches = (round: number) =>
+					reader.latestChanges.pipe(
+						Stream.filter((latest) => Option.isSome(latest) && latest.value.data.round === round),
+						Stream.take(1),
+						Stream.runDrain,
+					);
+
+				// Atomic replacement, as an editor or a `mv tmp journal` does it: a new
+				// inode takes the path. A node watch stays on the old inode and reports
+				// nothing more, so unless the watch ENDS here and re-arms, the journal
+				// is blind to everything appended from now on.
+				const temporary = path.join(dir, "replaced.jsonl.tmp");
+				yield* fs.writeFileString(temporary, lineFor(5));
+				yield* fs.rename(temporary, file);
+				yield* reaches(5);
+
+				// A cooperating foreign writer appends to the replacement.
+				yield* Effect.scoped(
+					Effect.gen(function* () {
+						const handle = yield* fs.open(file, { flag: "a" });
+						yield* handle.writeAll(new TextEncoder().encode(lineFor(7)));
+					}),
+				);
+				yield* reaches(7);
+
+				yield* Scope.close(scope, Exit.void);
+			}).pipe(Effect.scoped, Effect.provide(platform), Effect.timeout(Duration.seconds(20))),
+		30_000,
 	);
 
 	// THE FLAGSHIP — acceptance criterion 3.
@@ -225,8 +284,8 @@ describe("Journal integration", () => {
 
 				// Two independently-built layers over the same path — the stand-in for
 				// two processes, or two MCP servers in sibling repos.
-				const writerLayer = TmpJournal.layer({ path: file });
-				const readerLayer = TmpJournal.layer({ path: file });
+				const writerLayer = journalAt(file);
+				const readerLayer = journalAt(file);
 
 				const writerScope = yield* Scope.make();
 				const readerScope = yield* Scope.make();

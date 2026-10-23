@@ -1,3 +1,4 @@
+import type { SectionParseError } from "@effected/templates";
 import { CommentStyle, SectionDialect, SectionDocument, SectionId } from "@effected/templates";
 import { Effect, Option, Result, Schema } from "effect";
 
@@ -11,7 +12,7 @@ import { Effect, Option, Result, Schema } from "effect";
  * key written to the wire (`namespace.key.region`), and a dot inside a part
  * would make two different documents spell the same marker.
  */
-const NamePart = Schema.String.check(Schema.isPattern(/^[A-Za-z0-9][A-Za-z0-9_-]*$/));
+const NamePart = Schema.String.check(Schema.isPattern(/^[A-Za-z0-9][A-Za-z0-9_-]*$/u));
 
 /**
  * The marker vocabulary every managed document is written with: HTML comments
@@ -87,6 +88,14 @@ const STRUCTURAL_KIND = {
 	duplicateSection: "duplicateRegion",
 } as const;
 
+/** A structurally corrupt region layout, in this surface's vocabulary. */
+const structural = (failure: SectionParseError): ManagedDocumentError =>
+	new ManagedDocumentError({
+		kind: STRUCTURAL_KIND[failure.reason],
+		line: failure.line,
+		...(failure.key === undefined ? {} : { key: failure.key }),
+	});
+
 /**
  * Options identifying a managed document inside a text that may not carry one
  * yet.
@@ -120,9 +129,8 @@ export interface ManagedDocumentSource {
  * region carrying the latest content, which is what makes a check that
  * resolves many times safe to re-render.
  *
- * The region engine is `@effected/templates`' pure `SectionDocument` —
- * reused, not reinvented — fixed to the HTML comment style and a
- * region-specific phrase. Everything here is string → string; the GitHub
+ * The region engine is `@effected/templates`' pure `SectionDocument`, fixed to
+ * the HTML comment style and a region-specific phrase. Everything here is string → string; the GitHub
  * write path composes this with `PullRequestComment` (whose `CommentMarker`
  * renders the *same* sentinel for the same namespace and key) or a PR-body
  * update in `@effected/github`.
@@ -168,19 +176,8 @@ export class ManagedDocument extends Schema.Class<ManagedDocument>("ManagedDocum
 	 * a silent choice would destroy content a human wrote.
 	 */
 	static parseResult(source: ManagedDocumentSource): Result.Result<ManagedDocument, ManagedDocumentError> {
-		const text = source.text ?? "";
-		const scanned = SectionDocument.parseResult(text, REGION_DIALECT);
-		if (Result.isFailure(scanned)) {
-			const failure = scanned.failure;
-			return Result.fail(
-				new ManagedDocumentError({
-					kind: STRUCTURAL_KIND[failure.reason],
-					line: failure.line,
-					...(failure.key === undefined ? {} : { key: failure.key }),
-				}),
-			);
-		}
-		return Result.succeed(ManagedDocument.make({ namespace: source.namespace, key: source.key, text }));
+		const document = ManagedDocument.make({ namespace: source.namespace, key: source.key, text: source.text ?? "" });
+		return Result.map(Result.mapError(document.scan(), structural), () => document);
 	}
 
 	/**
@@ -206,8 +203,7 @@ export class ManagedDocument extends Schema.Class<ManagedDocument>("ManagedDocum
 
 	/** The content of one region, if the document carries it. */
 	region(key: string): Option.Option<string> {
-		const found = this.ownRegions().find((entry) => entry.key === key);
-		return found === undefined ? Option.none() : Option.some(found.content);
+		return Option.map(this.entry(key), (found) => found.content);
 	}
 
 	/**
@@ -257,7 +253,7 @@ export class ManagedDocument extends Schema.Class<ManagedDocument>("ManagedDocum
 	 * call keeps its content *and* its metadata untouched — and never
 	 * participates in region addressability: a region is found by key alone,
 	 * so changing metadata updates the region in place. A two-element entry
-	 * behaves exactly as it always has. Names must match
+	 * supplies no metadata. Names must match
 	 * `[A-Za-z][A-Za-z0-9_-]*` and values may not contain `"` or a line
 	 * break; violations fail typed as `invalidAttribute`.
 	 *
@@ -268,16 +264,9 @@ export class ManagedDocument extends Schema.Class<ManagedDocument>("ManagedDocum
 	withRegionsResult(
 		entries: ReadonlyArray<readonly [key: string, content: string, meta?: Readonly<Record<string, string>>]>,
 	): Result.Result<ManagedDocument, ManagedDocumentError> {
-		const parsed = SectionDocument.parseResult(this.text, REGION_DIALECT);
+		const parsed = this.scan();
 		if (Result.isFailure(parsed)) {
-			const failure = parsed.failure;
-			return Result.fail(
-				new ManagedDocumentError({
-					kind: STRUCTURAL_KIND[failure.reason],
-					line: failure.line,
-					...(failure.key === undefined ? {} : { key: failure.key }),
-				}),
-			);
+			return Result.fail(structural(parsed.failure));
 		}
 		const declared = entries.map(([key, content, meta]) =>
 			SectionId.make({ key: this.wireKey(key), commentStyle: CommentStyle.html }).section(content, meta),
@@ -315,15 +304,29 @@ export class ManagedDocument extends Schema.Class<ManagedDocument>("ManagedDocum
 		return Effect.fromResult(this.withRegionsResult(entries));
 	}
 
+	// The scan of `text`, once: the instance is immutable and every accessor
+	// reads the same layout, so `CheckDocument.reconcile`'s parse → regions →
+	// withRegions pass scans the body once rather than three times.
+	#scanned: Result.Result<SectionDocument, SectionParseError> | undefined;
+
+	private scan(): Result.Result<SectionDocument, SectionParseError> {
+		this.#scanned ??= SectionDocument.parseResult(this.text, REGION_DIALECT);
+		return this.#scanned;
+	}
+
+	/** What every wire key of this document's regions begins with. */
+	private get wirePrefix(): string {
+		return `${this.namespace}.${this.key}.`;
+	}
+
 	/** The marker key a region is written under: `namespace.key.region`. */
 	private wireKey(region: string): string {
-		return `${this.namespace}.${this.key}.${region}`;
+		return `${this.wirePrefix}${region}`;
 	}
 
 	/** The region key back out of a wire key, for error reporting. */
 	private regionKeyOf(wireKey: string): string {
-		const prefix = `${this.namespace}.${this.key}.`;
-		return wireKey.startsWith(prefix) ? wireKey.slice(prefix.length) : wireKey;
+		return wireKey.startsWith(this.wirePrefix) ? wireKey.slice(this.wirePrefix.length) : wireKey;
 	}
 
 	/**
@@ -342,11 +345,11 @@ export class ManagedDocument extends Schema.Class<ManagedDocument>("ManagedDocum
 		readonly content: string;
 		readonly meta: Readonly<Record<string, string>>;
 	}> {
-		const parsed = SectionDocument.parseResult(this.text, REGION_DIALECT);
+		const parsed = this.scan();
 		if (Result.isFailure(parsed)) {
 			return [];
 		}
-		const prefix = `${this.namespace}.${this.key}.`;
+		const prefix = this.wirePrefix;
 		return parsed.success.sections
 			.filter((placed) => placed.section.key.startsWith(prefix))
 			.map((placed) => ({

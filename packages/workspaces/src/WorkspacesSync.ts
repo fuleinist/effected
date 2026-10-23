@@ -2,20 +2,15 @@
 //
 // Vitest's config-time project discovery cannot await, and it is the reason
 // this module exists — a Vitest plugin building its project list has nowhere to
-// run an Effect. The v3 README claimed "no node: imports leak into your code"
-// while its own sync module imported node:fs from the main entry; this one
-// imports NOTHING platform-shaped: the caller passes the file and path
+// run an Effect. It imports NOTHING platform-shaped: the caller passes the file and path
 // operations (`node:fs` / `node:path` satisfy them one-liner each), so the kit
 // source never touches `node:*` and never assumes posix. Windows correctness is
 // the consumer passing a win32-appropriate `path` (`node:path` on Windows, or
 // `node:path/win32` explicitly) — the `TsconfigLoaderSync` convention.
 //
-// What it does NOT do is keep a third pattern semantic. v3's sync module
-// hand-rolled its own YAML scrape and its own pattern expander (no `?` support,
-// different negation) in defiance of glob-core's own anti-drift mandate. This
-// compiles through the same `GlobSet` and walks the same worklist, so
-// `packages/**` means the same thing in both worlds — the issue-#62 fix
-// included.
+// It does not keep a second pattern semantic: it compiles through the same
+// `GlobSet` and walks the same worklist as the Effect enumerator, so
+// `packages/**` means the same thing in both worlds.
 
 import { GlobSet } from "@effected/glob";
 import { Yaml } from "@effected/yaml";
@@ -116,7 +111,9 @@ export interface SyncDirectoryEntry {
  * satisfies it verbatim:
  *
  * ```ts
+ * import { existsSync, readFileSync, readdirSync, statSync } from "node:fs";
  * import * as path from "node:path";
+ * import type { WorkspacesSyncOptions } from "@effected/workspaces";
  *
  * const options: WorkspacesSyncOptions = {
  * 	fileSystem: { exists: existsSync, readFile: (p) => readFileSync(p, "utf8"), readDirectory: (p) => readdirSync(p), isDirectory: (p) => statSync(p).isDirectory() },
@@ -164,8 +161,8 @@ export interface WorkspacesSyncOptions {
  * The same vocabulary the Effect surface fails with, deliberately: a member the
  * async `listPackages()` rejects as `missingName` is the member the sync facade
  * reports as `missingName`. `invalidYaml` is excluded because it describes the
- * `pnpm-workspace.yaml` read, not a manifest. There is no `missingVersion` —
- * a version-less manifest is a member on both surfaces.
+ * `pnpm-workspace.yaml` read, not a manifest. A version-less manifest is a
+ * member on both surfaces.
  *
  * The vocabulary is shared; the CHECKS are shared only as far as this list.
  * Both surfaces perform the same five: the file read (`read`), `JSON.parse`
@@ -187,10 +184,10 @@ export type WorkspaceDiscoverySkipKind = Exclude<WorkspaceDiscoveryError["kind"]
  *
  * @remarks
  * The sync facade is total, so it cannot fail the way `WorkspaceDiscovery`
- * does — but a skipped member must still be observable. Before this record
- * existed the skip was silent, and a hand-written fixture with one unusable
- * manifest enumerated as a plausible empty array indistinguishable from "no
- * workspaces configured" (issue #605). The fields mirror
+ * does — but a skipped member must still be observable. Without a report, a
+ * hand-written fixture with one unusable manifest would enumerate as a
+ * plausible empty array indistinguishable from "no workspaces configured". The
+ * fields mirror
  * `WorkspaceDiscoveryError`: `root`, `path`, `kind`, and on `cause` either the
  * caught throwable (`read` / `invalidJson`) or an `Error` carrying the same
  * sentence the Effect surface fails with (`invalidShape`). Only `missingName`
@@ -329,6 +326,34 @@ const isPackage = (options: WorkspacesSyncOptions, dir: string): boolean =>
 	options.fileSystem.exists(options.path.join(dir, "package.json"));
 
 /**
+ * Options for {@link findWorkspaceRootSync}: the consumer-supplied operations
+ * plus the ascent's ceiling.
+ *
+ * @public
+ */
+export interface FindWorkspaceRootSyncOptions extends WorkspacesSyncOptions {
+	/**
+	 * A ceiling directory, with the semantics of `FindWorkspaceRootOptions.stopAt`
+	 * on the Effect surface. The ascent stops after probing it, so an unmarked
+	 * `stopAt` returns `null` rather than silently adopting an enclosing
+	 * repository's workspace.
+	 *
+	 * @remarks
+	 * Inclusive: a ceiling that is itself a workspace root is returned. The
+	 * ceiling is resolved through the supplied {@link SyncPath.resolve} at
+	 * lookup time, so a relative one is taken against the process working
+	 * directory when the call runs (with `node:path`). A ceiling that names no
+	 * ancestor of `cwd` never matches, and the ascent runs to the filesystem
+	 * root. Omit it for the unbounded ascent.
+	 *
+	 * Pass `stopAt: cwd` for a checkout nested inside someone else's workspace
+	 * (a self-hosted runner, `actions/checkout` with `path:`): a checkout that is
+	 * itself a root still resolves, and one that is not returns `null`.
+	 */
+	readonly stopAt?: string | undefined;
+}
+
+/**
  * The nearest workspace root at or above `cwd`, or `null`.
  *
  * @remarks
@@ -341,16 +366,22 @@ const isPackage = (options: WorkspacesSyncOptions, dir: string): boolean =>
  * The signature is path-first, options second — the same shape as
  * {@link getWorkspacePackagesSync} and the rest of the kit's sync facades
  * (`TsconfigLoaderSync.load(configPath, options)`). `cwd` is required and
- * positional: the earlier options-bag form defaulted it to an ambient
- * `process.cwd()` read, which both broke the symmetry with its sibling and
- * was the module's one platform assumption.
+ * positional, so the function reads no ambient `process.cwd()`.
  *
  * Markers match the async service exactly: a `pnpm-workspace.yaml`, or a
  * `package.json` carrying a `workspaces` field.
  *
+ * The ascent is unbounded unless `options.stopAt` names a ceiling
+ * ({@link FindWorkspaceRootSyncOptions.stopAt}), with the Effect surface's
+ * semantics: inclusive, resolved at lookup time. Where `WorkspaceRoot.find`
+ * fails `WorkspaceRootNotFoundError` carrying the resolved ceiling, this
+ * returns `null` — the facade is total and has no error channel, and the
+ * caller already holds the ceiling it passed.
+ *
  * @param cwd - Where to start the ascent (typically `process.cwd()`),
  *   matching the Effect layers' `{ cwd }` option.
- * @param options - The consumer-supplied file and path operations.
+ * @param options - The consumer-supplied file and path operations, plus an
+ *   optional `stopAt` ceiling.
  *
  * @example
  * ```ts
@@ -371,15 +402,23 @@ const isPackage = (options: WorkspacesSyncOptions, dir: string): boolean =>
  *
  * @public
  */
-export const findWorkspaceRootSync = (cwd: string, options: WorkspacesSyncOptions): string | null => {
+export const findWorkspaceRootSync = (cwd: string, options: FindWorkspaceRootSyncOptions): string | null => {
 	const { fileSystem, path } = options;
 	let current = path.resolve(cwd);
+	// Resolved at lookup time, exactly as `WorkspaceRoot.find` resolves it: the
+	// comparison below is string equality, so an unresolved ceiling would never
+	// match and would silently degrade to the unbounded ascent it exists to stop.
+	const ceiling = options.stopAt === undefined ? undefined : path.resolve(options.stopAt);
 	// Bounded twice over: `dirname` is a fixpoint at the filesystem root, and the
 	// depth cap guards a pathological path implementation that never reaches one.
 	for (let depth = 0; depth < MAX_ENUMERATION_DEPTH * 8; depth++) {
 		if (fileSystem.exists(path.join(current, "pnpm-workspace.yaml"))) return current;
 		const manifest = readJson(fileSystem, path.join(current, "package.json"));
 		if (manifest?.workspaces !== undefined && manifest.workspaces !== null) return current;
+		// Inclusive: the ceiling itself was just probed. A ceiling naming no
+		// ancestor never matches and the ascent runs to the filesystem root —
+		// walker's rule, which the Effect surface inherits.
+		if (ceiling !== undefined && current === ceiling) return null;
 		const parent = path.dirname(current);
 		if (parent === current) return null;
 		current = parent;
@@ -510,12 +549,10 @@ export interface GetWorkspacePackagesSyncOptions extends WorkspacesSyncOptions {
 	 * though this function is total and has no error channel to raise it on.
 	 *
 	 * @remarks
-	 * Omit it and skips are simply not reported, which is the pre-existing
-	 * behaviour; nothing is logged in its place. The callback is invoked
-	 * synchronously, before the result is returned, in enumeration order —
-	 * members first, then the root, which is read last even though it is
-	 * returned first. Its
-	 * result is discarded, and a throw from it propagates: the facade is total
+	 * Omit it and skips are simply not reported; nothing is logged in its
+	 * place. The callback is invoked synchronously, before the result is
+	 * returned, in enumeration order — members first, then the root, which is
+	 * read last even though it is returned first. Its result is discarded, and a throw from it propagates: the facade is total
 	 * over *data*, not over caller mistakes, exactly as a bad `maxDepth` is.
 	 */
 	readonly onSkip?: ((skip: WorkspaceDiscoverySkip) => void) | undefined;

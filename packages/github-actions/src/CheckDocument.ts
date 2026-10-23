@@ -1,5 +1,6 @@
 import { Clock, Context, Duration, Effect, Latch, Layer, Ref, Schema, Semaphore } from "effect";
 import { CheckState } from "./CheckState.js";
+import { unstubbed } from "./internal/unstubbed.js";
 import { ManagedDocument } from "./ManagedDocument.js";
 
 /**
@@ -28,6 +29,13 @@ export class CheckReport extends Schema.Class<CheckReport>("CheckReport")({
 	url: Schema.optionalKey(Schema.String),
 }) {}
 
+/** What each {@link CheckDocumentError} kind reads as. */
+const KIND_PROSE = {
+	render: "The check document could not be regenerated from the reported state",
+	read: "Reading the check document's current text failed",
+	sink: "Writing the check document failed",
+} as const;
+
 /**
  * Raised when the check document cannot be regenerated, read back or written.
  *
@@ -49,11 +57,7 @@ export class CheckDocumentError extends Schema.TaggedError<CheckDocumentError>()
 	cause: Schema.optionalKey(Schema.Defect()),
 }) {
 	override get message(): string {
-		return this.kind === "render"
-			? "The check document could not be regenerated from the reported state"
-			: this.kind === "read"
-				? "Reading the check document's current text failed"
-				: "Writing the check document failed";
+		return KIND_PROSE[this.kind];
 	}
 }
 
@@ -97,14 +101,14 @@ export class CheckDocumentStamp extends Schema.Class<CheckDocumentStamp>("CheckD
 	}
 }
 
+/** A total order over two comparable values. */
+const order = <T extends string | number>(left: T, right: T): number => (left === right ? 0 : left < right ? -1 : 1);
+
 /** Epoch order when both sides parse as dates, lexical otherwise. */
 const compareAt = (left: string, right: string): number => {
 	const leftEpoch = Date.parse(left);
 	const rightEpoch = Date.parse(right);
-	if (!Number.isNaN(leftEpoch) && !Number.isNaN(rightEpoch)) {
-		return leftEpoch === rightEpoch ? 0 : leftEpoch < rightEpoch ? -1 : 1;
-	}
-	return left === right ? 0 : left < right ? -1 : 1;
+	return Number.isNaN(leftEpoch) || Number.isNaN(rightEpoch) ? order(left, right) : order(leftEpoch, rightEpoch);
 };
 
 /**
@@ -123,10 +127,10 @@ const compareRunId = (left: string, right: string): number => {
 		const leftNumber = Number(left);
 		const rightNumber = Number(right);
 		if (Number.isFinite(leftNumber) && Number.isFinite(rightNumber)) {
-			return leftNumber === rightNumber ? 0 : leftNumber < rightNumber ? -1 : 1;
+			return order(leftNumber, rightNumber);
 		}
 	}
-	return left === right ? 0 : left < right ? -1 : 1;
+	return order(left, right);
 };
 
 /** The stamp a document's own regions carry, when they carry one. */
@@ -158,8 +162,7 @@ const maxStampOf = (
  * render was byte-identical, so no write was issued. `stale` — the document
  * already carries regions from a more recent run, so the pass was dropped
  * without writing (only possible when {@link CheckDocumentOptions.stamp} is
- * set). A plain literal union: callers that ignored `flush`'s old `void`
- * success stay compile-compatible.
+ * set).
  *
  * @public
  */
@@ -270,7 +273,8 @@ export interface CheckDocumentOptions {
 }
 
 /**
- * The check-run → document reconciler's surface.
+ * The members of the {@link CheckDocument} service: `report` a check's state,
+ * read the `checks` registry and `flush` the document.
  *
  * @public
  */
@@ -294,8 +298,7 @@ export interface CheckDocumentShape {
 	 * Rendering unchanged state issues no write. Call it at the end of a run;
 	 * the layer's finalizer also runs it, so the last burst of reports lands
 	 * even when the scope closes inside the quiet window. The outcome says
-	 * what the pass did — `written`, `unchanged` or `stale` — and callers
-	 * that ignore it stay exactly as they were.
+	 * what the pass did — `written`, `unchanged` or `stale`.
 	 */
 	readonly flush: Effect.Effect<CheckFlushOutcome, CheckDocumentError>;
 }
@@ -506,9 +509,10 @@ export class CheckDocument extends Context.Service<CheckDocument, CheckDocumentS
 
 	/** An inert double; unstubbed members die naming themselves. */
 	static readonly makeTest = (overrides: Partial<CheckDocumentShape> = {}): CheckDocumentShape => ({
-		report: overrides.report ?? (() => Effect.sync(() => unstubbed("report"))),
-		checks: overrides.checks ?? Effect.sync(() => unstubbed("checks")),
-		flush: overrides.flush ?? Effect.sync(() => unstubbed("flush")),
+		report: () => dies("report"),
+		checks: dies("checks"),
+		flush: dies("flush"),
+		...overrides,
 	});
 
 	/** {@link CheckDocument.makeTest} behind a `Layer`. */
@@ -516,6 +520,4 @@ export class CheckDocument extends Context.Service<CheckDocument, CheckDocumentS
 		Layer.succeed(CheckDocument, CheckDocument.makeTest(overrides));
 }
 
-const unstubbed = (member: string): never => {
-	throw new Error(`CheckDocument.makeTest: ${member}() was called but not stubbed — pass an override.`);
-};
+const dies = unstubbed("CheckDocument.makeTest");

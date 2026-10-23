@@ -1,5 +1,5 @@
 import { Stream } from "effect";
-import { ChildProcess } from "effect/unstable/process";
+import { ChildProcess } from "effect/process";
 
 /**
  * A pure `git` invocation: the spawnable command plus the diagnostic argv the
@@ -61,18 +61,30 @@ const redactUrlUserinfo = (value: string): string =>
  * against.
  *
  * @remarks
- * `LC_ALL=C` is pinned on every invocation because git's stderr
- * classification (used by `Git`'s error taxonomy) depends on a stable,
- * untranslated locale. `extendEnv: true` is required alongside it: the
- * default value of `extendEnv` is owned by the platform backend that
- * implements `ChildProcessSpawner`, not by core, so a command that needs
- * `PATH` and the rest of the parent environment must request the merge
- * explicitly rather than rely on an implementation-specific default.
+ * The returned command carries neither `cwd` NOR any environment pin — every
+ * `GitCommand` constructor produces a pure, context-free value. The caller
+ * (the `Git` service) applies both per invocation, via `ChildProcess.setCwd`
+ * and `ChildProcess.setEnv`, each of which returns a new command and leaves
+ * this one unchanged. The environment pins that make git's stderr
+ * classifiable and keep it from blocking on a prompt live in `Git.ts`
+ * alongside the classifier and the timeout they exist to serve; one of them
+ * is conditional on the caller's own environment, which a pure constructor
+ * must not read.
  *
- * The returned command carries no `cwd` — every `GitCommand` constructor
- * produces a cwd-less, pure value. The caller (the `Git` service) applies
- * the working directory per invocation via `ChildProcess.setCwd`, which
- * returns a new command and leaves this one unchanged.
+ * `extendEnv: true` is the one spawn option set here, and it is deliberately
+ * NOT one of those pins: it declares that a git invocation inherits the
+ * parent environment at all (git needs `PATH`, `HOME`, `SSH_AUTH_SOCK` and
+ * the rest to function), rather than forcing any particular value. It must
+ * be set at construction because core exposes no run-time combinator for it
+ * — only `setCwd` and `setEnv` — and its default is owned by whichever
+ * platform backend implements `ChildProcessSpawner`, not by core, so a
+ * command that needs the merge must request it explicitly rather than rely
+ * on an implementation-specific default.
+ *
+ * A consumer running one of these values directly gets a plain inherited
+ * environment and no pins. That is the honest shape: such a caller is
+ * running a custom command, and `Git`'s classification guarantees do not
+ * travel with the argv.
  */
 const git = (args: ReadonlyArray<GitArg>, stdin?: string): GitInvocation => {
 	const raw = args.map((arg) => (typeof arg === "string" ? arg : arg.value));
@@ -81,7 +93,6 @@ const git = (args: ReadonlyArray<GitArg>, stdin?: string): GitInvocation => {
 	);
 	return {
 		command: ChildProcess.make("git", raw, {
-			env: { LC_ALL: "C" },
 			extendEnv: true,
 			// stdin is baked into the pure command value (check-ignore's --stdin
 			// form): a single UTF-8 chunk, closed when done. Constructors without
@@ -243,8 +254,39 @@ const currentBranch = (): GitInvocation => git(["rev-parse", "--abbrev-ref", "HE
 // Implementation of GitCommand.repoRoot; the public contract lives on the static.
 const repoRoot = (): GitInvocation => git(["rev-parse", "--show-toplevel"]);
 
+// Implementation of GitCommand.commonDir; the public contract lives on the static.
+const commonDir = (): GitInvocation => git(["rev-parse", "--path-format=absolute", "--git-common-dir"]);
+
 // Implementation of GitCommand.commitInfo; the public contract lives on the static.
 const commitInfo = (ref = "HEAD"): GitInvocation => git(["log", "-1", "--format=%H%x00%G?%x00%B", ref]);
+
+/**
+ * The `git log` record format: a `\x1e` record opener followed by the five
+ * NUL-joined header fields the log listing decodes.
+ *
+ * `--name-only` output carries no other unambiguous record boundary — a
+ * commit's path lines and the next commit's header are both just bytes — so
+ * the separator is emitted by the format itself rather than inferred.
+ */
+const LOG_FORMAT = "--format=%x1e%H%x00%aI%x00%cI%x00%an%x00%ae";
+
+// Implementation of GitCommand.log; the public contract lives on the static.
+const log = (
+	paths: ReadonlyArray<string> = [],
+	follow = false,
+	limit?: number,
+	firstParentDiffMerges = false,
+): GitInvocation =>
+	git([
+		"log",
+		"-z",
+		LOG_FORMAT,
+		"--name-only",
+		...(follow ? ["--follow"] : []),
+		...(firstParentDiffMerges ? ["--diff-merges=first-parent"] : []),
+		...(limit !== undefined ? [`--max-count=${limit}`] : []),
+		...(paths.length > 0 ? ["--", ...paths] : []),
+	]);
 
 /**
  * Which configuration file a read is scoped to.
@@ -847,6 +889,19 @@ export class GitCommand {
 	static readonly repoRoot = repoRoot;
 
 	/**
+	 * `git rev-parse --path-format=absolute --git-common-dir` — the absolute,
+	 * symlink-resolved path of the directory a repository and all of its linked
+	 * worktrees share.
+	 *
+	 * @remarks
+	 * Without `--path-format=absolute` git prints this relative to the working
+	 * directory in a plain checkout (`.git`) but absolute from inside a linked
+	 * worktree, so two answers cannot be compared as strings. The flag needs
+	 * git 2.31 or later.
+	 */
+	static readonly commonDir = commonDir;
+
+	/**
 	 * `git log -1 --format=%H%x00%G?%x00%B <ref>` — a NUL-separated triple: the
 	 * full commit hash, the GPG trust level, and the full commit body (message),
 	 * all untrimmed.
@@ -861,6 +916,33 @@ export class GitCommand {
 	 * two `\x00` bytes to extract all three values.
 	 */
 	static readonly commitInfo = commitInfo;
+
+	/**
+	 * `git log -z --format=%x1e%H%x00%aI%x00%cI%x00%an%x00%ae --name-only` —
+	 * a commit listing carrying each commit's sha, both ISO dates, its author
+	 * identity and the paths it touched. Four optional flags follow, in this
+	 * order: `--follow`, `--diff-merges=first-parent`, `--max-count=N`, then
+	 * the `--` separator and the pathspec.
+	 *
+	 * @remarks
+	 * `-z` is unconditional and does two things at once: it terminates the
+	 * `--format` output with a NUL instead of a newline, and it makes
+	 * `--name-only` emit paths RAW — no C-style quoting — so a path containing
+	 * a space, a quote or a newline comes back verbatim and `core.quotePath`
+	 * never enters the picture.
+	 *
+	 * `%x1e` opens every record because `--name-only` output has no other
+	 * unambiguous record boundary. Each record is then
+	 * `<sha>\0<authoredAt>\0<committedAt>\0<authorName>\0<authorEmail>\0`
+	 * followed, when the commit touched anything, by `\n` and one
+	 * NUL-terminated path per changed file.
+	 *
+	 * `--follow` requires exactly one path — git's own restriction, enforced
+	 * pre-spawn by `Git.log`. Without `--diff-merges=first-parent` a merge
+	 * commit contributes a record with NO path lines, which is git's default
+	 * and not an anomaly.
+	 */
+	static readonly log = log;
 
 	/**
 	 * `git config --get <key>` — the value of the given git config key, or empty

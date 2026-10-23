@@ -1,5 +1,506 @@
 # @effected/app
 
+## 0.25.0
+
+### Dependencies
+
+| Dependency | Type | Action | From | To |
+| --- | --- | --- | --- | --- |
+| @effected/config-file | dependency | updated | 0.17.0 | 0.18.0 |
+| @effected/glob | dependency | updated | 0.13.0 | 0.14.0 |
+| @effected/jsonc | dependency | updated | 0.18.0 | 0.19.0 |
+| @effected/store | dependency | updated | 0.16.0 | 0.17.0 |
+| @effected/toml | dependency | updated | 0.14.0 | 0.15.0 |
+| @effected/walker | dependency | updated | 0.18.0 | 0.19.0 |
+| @effected/xdg | dependency | updated | 0.12.0 | 0.13.0 |
+| @effected/yaml | dependency | updated | 0.22.0 | 0.23.0 |
+
+### Maintenance
+
+- Upgrades core Effect library dependencies to v4.0.6 [#1039][#1039]
+
+### Thanks
+
+Thanks to [@spencerbeggs](https://github.com/spencerbeggs) for their contributions!
+
+[#1039]: https://github.com/spencerbeggs/effected/pull/1039
+
+## 0.24.0
+
+### Dependencies
+
+| Dependency | Type | Action | From | To |
+| --- | --- | --- | --- | --- |
+| @effected/config-file | dependency | updated | 0.16.0 | 0.17.0 |
+| @effected/glob | dependency | updated | 0.12.0 | 0.13.0 |
+| @effected/jsonc | dependency | updated | 0.17.0 | 0.18.0 |
+| @effected/store | dependency | updated | 0.15.0 | 0.16.0 |
+| @effected/toml | dependency | updated | 0.13.0 | 0.14.0 |
+| @effected/walker | dependency | updated | 0.17.0 | 0.18.0 |
+| @effected/xdg | dependency | updated | 0.11.0 | 0.12.0 |
+| @effected/yaml | dependency | updated | 0.21.0 | 0.22.0 |
+
+### Maintenance
+
+- Upgrades core Effect library dependencies to v4.0.5 [#1019][#1019]
+
+### Thanks
+
+Thanks to [@spencerbeggs](https://github.com/spencerbeggs) for their contributions!
+
+[#1019]: https://github.com/spencerbeggs/effected/pull/1019
+
+## 0.23.0
+
+### Dependencies
+
+| Dependency | Type | Action | From | To |
+| --- | --- | --- | --- | --- |
+| @effected/config-file | dependency | updated | 0.15.0 | 0.16.0 |
+| @effected/glob | dependency | updated | 0.11.0 | 0.12.0 |
+| @effected/jsonc | dependency | updated | 0.16.0 | 0.17.0 |
+| @effected/store | dependency | updated | 0.14.0 | 0.15.0 |
+| @effected/toml | dependency | updated | 0.12.0 | 0.13.0 |
+| @effected/walker | dependency | updated | 0.16.0 | 0.17.0 |
+| @effected/xdg | dependency | updated | 0.10.0 | 0.11.0 |
+| @effected/yaml | dependency | updated | 0.20.0 | 0.21.0 |
+
+### Maintenance
+
+- Upgrades core Effect library dependencies to v4.0.4 [#1008][#1008]
+
+### Thanks
+
+Thanks to [@spencerbeggs](https://github.com/spencerbeggs) for their contributions!
+
+[#1008]: https://github.com/spencerbeggs/effected/pull/1008
+
+## 0.22.0
+
+### Dependencies
+
+| Dependency | Type | Action | From | To |
+| --- | --- | --- | --- | --- |
+| @effected/config-file | dependency | updated | 0.14.3 | 0.15.0 |
+| @effected/glob | dependency | updated | 0.10.1 | 0.11.0 |
+| @effected/jsonc | dependency | updated | 0.15.2 | 0.16.0 |
+| @effected/store | dependency | updated | 0.13.2 | 0.14.0 |
+| @effected/toml | dependency | updated | 0.11.2 | 0.12.0 |
+| @effected/walker | dependency | updated | 0.15.1 | 0.16.0 |
+| @effected/xdg | dependency | updated | 0.9.1 | 0.10.0 |
+| @effected/yaml | dependency | updated | 0.19.2 | 0.20.0 |
+| effect | peerDependency | updated | 4.0.2 | ^4.0.3 |
+
+- Effect 4.0.3 advance: the `effect` peer and catalog move from the exact `4.0.2` hold back to `^4.0.3`. No API change. [#1000][#1000]
+
+### Thanks
+
+Thanks to [@spencerbeggs](https://github.com/spencerbeggs) for their contributions!
+
+[#1000]: https://github.com/spencerbeggs/effected/pull/1000
+
+## 0.21.3
+
+### Bug Fixes
+
+- Republished with every `effect` and `@effect/*` version pinned exactly to `4.0.2`, both peer and dependency ranges.
+
+- On 2026-10-10, every `@effect/*` package published at `4.0.3`, but `effect@4.0.3` itself never reached npm (Effect-TS/effect#8994). The 4.0.3 packages require `effect ^4.0.3`. A caret range on any of them therefore resolves a 4.0.3 package next to `effect@4.0.2`, and the program crashes when it imports them. Exact pins keep a fresh install of any kit package on a matched set until `effect@4.0.3` is available. [#997][#997]
+
+### Dependencies
+
+| Dependency | Type | Action | From | To |
+| --- | --- | --- | --- | --- |
+| @effected/config-file | dependency | updated | 0.14.2 | 0.14.3 |
+| @effected/glob | dependency | updated | 0.10.0 | 0.10.1 |
+| @effected/jsonc | dependency | updated | 0.15.1 | 0.15.2 |
+| @effected/store | dependency | updated | 0.13.1 | 0.13.2 |
+| @effected/toml | dependency | updated | 0.11.1 | 0.11.2 |
+| @effected/walker | dependency | updated | 0.15.0 | 0.15.1 |
+| @effected/xdg | dependency | updated | 0.9.0 | 0.9.1 |
+| @effected/yaml | dependency | updated | 0.19.1 | 0.19.2 |
+
+### Thanks
+
+Thanks to [@spencerbeggs](https://github.com/spencerbeggs) for their contributions!
+
+[#997]: https://github.com/spencerbeggs/effected/pull/997
+
+## 0.21.2
+
+### Documentation
+
+- The `AppStore` TSDoc now explains that creating the directory before opening the database prevents a setup failure rather than converting a defect into a typed error. [#944][#944]
+
+### Dependencies
+
+| Dependency | Type | Action | From | To |
+| --- | --- | --- | --- | --- |
+| @effected/config-file | dependency | updated | 0.14.2 | 0.14.2 |
+| @effected/jsonc | dependency | updated | 0.15.0 | 0.15.1 |
+| @effected/store | dependency | updated | 0.13.0 | 0.13.1 |
+| @effected/xdg | dependency | updated | 0.9.0 | 0.9.0 |
+| @effected/yaml | dependency | updated | 0.19.0 | 0.19.1 |
+
+### Thanks
+
+Thanks to [@spencerbeggs](https://github.com/spencerbeggs) for their contributions!
+
+[#944]: https://github.com/spencerbeggs/effected/pull/944
+
+## 0.21.1
+
+### Bug Fixes
+
+- `AppConfig.layer` once again infers the config type `A` from the key. A bare `MergeStrategy.firstMatch()` passed as `strategy` no longer causes a correctly shaped `ConfigFile.Service` key to be rejected. A key whose shape adds members to `ConfigFileShape<A>` is still a compile error. [#935][#935]
+
+### Dependencies
+
+| Dependency | Type | Action | From | To |
+| --- | --- | --- | --- | --- |
+| @effected/config-file | dependency | updated | 0.14.1 | 0.14.2 |
+| @effected/xdg | dependency | updated | 0.9.0 | 0.9.0 |
+
+### Thanks
+
+Thanks to [@spencerbeggs](https://github.com/spencerbeggs) for their contributions!
+
+[#935]: https://github.com/spencerbeggs/effected/pull/935
+
+## 0.21.0
+
+### Breaking Changes
+
+- `AppStore.layer` and `AppCache.layer` now require `FileSystem` in `R` even when no `subdir` is given, because they create the database's directory. Provide the platform layer alongside `App.layerDirs`.
+- `AppConfig.layer` rejects a key whose service shape is wider than `ConfigFileShape` at compile time. Calls that pass the type arguments explicitly keep compiling.
+
+### Features
+
+#### App.layerDirs
+
+- `App.layerDirs` provides `Xdg` and `AppDirs` for a namespace without opening any database. `App.layer` opens and migrates both databases as soon as it is built, so a CLI that provides it at the edge touches them on every command. Provide `App.layerDirs` once at the edge instead, bind `AppStore.layer` / `AppCache.layer` once at module scope, and attach them with `Command.provide` only on the commands that use them.
+
+```typescript
+const PlatformLive = App.layerDirs({ namespace: "myapp" }).pipe(Layer.provideMerge(NodeServices.layer));
+```
+
+#### Keyed store and cache layers
+
+- `AppStore.layerAs` and `AppCache.layerAs` bind a database to your own service key, so one app can hold several independent stores. The `filename` is required, so a keyed database can never silently share the primary store's file. A key whose service shape is incompatible with `StoreShape` / `CacheShape`, or adds members to it, is a compile error; a member redeclared as a method with a wider parameter still compiles.
+
+```typescript
+const RegistryStoreLive = AppStore.layerAs(RegistryStore, {
+	filename: "registry.db",
+	directory: "data",
+	subdir: projectKey,
+	migrations: [],
+});
+```
+
+#### Database placement
+
+- `directory` and `subdir` options place the database file under the app's directories. Hash a runtime-derived `subdir` before passing it.
+- `AppStore.location` and `AppCache.location` resolve the database path with the same derivation the layers use, without opening it.
+- `client`, `onConnect` and `checkpointOnClose` pass through to the underlying SQLite store. [#933][#933]
+
+### Dependencies
+
+| Dependency | Type | Action | From | To |
+| --- | --- | --- | --- | --- |
+| @effected/config-file | dependency | updated | 0.14.0 | 0.14.1 |
+| @effected/store | dependency | updated | 0.12.0 | 0.13.0 |
+| @effected/xdg | dependency | updated | 0.9.0 | 0.9.0 |
+
+### Thanks
+
+Thanks to [@spencerbeggs](https://github.com/spencerbeggs) for their contributions!
+
+[#933]: https://github.com/spencerbeggs/effected/pull/933
+
+## 0.20.0
+
+### Breaking Changes
+
+- The kit now builds on and peers stable `effect` `^4.0.0`, in place of an exact release-candidate pin. Move `effect` and every `@effect/*` package to the same `4.x` version in one install: Effect releases them together at one version. A package from this release cannot share an install with an `effect` release candidate. The peer is a caret range, so later `4.x` releases of Effect satisfy the kit without a kit release.
+- Kit exports are unchanged. A consumer moving to stable `effect` meets these changes in its own code:
+  - `Array`, `Chunk`, `Effect` and `Record` `partition`, their `separate` helpers and `Option.partitionMap` return `[successes, failures]`. Where both sides share a type, the reversed destructuring still compiles, so search for every call.
+  - `Schema.brand` takes one identifier and is type-only: the identifier is not stored on the AST and does not survive `SchemaRepresentation`. Compose distinct brands by applying `brand` more than once.
+  - `TestSchema`'s round-trip assertion is `verifyRoundTrip`, with Effect forms `succeedEffect`, `failEffect` and `verifyRoundTripEffect`.
+  - Effect marks some APIs `@stability unstable`: those may change in a minor Effect release. Untagged APIs follow semver.
+
+### Documentation
+
+- Every exported construct's TSDoc was reviewed against the current API. Summaries open with what the construct does, error channels and requirements are stated, examples use real imports and compile, and links resolve. Comments that described options, errors or defaults the code does not have were corrected. [#910][#910]
+
+### Dependencies
+
+| Dependency | Type | Action | From | To |
+| --- | --- | --- | --- | --- |
+| @effected/config-file | dependency | updated | 0.13.1 | 0.14.0 |
+| @effected/glob | dependency | updated | 0.9.0 | 0.10.0 |
+| @effected/jsonc | dependency | updated | 0.14.0 | 0.15.0 |
+| @effected/store | dependency | updated | 0.11.0 | 0.12.0 |
+| @effected/toml | dependency | updated | 0.10.0 | 0.11.0 |
+| @effected/walker | dependency | updated | 0.14.1 | 0.15.0 |
+| @effected/xdg | dependency | updated | 0.8.2 | 0.9.0 |
+| @effected/yaml | dependency | updated | 0.18.0 | 0.19.0 |
+| @effected/glob | peerDependency | added | — | 0.9.0 |
+| @effected/jsonc | peerDependency | added | — | 0.14.0 |
+| @effected/toml | peerDependency | added | — | 0.10.0 |
+| @effected/walker | peerDependency | added | — | 0.14.1 |
+| @effected/yaml | peerDependency | added | — | 0.18.0 |
+
+- The package now declares its full `@effected` peer closure: every peer required by an `@effected` package it peers on, recursively. These packages were already needed at runtime through those peers; declaring them lets your package manager report a missing one instead of relying on whatever your install happens to contain. [#905][#905]
+
+### Thanks
+
+Thanks to [@spencerbeggs](https://github.com/spencerbeggs) for their contributions!
+
+[#905]: https://github.com/spencerbeggs/effected/pull/905
+
+[#910]: https://github.com/spencerbeggs/effected/pull/910
+
+## 0.19.1
+
+### Documentation
+
+- App.layerTest remarks now point directory tests at `AppDirs.layer` over `@effected/memfs`. [#902][#902]
+
+### Dependencies
+
+| Dependency | Type | Action | From | To |
+| --- | --- | --- | --- | --- |
+| @effected/config-file | dependency | updated | 0.13.1 | 0.13.1 |
+| @effected/xdg | dependency | updated | 0.8.2 | 0.8.2 |
+
+### Thanks
+
+Thanks to [@spencerbeggs](https://github.com/spencerbeggs) for their contributions!
+
+[#902]: https://github.com/spencerbeggs/effected/pull/902
+
+## 0.19.0
+
+### Breaking Changes
+
+- The kit now builds on and peers `effect` `4.0.0-rc.118`, pinned exactly. Consumers must move `effect` and every `@effect/*` package to `4.0.0-rc.118` in the same install. Effect removed the `effect/unstable/*` export paths in this release, so an `@effected` package built on rc.118 cannot share an install with `effect` rc.117.
+
+- Moving the pin also closes a fresh-install failure on rc.117. `@effect/platform-node@4.0.0-rc.117` depends on `@effect/platform-node-shared` with a caret, so an install without a lockfile paired the rc.118 shared package with `effect` rc.117 and failed at startup with `ERR_MODULE_NOT_FOUND`.
+
+- Consumers moving to this release: effect removed the `effect/unstable/*` export paths (imports become `effect/<module>`), moved `Arbitrary` to `effect`, split `effect/Encoding` into `effect/encoding/Base64`, `Base64Url` and `Hex`, and renamed the `Schema` range and string checks (`isLengthBetween` → `isBetweenLength`, `isStartsWith` → `isStartingWith`, and so on). Kit exports are otherwise unchanged; the kit's own imports moved onto the new paths. [#864][#864]
+
+### Dependencies
+
+| Dependency | Type | Action | From | To |
+| --- | --- | --- | --- | --- |
+| @effected/config-file | dependency | updated | 0.12.0 | 0.13.0 |
+| @effected/store | dependency | updated | 0.10.0 | 0.11.0 |
+| @effected/xdg | dependency | updated | 0.7.0 | 0.8.0 |
+
+### Thanks
+
+Thanks to [@spencerbeggs](https://github.com/spencerbeggs) for their contributions!
+
+[#864]: https://github.com/spencerbeggs/effected/pull/864
+
+## 0.18.0
+
+### Features
+
+- Upgrades core Effect to `rc-117` [#812][#812]
+
+### Dependencies
+
+| Dependency | Type | Action | From | To |
+| --- | --- | --- | --- | --- |
+| @effected/config-file | dependency | updated | 0.11.1 | 0.12.0 |
+| @effected/store | dependency | updated | 0.9.0 | 0.10.0 |
+| @effected/xdg | dependency | updated | 0.6.1 | 0.7.0 |
+
+### Thanks
+
+Thanks to [@spencerbeggs](https://github.com/spencerbeggs) for their contributions!
+
+[#812]: https://github.com/spencerbeggs/effected/pull/812
+
+## 0.17.0
+
+### Breaking Changes
+
+#### The whole kit tracks Effect `4.0.0-rc.116`
+
+- Every package's `effect` peer moves from `4.0.0-rc.115` to `4.0.0-rc.116`. The kit uses exact prerelease pins rather than a caret, so a consumer must move with it. No `@effected` API changes shape on this advance; the kit itself needed one edit (`Stream.scan` now takes a lazy initial state, met once in `@effected/jsonl`'s `Journal.projection`). A consumer that upgrades meets the rc.116 renames on its own code:
+
+- `SchemaTransformation.make` is `makeTransformation`, and `Transformation#compose` is the dual standalone `SchemaTransformation.composeTransformation`.
+
+- `SchemaGetter.Getter` is a tagged union exposing only `pipe`: `new SchemaGetter.Getter`, `onSome` and `onNone` are gone in favour of `SchemaGetter.map` / `compose` / `run` and `transformEffect` / `transformOptionalEffect`.
+
+- `Stream.scan` and `Stream.scanEffect` take `() => initial`; `Stream.partition` returns `[passes, fails]`; `Stream.mapBoth` takes `onElement` / `onError`.
+
+- `Effect.orElseSucceed` passes the error to its fallback and `Effect.isEffect` narrows to `Effect<unknown, unknown, unknown>`.
+
+- `ByteSize.Input` string literals are checked at compile time; parse external strings with `ByteSize.fromString`.
+
+- Arbitrary shrinking changed, so property-test replay tokens recorded at rc.115 no longer reproduce.
+
+### Documentation
+
+#### The Claude Code and Copilot plugins teach the rc.116 surface
+
+- The `effect-v4-schema` transformation reference composes transformations with `SchemaTransformation.composeTransformation` and describes the `Getter` surface rc.116 left behind; the source-lookup and testing skills report rc.116 as the kit's pin and the two-copy lockfile shape the bridge now produces (`rc.115` for the toolchain, `rc.116` for the kit); the session-start briefing reports rc.116.
+
+### Dependencies
+
+| Dependency | Type | Action | From | To |
+| --- | --- | --- | --- | --- |
+| @effected/config-file | dependency | updated | 0.10.1 | 0.11.0 |
+| @effected/store | dependency | updated | 0.8.1 | 0.9.0 |
+| @effected/xdg | dependency | updated | 0.5.3 | 0.6.0 |
+| @effect/platform-node | devDependency | updated | 4.0.0-rc.115 | 4.0.0-rc.116 |
+| @effect/vitest | devDependency | updated | 4.0.0-rc.115 | 4.0.0-rc.116 |
+| effect | devDependency | updated | 4.0.0-rc.115 | 4.0.0-rc.116 |
+| effect | peerDependency | updated | 4.0.0-rc.115 | 4.0.0-rc.116 |
+
+### Maintenance
+
+#### The rc.115 `packageExtensions` bridge is retired
+
+- The toolchain (`@savvy-web/tsdown-plugins`, `rolldown-pnpm-config`, `@vitest-agent/*`) has republished declaring `effect` and its `@effected/*` inputs as regular dependencies, so the workspace no longer needs the `packageExtensions` block that pinned them by hand. Its ten keys named versions no longer installed and the lockfile diff on removal was the checksum line alone. Nothing published changes; this is the workspace's own install shape. [#792][#792]
+
+### Thanks
+
+Thanks to [@spencerbeggs](https://github.com/spencerbeggs) for their contributions!
+
+[#792]: https://github.com/spencerbeggs/effected/pull/792
+
+## 0.16.3
+
+### Bug Fixes
+
+- Fixes closure issues in all packages.
+
+### Dependencies
+
+| Dependency | Type | Action | From | To |
+| --- | --- | --- | --- | --- |
+| @effected/config-file | dependency | updated | 0.10.0 | 0.10.1 |
+| @effected/store | dependency | updated | 0.8.0 | 0.8.1 |
+| @effected/xdg | dependency | updated | 0.5.2 | 0.5.3 |
+
+### Thanks
+
+Thanks to [@spencerbeggs](https://github.com/spencerbeggs) for their contributions!
+
+## 0.16.2
+
+### Dependencies
+
+| Dependency | Type | Action | From | To |
+| --- | --- | --- | --- | --- |
+| @effected/config-file | dependency | updated | 0.9.0 | 0.10.0 |
+| @effected/xdg | dependency | updated | 0.5.1 | 0.5.2 |
+
+## 0.16.1
+
+### Dependencies
+
+| Dependency | Type | Action | From | To |
+| --- | --- | --- | --- | --- |
+| @effected/config-file | dependency | updated | 0.8.0 | 0.9.0 |
+| @effected/xdg | dependency | updated | 0.5.0 | 0.5.1 |
+
+## 0.16.0
+
+### Breaking Changes
+
+#### The whole kit tracks Effect `4.0.0-rc.115`
+
+- Every package's `effect` peer moves from `4.0.0-rc.112` to `4.0.0-rc.115`. The kit uses exact prerelease pins rather than a caret, so a consumer must move with it. This advance is the first whose Effect changes are not source-compatible with the previous pin, so a consumer that upgrades meets the same renames the kit did:
+
+- `SchemaTransformation.transformOrFail` and `SchemaGetter.transformOrFail` are `transformEffect`.
+
+- The `Config` constructors are PascalCase (`Config.String`, `Config.Redacted`, `Config.Int`, `Config.Boolean`, …) and `Config.mapOrFail` is `Config.mapEffect`.
+
+- `FileSystem.Size` and `FileSystem.SizeInput` are gone in favour of the `ByteSize` module: `File.Info.size` is a `ByteSize`, `File.seek` takes a `bigint`, `read`/`write` return a `number`.
+
+- The fast-check bridge (`effect/testing/FastCheck`, `Schema.toArbitrary`, the `fastCheck` property-test option) is removed in favour of `effect/unstable/arbitrary/Arbitrary`; `it.effect.prop` takes `arbitrary: { runs, size, seed, … }`.
+
+#### `@effected/schemastore` documents are open unless told otherwise
+
+- `Schema.ToJsonSchemaOptions.additionalProperties` became `onExcessProperty: "ignore" | "error"` upstream, and its default now mirrors the decoder's: generated object schemas carry `additionalProperties: true` unless `jsonSchema: { onExcessProperty: "error" }` is passed. `StoreDocument.fromSchema` passes the option through unchanged, so a document that was closed by default at rc.112 is open by default now. Pass `onExcessProperty: "error"` to keep a closed document; a generator that silently disagreed with the decoder it is paired with would be the worse default.
+
+#### `@effected/memfs` seeks before the start of a file fail
+
+- `File.seek` gained a `PlatformError` channel upstream, and memfs now matches Node: a seek whose resulting position would be negative fails with `BadArgument` ("Cannot seek before the start of the file") and leaves the cursor unchanged, where it previously stored the negative position and failed on the next read. No memfs-declared type changes; the `File`/`File.Info` shape changes are Effect's own, reaching consumers through the peer.
+
+### Documentation
+
+#### A `Schema.Class` root is annotated on the `Struct` it wraps
+
+- [Effect-TS/effect#8084](https://github.com/Effect-TS/effect/issues/8084), which the rc.112 notes carried as an open limitation, was closed upstream as by design: annotations passed as `Schema.Class`'s second argument sit on the class node, while the `$defs` entry is generated from the encoded fields `Struct`. Annotate that `Struct` — `Schema.Class<X>("X")(Schema.Struct({ … }).annotate({ title, description, "x-taplo": … }))` — and every key reaches the document. `@effected/schemastore`'s design doc and context files now state the rule instead of the limitation.
+
+#### The Claude Code and Copilot plugins teach the rc.115 surface
+
+- The `effect-v4-schema`, `effect-v4-testing` and `effect-v4-module-index` skills describe the native `Arbitrary` module in place of the fast-check bridge, including the migration traps met on this advance: the `size` clamp (default 10) that silently shrinks a property's string and array domains, the `-0` the generator's near-zero bias emits for an unbounded `Schema.Int` or any `Schema.Number`, which JSON and YAML cannot round-trip, and the absence of `oneof`/`constantFrom`/`array` combinators. `ByteSize` has a module-index row, the `Config` and CLI constructors are shown in their PascalCase spellings, and the session-start briefing reports rc.115 as the kit's pin. [#686][#686]
+
+### Dependencies
+
+| Dependency | Type | Action | From | To |
+| --- | --- | --- | --- | --- |
+| @effected/config-file | dependency | updated | 0.7.1 | 0.8.0 |
+| @effected/store | dependency | updated | 0.7.0 | 0.8.0 |
+| @effected/xdg | dependency | updated | 0.4.1 | 0.5.0 |
+| @effect/platform-node | devDependency | updated | 4.0.0-rc.112 | 4.0.0-rc.115 |
+| @effect/tsgo | devDependency | updated | 0.41.0 | 0.45.0 |
+| @effect/vitest | devDependency | updated | 4.0.0-rc.112 | 4.0.0-rc.115 |
+| effect | devDependency | updated | 4.0.0-rc.112 | 4.0.0-rc.115 |
+| effect | peerDependency | updated | 4.0.0-rc.112 | 4.0.0-rc.115 |
+
+### Thanks
+
+Thanks to [@spencerbeggs](https://github.com/spencerbeggs) for their contributions!
+
+[#686]: https://github.com/spencerbeggs/effected/pull/686
+
+## 0.15.0
+
+### Features
+
+#### `AppConfig.layer` options: `xdg`, `systemEtc`, `resolversAfter`
+
+- The resolver chain `AppConfig.layer` builds is now caller-controlled at both ends and in the middle, without giving up the ambient namespace and `defaultPath` wiring the preset does for free:
+
+- `xdg?: boolean` — pass `false` to drop the XDG pair (`XdgConfig.resolver` and `XdgConfig.nativeResolver`) entirely, so a `--config <path>` flag's own resolver is the only lookup and a failed explicit path can no longer silently fall through to the user's XDG config (#631).
+
+- `systemEtc?: boolean | { dir?: string }` — appends a machine-wide `/etc/<namespace>/<filename>` tier behind the XDG pair; an object overrides the root, chiefly for pointing the tier at a writable directory in tests (#645).
+
+- `resolversAfter?: ReadonlyArray<ConfigResolver<RR>>` — composes after every built-in tier, the counterpart to the existing `resolvers` (which prepends).
+
+- With `xdg: false` the chain is exactly `[...resolvers, ...resolversAfter]`, so an app that previously had to drop to `ConfigFile.layer` directly for a non-standard chain no longer needs to.
+
+```ts
+AppConfig.layer(MyConfigTag, {
+	filename: "app.toml",
+	xdg: false,
+	resolvers: [ConfigResolver.explicitPath(cliFlag)],
+});
+```
+
+- This also addresses the second half of #97, which asked for `AppConfig`'s resolver chain to be swappable within `App` — `xdg: false` plus `resolvers`/`resolversAfter` now expresses a caller's own chain end to end while the preset still supplies the ambient namespace and `defaultPath`. The first half of that issue — composing more than one `Store` under a single control plane — is untouched, so #97 is not closed by this change. [#654][#654]
+
+### Dependencies
+
+| Dependency | Type | Action | From | To |
+| --- | --- | --- | --- | --- |
+| @effected/config-file | dependency | updated | 0.6.0 | 0.7.0 |
+| @effected/xdg | dependency | updated | 0.4.0 | 0.4.1 |
+
+### Thanks
+
+Thanks to [@spencerbeggs](https://github.com/spencerbeggs) for their contributions!
+
+[#654]: https://github.com/spencerbeggs/effected/pull/654
+
 ## 0.14.0
 
 ### Breaking Changes
@@ -86,7 +587,9 @@ Thanks to [@spencerbeggs](https://github.com/spencerbeggs) for their contributio
 - The bundled `effected-packages` skill (part of the "effected" Claude Code
   plugin) now covers the kit's 31st package:
 
-- Added a `@effected/schema-org` row to the package index, and a new&#10;`references/schema-org.md` reference covering both entrypoints, the&#10;`buildResult`-not-`make` construction rule, the script-safe serializer's
+- Added a `@effected/schema-org` row to the package index, and a new
+  `references/schema-org.md` reference covering both entrypoints, the
+  `buildResult`-not-`make` construction rule, the script-safe serializer's
   idempotent escaping, and the validator's prefix-resolution rules.
 
 - The skill's routing `description` now mentions "emitting and validating
@@ -94,7 +597,9 @@ Thanks to [@spencerbeggs](https://github.com/spencerbeggs) for their contributio
   to decide whether the skill loads at all, so this is what makes the new
   package discoverable rather than merely documented.
 
-- Added `references/constructs/schema-org.md` and regenerated&#10;`references/constructs/package-json.md` (now listing `Funding` and&#10;`licenseExpressionOf`) from the build-emitted API Extractor models.
+- Added `references/constructs/schema-org.md` and regenerated
+  `references/constructs/package-json.md` (now listing `Funding` and
+  `licenseExpressionOf`) from the build-emitted API Extractor models.
 
 - No change to the plugin's own runtime behavior — routing and reference
   content only. [#539][#539]
@@ -549,21 +1054,27 @@ Thanks to [@spencerbeggs](https://github.com/spencerbeggs) for their contributio
 
 ### Documentation
 
-- Reconciles the plugin's action-building skills with the current&#10;`@effected/github-actions` behavior:
-  - `building-a-github-action`'s bare-`Config.*` warning now reflects that&#10;`ActionRuntime.layer` installs `ActionInput.layerDefault`, so a bare read
+- Reconciles the plugin's action-building skills with the current
+  `@effected/github-actions` behavior:
+  - `building-a-github-action`'s bare-`Config.*` warning now reflects that
+    `ActionRuntime.layer` installs `ActionInput.layerDefault`, so a bare read
     under `Action.run` does resolve the runner's `INPUT_` derivation in
     production — the false green is specifically in test suites that bypass the
     runtime with their own `ConfigProvider`. Adds a "call sequences" reference
     table for multi-service flows (signing and storing an attestation,
     publishing an integrity-checked package, holding a token across the three
     action phases, emitting and attesting an SBOM).
-  - `testing-actions` documents a `NodeServices.layer` / `ChildProcessSpawner`&#10;merge-order gotcha found while dogfooding: `NodeServices.layer` also
+  - `testing-actions` documents a `NodeServices.layer` / `ChildProcessSpawner`
+    merge-order gotcha found while dogfooding: `NodeServices.layer` also
     provides `ChildProcessSpawner`, and in a `Layer.merge`/`Layer.mergeAll` the
-    last provider of a duplicate service wins — so&#10;`Layer.mergeAll(scriptedSpawner, NodeServices.layer)` silently replaces a
+    last provider of a duplicate service wins — so
+    `Layer.mergeAll(scriptedSpawner, NodeServices.layer)` silently replaces a
     test's scripted spawner with the real one. It now also documents two
-    round-2 findings: an unstubbed test double must die **lazily**&#10;(`() => Effect.sync(() => { throw ... })`, never a bare `throw`) so a
+    round-2 findings: an unstubbed test double must die **lazily**
+    (`() => Effect.sync(() => { throw ... })`, never a bare `throw`) so a
     consumer's `Effect.exit`/`Effect.flip` assertion sees the failure instead of
-    a raw thrown error; and `ActionEnvironment.layerTest()` seeds&#10;`GITHUB_SERVER_URL` with the same value production defaults to, so testing
+    a raw thrown error; and `ActionEnvironment.layerTest()` seeds
+    `GITHUB_SERVER_URL` with the same value production defaults to, so testing
     an absence path needs `ActionEnvironment.layerFrom({})` instead.
   - `effect-api-extractor-bases` documents a fifth `{@link}` link-resolution
     failure: a re-exported cross-package `Schema.Class` referenced from a file
@@ -571,7 +1082,8 @@ Thanks to [@spencerbeggs](https://github.com/spencerbeggs) for their contributio
     ("not supported yet by the resolver") and can attribute the diagnostic to
     the wrong line — backticks are the only fix.
   - `supply-chain-attestation` stops teaching the hand-rolled Sigstore identity
-    adapter its worked example predated, pointing instead at the shipped&#10;`ActionsIdentityToken.layer`, and routes Actions consumers building SLSA
+    adapter its worked example predated, pointing instead at the shipped
+    `ActionsIdentityToken.layer`, and routes Actions consumers building SLSA
     provenance to `ActionsProvenance.capture` instead of hand-mapping OIDC
     claims. [#191][#191]
 
@@ -602,10 +1114,12 @@ Thanks to [@spencerbeggs](https://github.com/spencerbeggs) for their contributio
   (`testing-actions`).
 
   A new `action-engineer` specialist subagent carries this suite end to end for
-  whole action- and release-engineering tasks, joining the existing&#10;`effect-developer` / `effect-reviewer` / `effect-migrator` specialists.
+  whole action- and release-engineering tasks, joining the existing
+  `effect-developer` / `effect-reviewer` / `effect-migrator` specialists.
 
   The existing Effect v4 skills (house style, module index, construct map,
-  schema, services/layers, testing, source lookup, the `effected-packages`&#10;index, and `building-a-format-package`) were updated with findings from the
+  schema, services/layers, testing, source lookup, the `effected-packages`
+  index, and `building-a-format-package`) were updated with findings from the
   program's migration and probe passes, and the session-start orientation hook
   now reflects the expanded skill and agent roster.
 
@@ -613,7 +1127,8 @@ Thanks to [@spencerbeggs](https://github.com/spencerbeggs) for their contributio
 
 - `App`, `AppCache`, `AppConfig` and `AppStore` are now static classes with a
   private constructor rather than `as const` namespace objects. Call syntax is
-  unchanged (`App.layer(...)`); each member's TSDoc now ships in the built&#10;`.d.ts`, where an `as const` object's inferred member types previously
+  unchanged (`App.layer(...)`); each member's TSDoc now ships in the built
+  `.d.ts`, where an `as const` object's inferred member types previously
   dropped it. [#180][#180]
 
 ### Dependencies
@@ -791,9 +1306,12 @@ Thanks to [@spencerbeggs](https://github.com/spencerbeggs) for their contributio
 
 ### Documentation
 
-- Corrected the `effect-v4-construct-map` skill's Schema rename reference: the&#10;`decode`/`encode` family is not a blanket sweep. Only the Effect-returning
+- Corrected the `effect-v4-construct-map` skill's Schema rename reference: the
+  `decode`/`encode` family is not a blanket sweep. Only the Effect-returning
   base names (`decode`/`decodeUnknown`/`encode`/`encodeUnknown` → `*Effect`)
-  and the `*Either` variants (→ `*Result`/`*Exit`) are renamed; the&#10;`*Sync`/`*Option`/`*Promise` variants survive unchanged, and the typed and&#10;`Unknown` flavors of each differ by input type rather than being
+  and the `*Either` variants (→ `*Result`/`*Exit`) are renamed; the
+  `*Sync`/`*Option`/`*Promise` variants survive unchanged, and the typed and
+  `Unknown` flavors of each differ by input type rather than being
   interchangeable. Also notes that `Schema.decode`/`Schema.encode` still exist
   in v4, but as transformation combinators rather than parsers. [#112][#112]
 

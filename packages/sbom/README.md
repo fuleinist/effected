@@ -7,10 +7,10 @@
 
 Supply-chain artifacts for [Effect](https://effect.website) v4: a CycloneDX 1.6 SBOM, an NTIA minimum-elements report, in-toto statements, SLSA provenance, and Sigstore DSSE signing. `Sbom.generate` and `Sbom.toJson` are total, plain functions — assembling and serializing a document cannot fail, so the package's only error channel belongs to `Sbom.write`, the one member that touches a filesystem. Signing is a separate, deliberately walled-off capability: a consumer that only ever emits an SBOM never reaches `@sigstore/*` or its Fulcio/Rekor network calls.
 
-> **Pre-release.** This package is part of the `@effected/*` kit, in pre-`1.0.0`
-> development against a single pinned Effect v4 prerelease. Packages graduate to
-> `1.0.0` once Effect `4.0.0` ships. To hold your own `effect` versions at
-> exactly the ones the kit is built and tested against, install
+> **Pre-`1.0.0`.** This package is part of the `@effected/*` kit, built on stable
+> Effect v4 (`effect` `^4.0.0`) and still in `0.x` development. Stable Effect
+> makes a kit `1.0.0` possible, not automatic. To keep your `effect` and
+> `@effect/*` versions on the line the kit is built and tested against, install
 > [`@effected/pnpm-plugin-effect`](https://www.npmjs.com/package/@effected/pnpm-plugin-effect).
 >
 > **Stability: unstable.** This package's API surface is not yet considered
@@ -53,7 +53,7 @@ declare const pkg: Package;
 const root = SbomMetadataSource.rootComponent(pkg);
 const metadata = SbomMetadataSource.fromPackage(pkg, { timestamp: new Date().toISOString() });
 const components = [
-  SbomMetadataSource.componentFor({ name: "effect", version: "4.0.0-rc.109", license: "MIT" }),
+  SbomMetadataSource.componentFor({ name: "effect", version: "4.0.0", license: "MIT" }),
 ];
 
 const document = Sbom.generate({ root, components, metadata });
@@ -122,10 +122,11 @@ const program = Effect.gen(function* () {
 
 ## Signing
 
-`SigstoreSigner` fetches an identity token, exchanges it with Fulcio for a certificate, signs the statement, and (unless `witnesses: []`) logs it to Rekor — all behind one method, `sign`, over `IdentityToken`:
+`SigstoreSigner` fetches an identity token, exchanges it with Fulcio for a certificate, signs the statement, and (unless `witnesses: []`) logs it to Rekor — all behind one method, `sign`, over `@effected/oidc`'s `IdentityToken`:
 
 ```ts
-import { IdentityToken, InTotoStatement, SigstoreSigner } from "@effected/sbom";
+import { IdentityToken } from "@effected/oidc";
+import { InTotoStatement, SigstoreSigner } from "@effected/sbom";
 import { Effect, Layer } from "effect";
 
 declare const oidcToken: string;
@@ -142,7 +143,7 @@ Effect.runPromise(program.pipe(Effect.provide(SignerLayer))).then(console.log);
 // SigstoreBundle: { mediaType, verificationMaterial, dsseEnvelope }
 ```
 
-`IdentityToken` is a narrow, one-method contract deliberately smaller than any real issuer's surface, so several things can satisfy it. On a GitHub runner that is `ActionsIdentityToken.layer`, which `@effected/github-actions` ships over its own `OidcTokenIssuer` — the dependency points that way so signing never drags the Actions runtime into a consumer that only emits an SBOM. A CI system that mints its own token works the same way through `IdentityToken.layerStatic`.
+`IdentityToken` lives in `@effected/oidc`, whose contract module imports nothing but `effect`, so signing links no JWT code. It is a narrow, one-method contract deliberately smaller than any real issuer's surface, so several things can satisfy it. On a GitHub runner that is `ActionsIdentityToken.layer`, which `@effected/github-actions` ships over its own `OidcTokenIssuer` — the dependency points that way so signing never drags the Actions runtime into a consumer that only emits an SBOM. A CI system that mints its own token works the same way through `IdentityToken.layerStatic`.
 
 ## Errors
 
@@ -164,11 +165,11 @@ const program = sign.pipe(Effect.catchTag("SigningError", (error) => Effect.logE
 `SigstoreSigner.makeTest().sign` **dies** rather than fabricating a bundle: a signature-shaped lie is exactly the failure an attestation exists to prevent. A test that needs a real bundle without a network drives the real `DSSEBundleBuilder` through `SigstoreSigner.layerWith({ signer, witnesses })`. `IdentityToken.makeTest`, by contrast, **answers** — a fabricated OIDC token is a real answer to "give me a token":
 
 ```ts
-import { IdentityToken } from "@effected/sbom";
-import { Effect } from "effect";
+import { IdentityToken } from "@effected/oidc";
+import { Effect, Redacted } from "effect";
 
 const TestToken = IdentityToken.layerTest({
-  token: () => Effect.succeed("test-token"),
+  token: () => Effect.succeed(Redacted.make("test-token")),
 });
 ```
 
@@ -180,8 +181,7 @@ const TestToken = IdentityToken.layerTest({
 - `NtiaReport` — the seven NTIA minimum elements as a total report (`compliant`, `missing`).
 - `InTotoStatement` — `of` / `forSubject`, over `InTotoSubject` and a validated `Sha256Digest`.
 - `SlsaProvenance` — `forGitHubWorkflow`, a total projection to a SLSA Provenance v1 predicate.
-- `SigstoreSigner` — DSSE signing against Fulcio and Rekor, `layerWith` for a supplied signer/witnesses/endpoints, and a die-on-unstubbed test double.
-- `IdentityToken` — the narrow, one-method OIDC contract `SigstoreSigner` runs on; `layerStatic` for a token you already hold.
+- `SigstoreSigner` — DSSE signing against Fulcio and Rekor over `@effected/oidc`'s `IdentityToken`, `layerWith` for a supplied signer/witnesses/endpoints, and a die-on-unstubbed test double.
 - `SigstoreBundle` — the bundle value and media-type constants, importing nothing from `@sigstore/*`.
 
 ## License

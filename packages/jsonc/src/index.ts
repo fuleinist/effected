@@ -2,9 +2,9 @@
  * Zero-dependency JSONC parsing, editing and formatting as Effect schemas.
  *
  * Parse JSONC into values or an AST, strip comments offset-preservingly,
- * compute byte-minimal edits, format, modify by path and visit as a `Stream` —
- * all pure (no IO), with a single aggregate parse error and string→domain
- * schema factories.
+ * compute byte-minimal edits, format, modify by path, visit as a `Stream`,
+ * canonicalize and fingerprint — all pure (no IO), with a single aggregate
+ * parse error and string→domain schema factories.
  *
  * @example
  * ```ts
@@ -41,6 +41,7 @@ export { JsoncEdit, JsoncFormattingOptions, JsoncRange } from "./JsoncEdit.js";
 export {
 	JsoncCanonicalizeError,
 	JsoncCanonicalizeErrorCode,
+	type JsoncDigest,
 	JsoncFingerprint,
 	JsoncTextHashOptions,
 } from "./JsoncFingerprint.js";

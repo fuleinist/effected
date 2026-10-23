@@ -7,10 +7,10 @@
 
 SPDX license identifiers, exceptions and license expressions as Effect Schema classes. `License.parse` validates a single identifier against the full SPDX License List; `SpdxExpression.parse` validates and parses a whole expression — `(MIT OR Apache-2.0)`, `GPL-2.0-only WITH Classpath-exception-2.0` — into a typed AST rather than a string you re-parse at every call site. Zero runtime dependencies: the SPDX datasets are vendored as generated TypeScript, not read from a CJS package at runtime.
 
-> **Pre-release.** This package is part of the `@effected/*` kit, in pre-`1.0.0`
-> development against a single pinned Effect v4 prerelease. Packages graduate to
-> `1.0.0` once Effect `4.0.0` ships. To hold your own `effect` versions at
-> exactly the ones the kit is built and tested against, install
+> **Pre-`1.0.0`.** This package is part of the `@effected/*` kit, built on stable
+> Effect v4 (`effect` `^4.0.0`) and still in `0.x` development. Stable Effect
+> makes a kit `1.0.0` possible, not automatic. To keep your `effect` and
+> `@effect/*` versions on the line the kit is built and tested against, install
 > [`@effected/pnpm-plugin-effect`](https://www.npmjs.com/package/@effected/pnpm-plugin-effect).
 >
 > **Stability: unstable.** This package's API surface is not yet considered
@@ -21,9 +21,9 @@ SPDX license identifiers, exceptions and license expressions as Effect Schema cl
 
 ## Why @effected/spdx
 
-Validating a `license` field usually means importing a small CJS parser at runtime and trusting it to keep working across module systems — a foreign dependency for a grammar that rarely changes. This package vendors the SPDX license and exception datasets as real, committed TypeScript instead: 695 active and 26 deprecated license identifiers, plus 66 exceptions, built once from static data with no parsing cost at load time. Validation only runs against actual user input, through `parse` / `parseResult`, never against the ~721 known-good catalog entries.
+Validating a `license` field usually means importing a small CJS parser at runtime and trusting it to keep working across module systems — a foreign dependency for a grammar that rarely changes. This package vendors the SPDX license and exception datasets as real, committed TypeScript instead: 708 active and 26 deprecated license identifiers, plus 66 exceptions, built once from static data with no parsing cost at load time. Validation only runs against actual user input, through `parse` / `parseResult`, never against the ~734 known-good catalog entries.
 
-The grammar itself is hardened the same way: malformed input and an unknown identifier both fail through one typed `InvalidSpdxExpressionError`, never as a thrown exception, and the recursive-descent parser is depth-capped so a hostile or accidentally-nested expression cannot blow the stack. A differential test suite checks the engine against the canonical `spdx-expression-parse` package on all 695 known license ids — if the two ever disagree, the rule is to fix this engine, not the test.
+The grammar itself is hardened the same way: malformed input and an unknown identifier both fail through one typed `InvalidSpdxExpressionError`, never as a thrown exception, and the recursive-descent parser is depth-capped so a hostile or accidentally-nested expression cannot blow the stack. A differential test suite checks the engine against the canonical `spdx-expression-parse` package on all 708 known license ids — if the two ever disagree, the rule is to fix this engine, not the test.
 
 ## Install
 

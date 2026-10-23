@@ -1,4 +1,5 @@
 import { Effect } from "effect";
+import type { ConfigMatch } from "./ConfigResolver.js";
 import { canMerge, deepMerge } from "./internal/deepMerge.js";
 
 /**
@@ -11,6 +12,18 @@ export interface ConfigSource<A> {
 	readonly path: string;
 	/** The name of the resolver that found it. */
 	readonly resolver: string;
+	/**
+	 * How the resolver found it — the anchor directory and the candidate that
+	 * matched.
+	 *
+	 * @remarks
+	 * Populated by `ConfigFile.discover` for every source it produces: a
+	 * resolver implementing `ConfigResolver.resolveMatch` reports its own
+	 * detail, and one that does not yields a bare `{ path }`. Optional on the
+	 * type so a hand-built `ConfigSource` — a merge-strategy test, a synthetic
+	 * source — stays valid without one.
+	 */
+	readonly match?: ConfigMatch;
 	/** The decoded, validated configuration value. */
 	readonly value: A;
 }
@@ -30,7 +43,9 @@ export type NonEmptySources<A> = readonly [ConfigSource<A>, ...ConfigSource<A>[]
  * @public
  */
 export interface MergeStrategy<A> {
+	/** The strategy's name, reported on the `Resolved` event. */
 	readonly name: string;
+	/** Combine the sources, highest priority first, into one value. */
 	readonly resolve: (sources: NonEmptySources<A>) => Effect.Effect<A>;
 }
 
@@ -73,11 +88,19 @@ const layeredMerge = <A>(): MergeStrategy<A> => ({
 });
 
 /**
- * Built-in merge strategies.
+ * Built-in merge strategies: `firstMatch` (the highest-priority source wins
+ * whole) and `layeredMerge` (every source deep-merged, higher priority winning).
  *
  * @remarks
- * Renamed from v3's `ConfigWalkStrategy`, which never walked anything — the
- * thing that walks is the `upwardWalk` resolver.
+ * Strategies only combine sources; the walk up the directory tree belongs to
+ * the `upwardWalk` resolver.
+ *
+ * @example
+ * ```ts
+ * import { MergeStrategy } from "@effected/config-file";
+ *
+ * const strategy = MergeStrategy.layeredMerge<{ port: number }>();
+ * ```
  *
  * @public
  */

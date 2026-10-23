@@ -1,17 +1,20 @@
 import { assert, describe, it } from "@effect/vitest";
 import { Effect, Stream } from "effect";
-import { ChildProcess } from "effect/unstable/process";
+import { ChildProcess } from "effect/process";
 
 import type { GitInvocation } from "../src/GitCommand.js";
 import { GitCommand } from "../src/GitCommand.js";
-
-const expectedEnv = { LC_ALL: "C" };
 
 /**
  * Asserts the argv/env/extendEnv/no-cwd shape shared by every `GitCommand`
  * constructor. `expectedRedacted` defaults to the raw argv — a constructor
  * with no sensitive positional must produce an element-wise identical
  * `redactedArgs`.
+ *
+ * A constructor carries NO environment and NO cwd: both are run-time context
+ * the `Git` service applies at its single spawn choke point (#670). The
+ * `env` assertion here is therefore a purity guard — a pin that leaks back
+ * onto a pure constructor fails every one of these cases at once.
  */
 const assertGitCommand = (
 	invocation: GitInvocation,
@@ -24,7 +27,7 @@ const assertGitCommand = (
 	assert.strictEqual(command.command, "git");
 	assert.deepStrictEqual(command.args, expectedArgs);
 	assert.deepStrictEqual(invocation.redactedArgs, expectedRedacted);
-	assert.deepStrictEqual(command.options.env, expectedEnv);
+	assert.isUndefined(command.options.env);
 	assert.strictEqual(command.options.extendEnv, true);
 	assert.isUndefined(command.options.cwd);
 };
@@ -285,9 +288,45 @@ describe("GitCommand", () => {
 		assertGitCommand(GitCommand.repoRoot(), ["rev-parse", "--show-toplevel"]);
 	});
 
+	it("commonDir builds `git rev-parse --path-format=absolute --git-common-dir`", () => {
+		assertGitCommand(GitCommand.commonDir(), ["rev-parse", "--path-format=absolute", "--git-common-dir"]);
+	});
+
 	it("commitInfo builds a NUL-separated single-commit log format", () => {
 		assertGitCommand(GitCommand.commitInfo(), ["log", "-1", "--format=%H%x00%G?%x00%B", "HEAD"]);
 		assertGitCommand(GitCommand.commitInfo("v1.0.0"), ["log", "-1", "--format=%H%x00%G?%x00%B", "v1.0.0"]);
+	});
+
+	it("log builds the -z record format with --name-only and no pathspec by default", () => {
+		assertGitCommand(GitCommand.log(), ["log", "-z", "--format=%x1e%H%x00%aI%x00%cI%x00%an%x00%ae", "--name-only"]);
+	});
+
+	it("log puts every flag before the `--` pathspec separator", () => {
+		// Order is load-bearing: git reads everything after `--` as a path, so a
+		// flag emitted late would be spawned as a filename.
+		assertGitCommand(GitCommand.log(["src/Git.ts"], true, 5, true), [
+			"log",
+			"-z",
+			"--format=%x1e%H%x00%aI%x00%cI%x00%an%x00%ae",
+			"--name-only",
+			"--follow",
+			"--diff-merges=first-parent",
+			"--max-count=5",
+			"--",
+			"src/Git.ts",
+		]);
+	});
+
+	it("log emits --max-count=0 for limit 0 rather than dropping it", () => {
+		// `0` is falsy: a truthiness test here would silently ask for the WHOLE
+		// history when the caller asked for none of it.
+		assertGitCommand(GitCommand.log([], false, 0), [
+			"log",
+			"-z",
+			"--format=%x1e%H%x00%aI%x00%cI%x00%an%x00%ae",
+			"--name-only",
+			"--max-count=0",
+		]);
 	});
 
 	it("configGet builds `git config --get <key>`", () => {

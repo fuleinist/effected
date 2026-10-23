@@ -9,8 +9,8 @@
 # construct-index fixtures commit a static api-extractor doc model under a
 # dist/ path to mirror real build output; never actually built, so **/dist
 # would otherwise swallow it
-!plugins/claude-code/__test__/fixtures/**/dist
-!plugins/claude-code/__test__/fixtures/**/dist/**
+!plugin/__test__/fixtures/**/dist
+!plugin/__test__/fixtures/**/dist/**
 **/.rslib
 **/.artifacts
 **/.turbo
@@ -51,6 +51,7 @@ website/lib/models/*
 website/docs/en/*/api/
 **/.api-docs/**
 #*.api-docs/snapshot/api-docs.db-*
+.superpowers/
 
 # Scratchpad working areas — agent probes are disposable, the shell is committed
 scratchpad/probes/
@@ -58,3 +59,6 @@ scratchpad/__test__/*.test.ts
 
 # Written by catalog:sync for the workflow to read as a commit message; never committed.
 .changeset/catalog-sync.commit.txt
+
+# okfit migration scratch
+.okfit-migration/

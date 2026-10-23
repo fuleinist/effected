@@ -42,11 +42,9 @@ export class SectionFileError extends Schema.TaggedError<SectionFileError>()("Se
  * the service class, and so the surface is a reviewable declaration rather
  * than whatever the implementation happened to return.
  *
- * Every member is **data-first**: the path comes first and nothing is dual.
- * The model this replaces made all seven members dual, which doubled the
- * declared surface for a data-last form no call site used — and a dual member
- * cannot be stubbed with a one-line override in {@link ManagedSection.layerTest},
- * because the override has to satisfy both overloads.
+ * Every member is **data-first**: the path comes first and nothing is dual,
+ * so a member can be stubbed with a one-line override in
+ * {@link ManagedSection.layerTest}.
  *
  * @public
  */
@@ -111,12 +109,11 @@ const notFound = (error: PlatformError.PlatformError): boolean => error.reason._
  *
  * @remarks
  * `FileSystem.readFileString` decodes through a default `TextDecoder`, which
- * strips a leading BOM — verified against `@effect/platform-node@4.0.0-beta.101`.
- * Reading through it would make the first sync of a BOM-carrying file silently
- * delete the BOM, which violates this package's central promise that every byte
- * outside a managed span survives. Reading bytes and decoding with
- * `ignoreBOM: true` keeps the mark in the leading text span, where it is
- * preserved like any other content.
+ * strips a leading BOM. Reading through it would make the first sync of a
+ * BOM-carrying file silently delete the BOM, which violates this package's
+ * central promise that every byte outside a managed span survives. Reading
+ * bytes and decoding with `ignoreBOM: true` keeps the mark in the leading
+ * text span, where it is preserved like any other content.
  */
 const decoder = new TextDecoder("utf-8", { ignoreBOM: true });
 

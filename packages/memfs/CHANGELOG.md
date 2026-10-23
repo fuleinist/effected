@@ -1,5 +1,420 @@
 # @effected/memfs
 
+## 0.18.0
+
+### Features
+
+#### `lstat`
+
+- Every memory filesystem now implements `FileSystem.lstat`, which Effect 4.0.6 requires of a `FileSystem`. It reports a final symbolic link itself (`type: "SymbolicLink"`, a dangling link included) and still follows links earlier in the path, as Node's `lstat` does. `NodeSyncFileSystem` implements it with `lstatSync`, and a fault registered for `lstat` now fires.
+
+### Bug Fixes
+
+- An `EPERM` failure, such as hard-linking a directory, now reports `PermissionDenied` instead of `Unknown`, matching the Node adapter. Code that matched `Unknown` for these failures needs to match `PermissionDenied`. [#1039][#1039]
+
+### Maintenance
+
+- Upgrades core Effect library dependencies to v4.0.6 [#1039][#1039]
+
+### Thanks
+
+Thanks to [@spencerbeggs](https://github.com/spencerbeggs) for their contributions!
+
+[#1039]: https://github.com/spencerbeggs/effected/pull/1039
+
+## 0.17.0
+
+### Breaking Changes
+
+#### File metadata counts are `bigint`
+
+- `stat` now reports `dev`, `ino`, `rdev`, `nlink` and `blocks` as `bigint`, matching core's `FileSystem.File.Info`. `dev` is a `bigint`, and the others are `Option<bigint>`. `mode`, `uid` and `gid` stay `number`. Compare with bigint literals, such as `info.nlink.value === 2n`.
+
+- The `node-sync` adapter now reads these fields from Node as unsigned 64-bit values, the way core's Node adapter does. A device or inode number at or above 2^63 comes back exact. It no longer fails or drops.
+
+### Bug Fixes
+
+#### `watch` calls `onReady`
+
+- `watch` now calls `WatchOptions.onReady` once its subscription is registered, as core requires of a custom watch backend. Code that waits on `onReady` before writing no longer hangs under memfs. A write made after `onReady` is always delivered, and a watch on a missing path fails without calling it. [#1019][#1019]
+
+### Maintenance
+
+- Upgrades core Effect library dependencies to v4.0.5 [#1019][#1019]
+
+### Thanks
+
+Thanks to [@spencerbeggs](https://github.com/spencerbeggs) for their contributions!
+
+[#1019]: https://github.com/spencerbeggs/effected/pull/1019
+
+## 0.16.0
+
+### Maintenance
+
+- Upgrades core Effect library dependencies to v4.0.4 [#1008][#1008]
+
+### Thanks
+
+Thanks to [@spencerbeggs](https://github.com/spencerbeggs) for their contributions!
+
+[#1008]: https://github.com/spencerbeggs/effected/pull/1008
+
+## 0.15.0
+
+### Features
+
+- `FileSystem.open` honours `noFollow`: a final-component symlink fails with `BadResource` (`ELOOP`), matching Node. `wx` on a link stays `EEXIST`, and parent links are still followed.
+- `File.read` and `File.readAlloc` honour `{ position }`: they read at the offset and leave the cursor untouched. A negative position fails with `BadArgument`.
+
+### Tests
+
+- 13 new differential cases run against the real Node layer. [#1000][#1000]
+
+### Dependencies
+
+| Dependency | Type | Action | From | To |
+| --- | --- | --- | --- | --- |
+| effect | peerDependency | updated | 4.0.2 | ^4.0.3 |
+
+### Thanks
+
+Thanks to [@spencerbeggs](https://github.com/spencerbeggs) for their contributions!
+
+[#1000]: https://github.com/spencerbeggs/effected/pull/1000
+
+## 0.14.1
+
+### Bug Fixes
+
+- Republished with every `effect` and `@effect/*` version pinned exactly to `4.0.2`, both peer and dependency ranges.
+
+- On 2026-10-10, every `@effect/*` package published at `4.0.3`, but `effect@4.0.3` itself never reached npm (Effect-TS/effect#8994). The 4.0.3 packages require `effect ^4.0.3`. A caret range on any of them therefore resolves a 4.0.3 package next to `effect@4.0.2`, and the program crashes when it imports them. Exact pins keep a fresh install of any kit package on a matched set until `effect@4.0.3` is available. [#997][#997]
+
+### Thanks
+
+Thanks to [@spencerbeggs](https://github.com/spencerbeggs) for their contributions!
+
+[#997]: https://github.com/spencerbeggs/effected/pull/997
+
+## 0.14.0
+
+### Breaking Changes
+
+- The kit now builds on and peers stable `effect` `^4.0.0`, in place of an exact release-candidate pin. Move `effect` and every `@effect/*` package to the same `4.x` version in one install: Effect releases them together at one version. A package from this release cannot share an install with an `effect` release candidate. The peer is a caret range, so later `4.x` releases of Effect satisfy the kit without a kit release.
+- Kit exports are unchanged. A consumer moving to stable `effect` meets these changes in its own code:
+  - `Array`, `Chunk`, `Effect` and `Record` `partition`, their `separate` helpers and `Option.partitionMap` return `[successes, failures]`. Where both sides share a type, the reversed destructuring still compiles, so search for every call.
+  - `Schema.brand` takes one identifier and is type-only: the identifier is not stored on the AST and does not survive `SchemaRepresentation`. Compose distinct brands by applying `brand` more than once.
+  - `TestSchema`'s round-trip assertion is `verifyRoundTrip`, with Effect forms `succeedEffect`, `failEffect` and `verifyRoundTripEffect`.
+  - Effect marks some APIs `@stability unstable`: those may change in a minor Effect release. Untagged APIs follow semver.
+
+### Documentation
+
+- Every exported construct's TSDoc was reviewed against the current API. Summaries open with what the construct does, error channels and requirements are stated, examples use real imports and compile, and links resolve. Comments that described options, errors or defaults the code does not have were corrected. [#910][#910]
+
+### Thanks
+
+Thanks to [@spencerbeggs](https://github.com/spencerbeggs) for their contributions!
+
+[#910]: https://github.com/spencerbeggs/effected/pull/910
+
+## 0.13.1
+
+### Bug Fixes
+
+- Recursive `makeDirectory` through a dangling or looping symlink component now fails with Node's errno instead of `EEXIST`: `ENOENT` or `ELOOP` for the final component, and `ENOTDIR` for a dangling intermediate component, matching `@effect/platform-node`'s async `mkdir`.
+- `MemoryFileSystemHandle.mkdir` now matches `mkdirSync`, reporting `ENOENT` for a dangling intermediate component.
+- Handle write and symlink parent-directory creation now reports Node's error when the parent path runs through a dangling symlink. [#902][#902]
+
+### Thanks
+
+Thanks to [@spencerbeggs](https://github.com/spencerbeggs) for their contributions!
+
+[#902]: https://github.com/spencerbeggs/effected/pull/902
+
+## 0.13.0
+
+### Breaking Changes
+
+- The constructor family collapsed onto one options bag, `{ root, caseSensitive, faults }`. Every memory layer now also provides `MemoryFileSystem.Volume`, and the seed is optional. This is a `0.x` minor with deliberate DX breaks; every "before" below is the published `0.12.0`.
+
+| Before (`0.12.0`) | After |
+| :-- | :-- |
+| `layerFaultyWith(seed, faults)` | `layerWith(seed, { faults })` |
+| `layerInspectable` | `layer` (it now provides `Volume` too) |
+| `layerInspectableWith(seed)` | `layerWith(seed)` |
+| `makeInspectable` (a value) | `makeHandle()` |
+| `makeInspectableWith(seed)` | `makeHandle(seed)`; `{ fileSystem, volume }` destructuring is unchanged |
+| type `MemoryFileSystemInspectable` | type `MemoryFileSystemHandle` |
+| `layer` / `layerWith` typed `Layer<FileSystem>` | typed `Layer<FileSystem \| MemoryFileSystemVolume>`; still assignable to `Layer<FileSystem>` |
+| an unknown fault key was silently ignored | throws `RangeError` naming the key at construction (a layer build dies) |
+| `makeFaulty` / `layerFaulty` accepted a base whose methods live on its prototype | fault keys must be own enumerable function members of the base, so a class-instance base throws; wrap it in `FileSystem.make({ ... })` first |
+| sync-port errors read `ENOENT: readFile '/x'`, with syscall `readFile` or `readDirectory` | node's exact message (`ENOENT: no such file or directory, open '/x'`) and syscall (`open`, `read`, `scandir`); update any matcher on `message` or `syscall` |
+| reading a directory through the sync port threw `EISDIR: readFile '<path>'` with `path` set | `EISDIR: illegal operation on a directory, read`, with no `path`, byte-identical to node |
+| a sync-port path through a regular file failed `ENOENT` (`/file/child`) or resolved as if the file were a directory (`/file/..`, `/file/`) | fails `ENOTDIR`, as node does; `exists` is `false` |
+| a symbolic-link cycle through the sync port failed `ENOENT` | fails `ELOOP` (`exists` stays `false`) |
+| `MemoryFileSystemSyncFileSystem` had four members | it also requires `stat` and `lstat`; a hand-implemented object no longer typechecks |
+| `MemoryFileSystemVolume` had no `lstat` | it requires `lstat`; a hand-implemented object no longer typechecks |
+
+```ts
+// before
+MemoryFileSystem.layerFaultyWith(seed, faults);
+// after
+MemoryFileSystem.layerWith(seed, { faults });
+```
+
+### Features
+
+#### Options bag and handles
+
+- `makeSync` and `makeHandle` return a handle carrying the filesystem, the volume, the sync and promises ports, and a ready-made layer. Its `write`, `mkdir`, `remove` and `symlink` mutators resolve relative paths against `options.root`, `handle.root` exposes it, and `handle.withFaults` returns faulted ports over the same volume. `root` is a join base: relative seed keys, including `..` keys, join it.
+
+#### Case-insensitive, case-preserving volumes
+
+- `caseSensitive: false` models a case-insensitive, case-preserving filesystem, checked against APFS on a real host. Closes #874.
+
+#### Sync and promises ports
+
+- `syncFileSystem` gains `stat`, `lstat` and faults, and there is a new `promisesFileSystem` port
+- `volume.lstat` inspects a path without following links
+- `MemoryFileSystem.errno` builds node-shaped errno errors
+- Port errors carry node-exact messages and syscalls
+
+#### `@effected/memfs/node-sync`
+
+- New subpath exporting `NodeSyncFileSystem`, a read-only synchronous Node `FileSystem` for running an Effect program under `Effect.runSync` from a synchronous host API, such as a bundler config. Its read members match `@effect/platform-node` value for value and failure for failure; every other member is a defect. Closes #532.
+
+- Closes #887, #874, #532. [#890][#890]
+
+### Thanks
+
+Thanks to [@spencerbeggs](https://github.com/spencerbeggs) for their contributions!
+
+[#890]: https://github.com/spencerbeggs/effected/pull/890
+
+## 0.12.0
+
+### Features
+
+- `MemoryFileSystem.die(defect)` is a fault handler that fails a member as a defect, which `Effect.catch` cannot absorb.
+- `makeFaulty`, `layerFaulty` and `layerFaultyWith` accept a `(base) => faults` factory as well as a fault map. `base` is the unfaulted volume, so a handler can rewrite arguments and delegate to it. The factory type is exported as `MemoryFileSystemFaultsFactory`. [#882][#882]
+
+### Thanks
+
+Thanks to [@spencerbeggs](https://github.com/spencerbeggs) for their contributions!
+
+[#882]: https://github.com/spencerbeggs/effected/pull/882
+
+## 0.11.0
+
+### Breaking Changes
+
+- The kit now builds on and peers `effect` `4.0.0-rc.118`, pinned exactly. Consumers must move `effect` and every `@effect/*` package to `4.0.0-rc.118` in the same install. Effect removed the `effect/unstable/*` export paths in this release, so an `@effected` package built on rc.118 cannot share an install with `effect` rc.117.
+
+- Moving the pin also closes a fresh-install failure on rc.117. `@effect/platform-node@4.0.0-rc.117` depends on `@effect/platform-node-shared` with a caret, so an install without a lockfile paired the rc.118 shared package with `effect` rc.117 and failed at startup with `ERR_MODULE_NOT_FOUND`.
+
+- Consumers moving to this release: effect removed the `effect/unstable/*` export paths (imports become `effect/<module>`), moved `Arbitrary` to `effect`, split `effect/Encoding` into `effect/encoding/Base64`, `Base64Url` and `Hex`, and renamed the `Schema` range and string checks (`isLengthBetween` → `isBetweenLength`, `isStartsWith` → `isStartingWith`, and so on). Kit exports are otherwise unchanged; the kit's own imports moved onto the new paths. [#864][#864]
+
+### Thanks
+
+Thanks to [@spencerbeggs](https://github.com/spencerbeggs) for their contributions!
+
+[#864]: https://github.com/spencerbeggs/effected/pull/864
+
+## 0.10.0
+
+### Breaking Changes
+
+- Every failure the volume raises now matches the shape `@effect/platform-node`
+  gives it: node's errno rides on `reason.cause.code`, and the `_tag` is
+  derived from that code by the node adapter's own mapping (`ENOENT` →
+  `NotFound`, `EEXIST` → `AlreadyExists`, `EISDIR`/`ENOTDIR`/`ELOOP` →
+  `BadResource`, everything else — `EINVAL`, `ENOTEMPTY`, `EBADF`, `EPERM` and
+  more — `Unknown`). Several tags change as a result, and several outcomes
+  that used to fail now succeed:
+
+- `readLink` on a non-link now fails `Unknown`/`EINVAL`, not `BadResource`.
+
+- `link` targeting a directory now fails `Unknown`/`EPERM`, not
+  `PermissionDenied`.
+
+- `mkdir` through a path that passes through a file now fails
+  `BadResource`, not `AlreadyExists`.
+
+- A closed or wrong-mode file handle now fails `Unknown`/`EBADF` or
+  `Unknown`/`EINVAL`, not `BadResource`.
+
+- Removing an empty directory without `recursive` now **fails**
+  (`Unknown`/`ERR_FS_EISDIR`) where it used to succeed, and removing a
+  non-empty one without `recursive` fails the same way, not `BadResource`
+  ("directory is not empty").
+
+- `copy` of a file onto itself, or onto its own hard link, now fails
+  `Unknown`/`ERR_FS_CP_EINVAL` whatever `overwrite` says. The same-entry
+  check now outranks the `overwrite: false` refusal, so a default
+  `copy(f, f)` that used to fail `AlreadyExists` now fails
+  `ERR_FS_CP_EINVAL`, and with `overwrite: true`, which used to succeed as a
+  no-op, it now **fails**. A directory copied onto or into itself fails the
+  same code, not `BadResource`.
+
+- A `copy` kind mismatch (a directory onto a file, a file onto a directory,
+  at the top or anywhere in the tree) now fails `Unknown` with
+  `ERR_FS_CP_DIR_TO_NON_DIR` or `ERR_FS_CP_NON_DIR_TO_DIR` whatever
+  `overwrite` says: it outranks the `overwrite: false` refusal, so the
+  mismatch is reported where `AlreadyExists` used to be, and it replaces
+  the `BadResource` an overwriting copy used to fail with.
+
+- A non-recursive `mkdir("/")` now fails `AlreadyExists`/`EEXIST`, not
+  `BadResource`.
+
+- Renaming or removing a path written with a trailing `dir/`, a recursive
+  `mkdir("/")`, a `glob` from a bad root (now matches `[]` instead of
+  failing) and a negative `truncate` (now clamped instead of failing) now
+  **succeed** where they used to fail.
+
+- `utimes`' error `method` is now `"utime"`, matching the real platform.
+
+- A NUL byte in a path now fails `BadArgument`.
+
+- A test asserting on the old tags or outcomes needs updating; a test that
+  already only checks the volume's behaviour against `@effect/platform-node`
+  directly is unaffected. [#840][#840]
+
+### Thanks
+
+Thanks to [@spencerbeggs](https://github.com/spencerbeggs) for their contributions!
+
+[#840]: https://github.com/spencerbeggs/effected/pull/840
+
+## 0.9.0
+
+### Features
+
+- Upgrades core Effect to `rc-117` [#812][#812]
+
+### Thanks
+
+Thanks to [@spencerbeggs](https://github.com/spencerbeggs) for their contributions!
+
+[#812]: https://github.com/spencerbeggs/effected/pull/812
+
+## 0.8.1
+
+### Documentation
+
+- `MemoryFileSystem.layerInspectableWith` now documents the per-provide re-seed consequence for write assertions: resolving `Volume` under a second `Effect.provide` of the same layer value observes a fresh volume holding only the seed, so a post-run "nothing was written" assertion passes vacuously. Resolve `Volume` inside the provided program, or pin identity with `MemoryFileSystem.makeInspectableWith`.
+
+### Thanks
+
+Thanks to [@spencerbeggs](https://github.com/spencerbeggs) for their contributions!
+
+## 0.8.0
+
+### Breaking Changes
+
+#### The whole kit tracks Effect `4.0.0-rc.116`
+
+- Every package's `effect` peer moves from `4.0.0-rc.115` to `4.0.0-rc.116`. The kit uses exact prerelease pins rather than a caret, so a consumer must move with it. No `@effected` API changes shape on this advance; the kit itself needed one edit (`Stream.scan` now takes a lazy initial state, met once in `@effected/jsonl`'s `Journal.projection`). A consumer that upgrades meets the rc.116 renames on its own code:
+
+- `SchemaTransformation.make` is `makeTransformation`, and `Transformation#compose` is the dual standalone `SchemaTransformation.composeTransformation`.
+
+- `SchemaGetter.Getter` is a tagged union exposing only `pipe`: `new SchemaGetter.Getter`, `onSome` and `onNone` are gone in favour of `SchemaGetter.map` / `compose` / `run` and `transformEffect` / `transformOptionalEffect`.
+
+- `Stream.scan` and `Stream.scanEffect` take `() => initial`; `Stream.partition` returns `[passes, fails]`; `Stream.mapBoth` takes `onElement` / `onError`.
+
+- `Effect.orElseSucceed` passes the error to its fallback and `Effect.isEffect` narrows to `Effect<unknown, unknown, unknown>`.
+
+- `ByteSize.Input` string literals are checked at compile time; parse external strings with `ByteSize.fromString`.
+
+- Arbitrary shrinking changed, so property-test replay tokens recorded at rc.115 no longer reproduce.
+
+### Documentation
+
+#### The Claude Code and Copilot plugins teach the rc.116 surface
+
+- The `effect-v4-schema` transformation reference composes transformations with `SchemaTransformation.composeTransformation` and describes the `Getter` surface rc.116 left behind; the source-lookup and testing skills report rc.116 as the kit's pin and the two-copy lockfile shape the bridge now produces (`rc.115` for the toolchain, `rc.116` for the kit); the session-start briefing reports rc.116.
+
+### Dependencies
+
+| Dependency | Type | Action | From | To |
+| --- | --- | --- | --- | --- |
+| @effect/platform-node | devDependency | updated | 4.0.0-rc.115 | 4.0.0-rc.116 |
+| @effect/vitest | devDependency | updated | 4.0.0-rc.115 | 4.0.0-rc.116 |
+| effect | devDependency | updated | 4.0.0-rc.115 | 4.0.0-rc.116 |
+| effect | peerDependency | updated | 4.0.0-rc.115 | 4.0.0-rc.116 |
+
+### Maintenance
+
+#### The rc.115 `packageExtensions` bridge is retired
+
+- The toolchain (`@savvy-web/tsdown-plugins`, `rolldown-pnpm-config`, `@vitest-agent/*`) has republished declaring `effect` and its `@effected/*` inputs as regular dependencies, so the workspace no longer needs the `packageExtensions` block that pinned them by hand. Its ten keys named versions no longer installed and the lockfile diff on removal was the checksum line alone. Nothing published changes; this is the workspace's own install shape. [#792][#792]
+
+### Thanks
+
+Thanks to [@spencerbeggs](https://github.com/spencerbeggs) for their contributions!
+
+[#792]: https://github.com/spencerbeggs/effected/pull/792
+
+## 0.7.1
+
+### Bug Fixes
+
+- Fixes closure issues in all packages.
+
+### Thanks
+
+Thanks to [@spencerbeggs](https://github.com/spencerbeggs) for their contributions!
+
+## 0.7.0
+
+### Breaking Changes
+
+#### The whole kit tracks Effect `4.0.0-rc.115`
+
+- Every package's `effect` peer moves from `4.0.0-rc.112` to `4.0.0-rc.115`. The kit uses exact prerelease pins rather than a caret, so a consumer must move with it. This advance is the first whose Effect changes are not source-compatible with the previous pin, so a consumer that upgrades meets the same renames the kit did:
+
+- `SchemaTransformation.transformOrFail` and `SchemaGetter.transformOrFail` are `transformEffect`.
+
+- The `Config` constructors are PascalCase (`Config.String`, `Config.Redacted`, `Config.Int`, `Config.Boolean`, …) and `Config.mapOrFail` is `Config.mapEffect`.
+
+- `FileSystem.Size` and `FileSystem.SizeInput` are gone in favour of the `ByteSize` module: `File.Info.size` is a `ByteSize`, `File.seek` takes a `bigint`, `read`/`write` return a `number`.
+
+- The fast-check bridge (`effect/testing/FastCheck`, `Schema.toArbitrary`, the `fastCheck` property-test option) is removed in favour of `effect/unstable/arbitrary/Arbitrary`; `it.effect.prop` takes `arbitrary: { runs, size, seed, … }`.
+
+#### `@effected/schemastore` documents are open unless told otherwise
+
+- `Schema.ToJsonSchemaOptions.additionalProperties` became `onExcessProperty: "ignore" | "error"` upstream, and its default now mirrors the decoder's: generated object schemas carry `additionalProperties: true` unless `jsonSchema: { onExcessProperty: "error" }` is passed. `StoreDocument.fromSchema` passes the option through unchanged, so a document that was closed by default at rc.112 is open by default now. Pass `onExcessProperty: "error"` to keep a closed document; a generator that silently disagreed with the decoder it is paired with would be the worse default.
+
+#### `@effected/memfs` seeks before the start of a file fail
+
+- `File.seek` gained a `PlatformError` channel upstream, and memfs now matches Node: a seek whose resulting position would be negative fails with `BadArgument` ("Cannot seek before the start of the file") and leaves the cursor unchanged, where it previously stored the negative position and failed on the next read. No memfs-declared type changes; the `File`/`File.Info` shape changes are Effect's own, reaching consumers through the peer.
+
+### Documentation
+
+#### A `Schema.Class` root is annotated on the `Struct` it wraps
+
+- [Effect-TS/effect#8084](https://github.com/Effect-TS/effect/issues/8084), which the rc.112 notes carried as an open limitation, was closed upstream as by design: annotations passed as `Schema.Class`'s second argument sit on the class node, while the `$defs` entry is generated from the encoded fields `Struct`. Annotate that `Struct` — `Schema.Class<X>("X")(Schema.Struct({ … }).annotate({ title, description, "x-taplo": … }))` — and every key reaches the document. `@effected/schemastore`'s design doc and context files now state the rule instead of the limitation.
+
+#### The Claude Code and Copilot plugins teach the rc.115 surface
+
+- The `effect-v4-schema`, `effect-v4-testing` and `effect-v4-module-index` skills describe the native `Arbitrary` module in place of the fast-check bridge, including the migration traps met on this advance: the `size` clamp (default 10) that silently shrinks a property's string and array domains, the `-0` the generator's near-zero bias emits for an unbounded `Schema.Int` or any `Schema.Number`, which JSON and YAML cannot round-trip, and the absence of `oneof`/`constantFrom`/`array` combinators. `ByteSize` has a module-index row, the `Config` and CLI constructors are shown in their PascalCase spellings, and the session-start briefing reports rc.115 as the kit's pin. [#686][#686]
+
+### Dependencies
+
+| Dependency | Type | Action | From | To |
+| --- | --- | --- | --- | --- |
+| @effect/platform-node | devDependency | updated | 4.0.0-rc.112 | 4.0.0-rc.115 |
+| @effect/tsgo | devDependency | updated | 0.41.0 | 0.45.0 |
+| @effect/vitest | devDependency | updated | 4.0.0-rc.112 | 4.0.0-rc.115 |
+| effect | devDependency | updated | 4.0.0-rc.112 | 4.0.0-rc.115 |
+| effect | peerDependency | updated | 4.0.0-rc.112 | 4.0.0-rc.115 |
+
+### Thanks
+
+Thanks to [@spencerbeggs](https://github.com/spencerbeggs) for their contributions!
+
+[#686]: https://github.com/spencerbeggs/effected/pull/686
+
 ## 0.6.0
 
 ### Breaking Changes

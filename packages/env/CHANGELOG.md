@@ -1,0 +1,140 @@
+# @effected/env
+
+## 0.5.0
+
+### Maintenance
+
+- Upgrades core Effect library dependencies to v4.0.6 [#1039][#1039]
+
+### Thanks
+
+Thanks to [@spencerbeggs](https://github.com/spencerbeggs) for their contributions!
+
+[#1039]: https://github.com/spencerbeggs/effected/pull/1039
+
+## 0.4.0
+
+### Maintenance
+
+- Upgrades core Effect library dependencies to v4.0.5 [#1019][#1019]
+
+### Thanks
+
+Thanks to [@spencerbeggs](https://github.com/spencerbeggs) for their contributions!
+
+[#1019]: https://github.com/spencerbeggs/effected/pull/1019
+
+## 0.3.0
+
+### Maintenance
+
+- Upgrades core Effect library dependencies to v4.0.4 [#1008][#1008]
+
+### Thanks
+
+Thanks to [@spencerbeggs](https://github.com/spencerbeggs) for their contributions!
+
+[#1008]: https://github.com/spencerbeggs/effected/pull/1008
+
+## 0.2.0
+
+### Features
+
+- `TerminalEnv.layer` now reads core's `Stdio.stderrIsTerminal` by default instead of mirroring stdout. The `stderrIsTerminal` option stays as an override. Consumers that relied on the stdout mirror see stderr's own terminal state. [#1000][#1000]
+
+### Dependencies
+
+| Dependency | Type | Action | From | To |
+| --- | --- | --- | --- | --- |
+| effect | peerDependency | updated | 4.0.2 | ^4.0.3 |
+
+### Thanks
+
+Thanks to [@spencerbeggs](https://github.com/spencerbeggs) for their contributions!
+
+[#1000]: https://github.com/spencerbeggs/effected/pull/1000
+
+## 0.1.2
+
+### Bug Fixes
+
+- Republished with every `effect` and `@effect/*` version pinned exactly to `4.0.2`, both peer and dependency ranges.
+
+- On 2026-10-10, every `@effect/*` package published at `4.0.3`, but `effect@4.0.3` itself never reached npm (Effect-TS/effect#8994). The 4.0.3 packages require `effect ^4.0.3`. A caret range on any of them therefore resolves a 4.0.3 package next to `effect@4.0.2`, and the program crashes when it imports them. Exact pins keep a fresh install of any kit package on a matched set until `effect@4.0.3` is available. [#997][#997]
+
+### Thanks
+
+Thanks to [@spencerbeggs](https://github.com/spencerbeggs) for their contributions!
+
+[#997]: https://github.com/spencerbeggs/effected/pull/997
+
+## 0.1.1
+
+### Maintenance
+
+- Republished to re-verify the package's npm trusted publishing setup. No code changes. [#986][#986]
+
+### Thanks
+
+Thanks to [@spencerbeggs](https://github.com/spencerbeggs) for their contributions!
+
+[#986]: https://github.com/spencerbeggs/effected/pull/986
+
+## 0.1.0
+
+### Breaking Changes
+
+- The kit now builds on and peers stable `effect` `^4.0.0`, in place of an exact release-candidate pin. Move `effect` and every `@effect/*` package to the same `4.x` version in one install: Effect releases them together at one version. A package from this release cannot share an install with an `effect` release candidate. The peer is a caret range, so later `4.x` releases of Effect satisfy the kit without a kit release.
+- Kit exports are unchanged. A consumer moving to stable `effect` meets these changes in its own code:
+  - `Array`, `Chunk`, `Effect` and `Record` `partition`, their `separate` helpers and `Option.partitionMap` return `[successes, failures]`. Where both sides share a type, the reversed destructuring still compiles, so search for every call.
+  - `Schema.brand` takes one identifier and is type-only: the identifier is not stored on the AST and does not survive `SchemaRepresentation`. Compose distinct brands by applying `brand` more than once.
+  - `TestSchema`'s round-trip assertion is `verifyRoundTrip`, with Effect forms `succeedEffect`, `failEffect` and `verifyRoundTripEffect`.
+  - Effect marks some APIs `@stability unstable`: those may change in a minor Effect release. Untagged APIs follow semver.
+
+### Features
+
+- First release. `@effected/env` answers three questions for any front end of an Effect v4 tool: **who is running it** (an AI agent, a CI job, or neither), **what the terminal can do** (colour level, OSC 8 hyperlinks and width, per stream), and **who the output is for** (a human, an agent or CI). Every answer is read once through `Config`, never from `process`, and every service has a `layerTest`, so a test fixes the environment without touching a global. `effect` is the only peer: there are no runtime dependencies, no platform import and no `@effected/*` edge.
+
+#### Runtime snapshot
+
+- `RuntimeEnv` — a schema-class snapshot of the agent, the CI provider and the terminal program, persistable as plain JSON. `RuntimeEnv.fromRecord(env)` builds one as a pure function.
+- `CurrentRuntimeEnv` — the snapshot as a service. `layer` reads the ambient `ConfigProvider` once; `layerFrom(source)` reads a record or provider of your own, fresh on every use, for a long-lived host; `layerTest(overrides)` fixes it.
+- Agent detection follows std-env's table and reports the agent family (`AI_AGENT=claude-code_…` gives `"claude"`). `ci` is `"github-actions"` (a truthy `GITHUB_ACTIONS`, even with `CI=false`) or `"generic"` (`CI` or `CONTINUOUS_INTEGRATION`, unless `false` or `0`). An empty variable always counts as unset.
+
+#### Terminal capabilities
+
+- `TerminalEnv` — per-stream `isTerminal`, colour level (`none`, `basic`, `256`, `truecolor`), `hyperlinks` and `columns`, plus `width(fallback)`. `layer()` needs core's `Stdio` and `Terminal`; `layerStdio()` needs only `Stdio`; `colorLevel("stdout")` decides colour alone.
+- Colour follows Node's `getColorDepth` precedence: `FORCE_COLOR` first (so it beats `NO_COLOR`), then a non-empty `NO_COLOR` or `NODE_DISABLE_COLORS` and `TERM=dumb`, then the TTY check, then Windows (`OS=Windows_NT`, truecolor, as Node gives on Windows 10 build 14931 and later), then Node's terminal table.
+- Hyperlink support uses std-osc8's detector: `FORCE_HYPERLINK` and `NO_HYPERLINK`, the terminal and version table, and tmux or screen as unsupported.
+
+#### Audience
+
+- `Audience` — `human`, `agent` or `ci`, and the `source` that decided it. `layer({ envVar })` decides from `CurrentRuntimeEnv` and an override variable you name: a valid override wins, then an agent, then CI, then a human.
+- `EnvOverride` — reads a variable that picks a mode within an audience, accepting only the literals you list per audience. `readResult` reports without logging; `read` logs one warning for a rejected value. [#905][#905]
+
+```ts
+import { Audience, CurrentRuntimeEnv } from "@effected/env";
+import { Effect, Layer } from "effect";
+
+// A valid MYTOOL_AUDIENCE beats detection; then an agent, then CI, then a human.
+const AudienceLive = Audience.layer({ envVar: "MYTOOL_AUDIENCE" }).pipe(Layer.provide(CurrentRuntimeEnv.layer));
+
+const program = Effect.gen(function* () {
+  const audience = yield* Audience;
+  if (audience.kind === "agent") {
+    // plain text, no escapes
+  }
+});
+```
+
+### Documentation
+
+- Every exported construct's TSDoc was reviewed against the current API. Summaries open with what the construct does, error channels and requirements are stated, examples use real imports and compile, and links resolve. Comments that described options, errors or defaults the code does not have were corrected. [#910][#910]
+
+### Thanks
+
+Thanks to [@spencerbeggs](https://github.com/spencerbeggs) for their contributions!
+
+[#905]: https://github.com/spencerbeggs/effected/pull/905
+
+[#910]: https://github.com/spencerbeggs/effected/pull/910

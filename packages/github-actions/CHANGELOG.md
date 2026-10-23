@@ -1,5 +1,714 @@
 # @effected/github-actions
 
+## 0.25.0
+
+### Breaking Changes
+
+#### `OidcClaims` is removed
+
+- `OidcTokenIssuer.claims`, `OidcTokenIssuer.layerFor` and `OidcTokenIssuer.unsignedTokenFor` now use `ActionsOidcClaims` from `@effected/github`, the same class `ActionsOidc.verify` returns. Replace `OidcClaims` with `ActionsOidcClaims`; its fields are camel-cased (`jobWorkflowRef` where `job_workflow_ref` was) and its ids (`repositoryId`, `runId`, `runAttempt` and the rest) are integers rather than strings. A test double built with `layerFor` must now also supply `sub`, `aud`, `actor`, `actorId`, `repositoryOwner`, `exp` and `iat`.
+
+#### `BlobStore.layerS3` requires core `Crypto`
+
+- The S3 store now signs requests with `@effected/crypto`'s SigV4 and the package's private signer is gone. `layerS3` therefore needs core `Crypto` in its requirements; provide the platform's `Crypto` layer.
+
+#### `BlobStoreError` gains `invalidKey`
+
+- A key with a `.` or `..` path segment cannot be sent as signed, because every URL parser collapses those segments, so the S3 store now refuses it before sending with reason `invalidKey`. Code that switches exhaustively on `BlobStoreError.reason` must handle the new case.
+
+### Bug Fixes
+
+- A `BlobStore.layerS3` key containing `!'()*` is now requested at its encoded path: the store sends exactly the path and query that SigV4 signed, so they match what S3 sees.
+- `ToolInstaller` reads the runner architecture from `RUNNER_ARCH`, mapping X86 to `ia32` and ARM to `arm`, instead of the process architecture.
+
+### Dependencies
+
+| Dependency | Type | Action | From | To |
+| --- | --- | --- | --- | --- |
+| @effected/crypto | dependency | updated | 0.0.0 | 0.1.0 |
+| @effected/github | dependency | updated | 0.22.0 | 0.23.0 |
+| @effected/npm | dependency | updated | 0.24.0 | 0.25.0 |
+| @effected/oidc | dependency | updated | 0.0.0 | 0.1.0 |
+| @effected/sbom | dependency | updated | 0.14.0 | 0.15.0 |
+
+### Maintenance
+
+- S3 credentials pass through `Secret.mask`, and no trace headers are sent to the S3 store.
+- Artifact expiry follows `Clock`, so a test clock controls it.
+- Action inputs and external JSON are decoded with Schema.
+- `node:crypto` is confined to `internal/digest.ts`, which closes #767. [#1051][#1051]
+
+### Thanks
+
+Thanks to [@spencerbeggs](https://github.com/spencerbeggs) for their contributions!
+
+[#1051]: https://github.com/spencerbeggs/effected/pull/1051
+
+## 0.24.0
+
+### Dependencies
+
+| Dependency | Type | Action | From | To |
+| --- | --- | --- | --- | --- |
+| @effected/github | dependency | updated | 0.21.0 | 0.22.0 |
+| @effected/github-commands | dependency | updated | 0.5.0 | 0.6.0 |
+| @effected/glob | dependency | updated | 0.13.0 | 0.14.0 |
+| @effected/markdown | dependency | updated | 0.19.0 | 0.20.0 |
+| @effected/npm | dependency | updated | 0.23.0 | 0.24.0 |
+| @effected/sbom | dependency | updated | 0.13.0 | 0.14.0 |
+| @effected/semver | dependency | updated | 0.14.0 | 0.15.0 |
+| @effected/templates | dependency | updated | 0.13.0 | 0.14.0 |
+| @effected/walker | dependency | updated | 0.18.0 | 0.19.0 |
+
+### Maintenance
+
+- Upgrades core Effect library dependencies to v4.0.6 [#1039][#1039]
+
+### Thanks
+
+Thanks to [@spencerbeggs](https://github.com/spencerbeggs) for their contributions!
+
+[#1039]: https://github.com/spencerbeggs/effected/pull/1039
+
+## 0.23.1
+
+### Dependencies
+
+| Dependency | Type | Action | From | To |
+| --- | --- | --- | --- | --- |
+| @effected/markdown | dependency | updated | 0.18.0 | 0.19.0 |
+
+## 0.23.0
+
+### Dependencies
+
+| Dependency | Type | Action | From | To |
+| --- | --- | --- | --- | --- |
+| @effected/github | dependency | updated | 0.20.0 | 0.21.0 |
+| @effected/github-commands | dependency | updated | 0.4.0 | 0.5.0 |
+| @effected/glob | dependency | updated | 0.12.0 | 0.13.0 |
+| @effected/markdown | dependency | updated | 0.17.0 | 0.18.0 |
+| @effected/npm | dependency | updated | 0.22.0 | 0.23.0 |
+| @effected/sbom | dependency | updated | 0.12.0 | 0.13.0 |
+| @effected/semver | dependency | updated | 0.13.0 | 0.14.0 |
+| @effected/templates | dependency | updated | 0.12.0 | 0.13.0 |
+| @effected/walker | dependency | updated | 0.17.0 | 0.18.0 |
+
+### Maintenance
+
+- Upgrades core Effect library dependencies to v4.0.5 [#1019][#1019]
+
+### Thanks
+
+Thanks to [@spencerbeggs](https://github.com/spencerbeggs) for their contributions!
+
+[#1019]: https://github.com/spencerbeggs/effected/pull/1019
+
+## 0.22.0
+
+### Dependencies
+
+| Dependency | Type | Action | From | To |
+| --- | --- | --- | --- | --- |
+| @effected/github | dependency | updated | 0.19.0 | 0.20.0 |
+| @effected/github-commands | dependency | updated | 0.3.0 | 0.4.0 |
+| @effected/glob | dependency | updated | 0.11.0 | 0.12.0 |
+| @effected/markdown | dependency | updated | 0.16.0 | 0.17.0 |
+| @effected/npm | dependency | updated | 0.21.0 | 0.22.0 |
+| @effected/sbom | dependency | updated | 0.11.0 | 0.12.0 |
+| @effected/semver | dependency | updated | 0.12.0 | 0.13.0 |
+| @effected/templates | dependency | updated | 0.11.0 | 0.12.0 |
+| @effected/walker | dependency | updated | 0.16.0 | 0.17.0 |
+
+### Maintenance
+
+- Upgrades core Effect library dependencies to v4.0.4 [#1008][#1008]
+
+### Thanks
+
+Thanks to [@spencerbeggs](https://github.com/spencerbeggs) for their contributions!
+
+[#1008]: https://github.com/spencerbeggs/effected/pull/1008
+
+## 0.21.0
+
+### Dependencies
+
+| Dependency | Type | Action | From | To |
+| --- | --- | --- | --- | --- |
+| @effected/github | dependency | updated | 0.18.0 | 0.19.0 |
+| @effected/github-commands | dependency | updated | 0.2.2 | 0.3.0 |
+| @effected/glob | dependency | updated | 0.10.1 | 0.11.0 |
+| @effected/markdown | dependency | updated | 0.15.2 | 0.16.0 |
+| @effected/npm | dependency | updated | 0.20.1 | 0.21.0 |
+| @effected/sbom | dependency | updated | 0.10.2 | 0.11.0 |
+| @effected/semver | dependency | updated | 0.11.1 | 0.12.0 |
+| @effected/templates | dependency | updated | 0.10.1 | 0.11.0 |
+| @effected/walker | dependency | updated | 0.15.1 | 0.16.0 |
+| effect | peerDependency | updated | 4.0.2 | ^4.0.3 |
+
+- Effect 4.0.3 advance: the `effect` peer and catalog move from the exact `4.0.2` hold back to `^4.0.3`. No API change. [#1000][#1000]
+
+### Thanks
+
+Thanks to [@spencerbeggs](https://github.com/spencerbeggs) for their contributions!
+
+[#1000]: https://github.com/spencerbeggs/effected/pull/1000
+
+## 0.20.4
+
+### Bug Fixes
+
+- Republished with every `effect` and `@effect/*` version pinned exactly to `4.0.2`, both peer and dependency ranges.
+
+- On 2026-10-10, every `@effect/*` package published at `4.0.3`, but `effect@4.0.3` itself never reached npm (Effect-TS/effect#8994). The 4.0.3 packages require `effect ^4.0.3`. A caret range on any of them therefore resolves a 4.0.3 package next to `effect@4.0.2`, and the program crashes when it imports them. Exact pins keep a fresh install of any kit package on a matched set until `effect@4.0.3` is available. [#997][#997]
+
+### Dependencies
+
+| Dependency | Type | Action | From | To |
+| --- | --- | --- | --- | --- |
+| @effected/github | dependency | updated | 0.17.0 | 0.18.0 |
+| @effected/github-commands | dependency | updated | 0.2.1 | 0.2.2 |
+| @effected/glob | dependency | updated | 0.10.0 | 0.10.1 |
+| @effected/markdown | dependency | updated | 0.15.1 | 0.15.2 |
+| @effected/npm | dependency | updated | 0.20.0 | 0.20.1 |
+| @effected/sbom | dependency | updated | 0.10.1 | 0.10.2 |
+| @effected/semver | dependency | updated | 0.11.0 | 0.11.1 |
+| @effected/templates | dependency | updated | 0.10.0 | 0.10.1 |
+| @effected/walker | dependency | updated | 0.15.0 | 0.15.1 |
+
+### Thanks
+
+Thanks to [@spencerbeggs](https://github.com/spencerbeggs) for their contributions!
+
+[#997]: https://github.com/spencerbeggs/effected/pull/997
+
+## 0.20.3
+
+### Dependencies
+
+| Dependency | Type | Action | From | To |
+| --- | --- | --- | --- | --- |
+| @effected/github | dependency | updated | 0.16.0 | 0.17.0 |
+| @effected/github-commands | dependency | updated | 0.2.0 | 0.2.1 |
+
+## 0.20.2
+
+### Dependencies
+
+| Dependency | Type | Action | From | To |
+| --- | --- | --- | --- | --- |
+| @effected/github | dependency | updated | 0.15.1 | 0.16.0 |
+
+## 0.20.1
+
+### Bug Fixes
+
+- On Windows, `PackageManagerInstaller` now writes an extensionless `#!/bin/sh` Git Bash shim beside every `.cmd` package-manager shim. Git Bash does not apply `PATHEXT`, so a `shell: bash` workflow step could not resolve a bare `pnpm` against the `.cmd`-only `binDir` and failed with `command not found` (exit 127). The sibling renders its target path with forward slashes, applies the same node-vs-direct rule as the `.cmd` — including pnpm 12's native-binary/alias distinction — and the cache-hit regeneration path adds a missing sibling file by file without rewriting a `.cmd` a previous writer owns. POSIX shim writing is unchanged. [#949][#949]
+
+### Dependencies
+
+| Dependency | Type | Action | From | To |
+| --- | --- | --- | --- | --- |
+| @effected/github-commands | dependency | updated | 0.1.0 | 0.2.0 |
+| @effected/sbom | dependency | updated | 0.10.0 | 0.10.1 |
+
+### Thanks
+
+Thanks to [@fuleinist](https://github.com/fuleinist) for their contributions!
+
+[#949]: https://github.com/spencerbeggs/effected/pull/949
+
+## 0.20.0
+
+### Breaking Changes
+
+#### `ActionLogger` neutralizes plain log text
+
+- `ActionLogger.layerLogger` writes `Effect.log*` text at `Info` and above as plain step output, and the runner reads every line of it. That text is now neutralized, so a message carrying `::add-mask::` or `##[` is no longer a workflow command. The same applies to the buffered transcript a step replays, the failure line `withStep` prints, and a detached `ActionOutputs.setFailed` message.
+
+- A program that deliberately wrote a command through `Effect.logInfo("::…")` must now use the service's own methods (`group`, `notice`, annotations, `setFailed`, `setSecret`), which are unaffected. `ActionLogger.layer` installs no logger of its own, so install both `ActionLogger.layer` and `ActionLogger.layerLogger` (as `Action.run` does) for log text to be neutralized.
+
+* The kit now builds on and peers stable `effect` `^4.0.0`, in place of an exact release-candidate pin. Move `effect` and every `@effect/*` package to the same `4.x` version in one install: Effect releases them together at one version. A package from this release cannot share an install with an `effect` release candidate. The peer is a caret range, so later `4.x` releases of Effect satisfy the kit without a kit release.
+* Kit exports are unchanged. A consumer moving to stable `effect` meets these changes in its own code:
+  - `Array`, `Chunk`, `Effect` and `Record` `partition`, their `separate` helpers and `Option.partitionMap` return `[successes, failures]`. Where both sides share a type, the reversed destructuring still compiles, so search for every call.
+  - `Schema.brand` takes one identifier and is type-only: the identifier is not stored on the AST and does not survive `SchemaRepresentation`. Compose distinct brands by applying `brand` more than once.
+  - `TestSchema`'s round-trip assertion is `verifyRoundTrip`, with Effect forms `succeedEffect`, `failEffect` and `verifyRoundTripEffect`.
+  - Effect marks some APIs `@stability unstable`: those may change in a minor Effect release. Untagged APIs follow semver.
+
+### Features
+
+- `WorkflowCommand` and `AnnotationProperties` moved to the new pure package `@effected/github-commands`, which this package now depends on. They are still exported from `@effected/github-actions`, so existing imports keep compiling. Import `CommandNeutralizer` from `@effected/github-commands` to defang text you write to the log by another route. [#905][#905]
+
+### Documentation
+
+- Every exported construct's TSDoc was reviewed against the current API. Summaries open with what the construct does, error channels and requirements are stated, examples use real imports and compile, and links resolve. Comments that described options, errors or defaults the code does not have were corrected. [#910][#910]
+
+### Dependencies
+
+| Dependency | Type | Action | From | To |
+| --- | --- | --- | --- | --- |
+| @effected/github | dependency | updated | 0.14.0 | 0.15.0 |
+| @effected/glob | dependency | updated | 0.9.0 | 0.10.0 |
+| @effected/markdown | dependency | updated | 0.14.0 | 0.15.0 |
+| @effected/npm | dependency | updated | 0.19.1 | 0.20.0 |
+| @effected/sbom | dependency | updated | 0.9.1 | 0.10.0 |
+| @effected/semver | dependency | updated | 0.10.1 | 0.11.0 |
+| @effected/templates | dependency | updated | 0.9.1 | 0.10.0 |
+| @effected/walker | dependency | updated | 0.14.1 | 0.15.0 |
+| @effected/github-commands | dependency | added | — | 0.1.0 |
+
+[#905][#905]
+
+### Thanks
+
+Thanks to [@spencerbeggs](https://github.com/spencerbeggs) for their contributions!
+
+[#905]: https://github.com/spencerbeggs/effected/pull/905
+
+[#910]: https://github.com/spencerbeggs/effected/pull/910
+
+## 0.19.1
+
+### Dependencies
+
+| Dependency | Type | Action | From | To |
+| --- | --- | --- | --- | --- |
+| @effected/walker | dependency | updated | 0.13.0 | 0.14.0 |
+
+## 0.19.0
+
+### Features
+
+- `Action.run` honours step debugging: when `RUNNER_DEBUG=1`, it lowers `References.MinimumLogLevel` to `Debug` for the whole program, so `Effect.logDebug` from the action or any library it calls renders as a `::debug::` line. It only ever lowers the level, so a `layer` that sets `Trace` keeps it. Opt out with `Action.run(program, { stepDebugLogLevel: false })`. [#878][#878]
+
+### Thanks
+
+Thanks to [@spencerbeggs](https://github.com/spencerbeggs) for their contributions!
+
+[#878]: https://github.com/spencerbeggs/effected/pull/878
+
+## 0.18.1
+
+### Bug Fixes
+
+- JSON Schemas derived from this package's schemas carry their string `pattern` again. Effect's JSON Schema export emits a `Schema.isPattern` check as `pattern` only when its regular expression has the `u` flag, and without it the pattern was dropped silently, leaving a bare `{ "type": "string" }`. Decoding was never affected. Every pattern in the package now has the `u` flag, which does not change what it accepts. [#866][#866]
+
+### Dependencies
+
+| Dependency | Type | Action | From | To |
+| --- | --- | --- | --- | --- |
+| @effected/sbom | dependency | updated | 0.9.0 | 0.9.1 |
+| @effected/semver | dependency | updated | 0.10.0 | 0.10.1 |
+| @effected/templates | dependency | updated | 0.9.0 | 0.9.1 |
+
+### Thanks
+
+Thanks to [@spencerbeggs](https://github.com/spencerbeggs) for their contributions!
+
+[#866]: https://github.com/spencerbeggs/effected/pull/866
+
+## 0.18.0
+
+### Breaking Changes
+
+- The kit now builds on and peers `effect` `4.0.0-rc.118`, pinned exactly. Consumers must move `effect` and every `@effect/*` package to `4.0.0-rc.118` in the same install. Effect removed the `effect/unstable/*` export paths in this release, so an `@effected` package built on rc.118 cannot share an install with `effect` rc.117.
+
+- Moving the pin also closes a fresh-install failure on rc.117. `@effect/platform-node@4.0.0-rc.117` depends on `@effect/platform-node-shared` with a caret, so an install without a lockfile paired the rc.118 shared package with `effect` rc.117 and failed at startup with `ERR_MODULE_NOT_FOUND`.
+
+- Consumers moving to this release: effect removed the `effect/unstable/*` export paths (imports become `effect/<module>`), moved `Arbitrary` to `effect`, split `effect/Encoding` into `effect/encoding/Base64`, `Base64Url` and `Hex`, and renamed the `Schema` range and string checks (`isLengthBetween` → `isBetweenLength`, `isStartsWith` → `isStartingWith`, and so on). Kit exports are otherwise unchanged; the kit's own imports moved onto the new paths. [#864][#864]
+
+### Dependencies
+
+| Dependency | Type | Action | From | To |
+| --- | --- | --- | --- | --- |
+| @effected/github | dependency | updated | 0.13.0 | 0.14.0 |
+| @effected/glob | dependency | updated | 0.8.0 | 0.9.0 |
+| @effected/markdown | dependency | updated | 0.13.0 | 0.14.0 |
+| @effected/npm | dependency | updated | 0.18.0 | 0.19.0 |
+| @effected/sbom | dependency | updated | 0.8.1 | 0.9.0 |
+| @effected/semver | dependency | updated | 0.9.0 | 0.10.0 |
+| @effected/templates | dependency | updated | 0.8.0 | 0.9.0 |
+| @effected/walker | dependency | updated | 0.12.0 | 0.13.0 |
+
+### Thanks
+
+Thanks to [@spencerbeggs](https://github.com/spencerbeggs) for their contributions!
+
+[#864]: https://github.com/spencerbeggs/effected/pull/864
+
+## 0.17.1
+
+### Dependencies
+
+| Dependency | Type | Action | From | To |
+| --- | --- | --- | --- | --- |
+| @effected/markdown | dependency | updated | 0.12.1 | 0.13.0 |
+| @effected/npm | dependency | updated | 0.17.0 | 0.18.0 |
+
+## 0.17.0
+
+### Features
+
+#### Expected integrity beside the pin
+
+- `PackageManagerInstallOptions` gains `integrity`: the expected corepack-form hash of the manager's own artifact, supplied beside a bare pin instead of in its `+<integrity>` tail. Convert a lockfile or registry SRI with `CorepackIntegrityHash.fromSri`. The option counts exactly as a pin integrity does:
+
+- The artifact is verified against it, and the unverified-download warning is not logged.
+
+- It satisfies `requireIntegrity`.
+
+- A tool-cache hit is answered without re-verifying.
+
+- When the pin also carries an integrity and the two differ, the install fails with `integrityMismatch` before any cache lookup or download. `expected` is the option, and `subject` names the pin's value. An option that is not in corepack form, such as an unconverted SRI string, fails there too with `integrityMismatch`: no `expected` or `actual` is set, and `subject` says the option is not a corepack hash.
+
+#### Lockfile integrity for pnpm's native binary
+
+- `PackageManagerInstallOptions` gains `nativeIntegrity`: expected Subresource Integrity strings keyed by bare native-package name (`"@pnpm/exe.linux-x64"`), usually read straight from `pnpm-lock.yaml`. For pnpm 12 and later, the installer verifies the host's `@pnpm/exe.<target>` tarball against that entry instead of the registry packument. The packument is then never requested, so a tarball-only mirror now works.
+
+- The option fails closed:
+
+- No entry for the host's package fails with `integrityMissing`, and `subject` names the package.
+
+- An entry with no usable SRI fails with `integrityMismatch`, and `subject` names the package.
+
+- A tarball that hashes to anything else fails with `integrityMismatch`, and `subject` names the tarball url.
+
+- Pins with no native overlay ignore it. Without the option, behaviour is unchanged. [#843][#843]
+
+### Dependencies
+
+| Dependency | Type | Action | From | To |
+| --- | --- | --- | --- | --- |
+| @effected/npm | dependency | updated | 0.16.0 | 0.17.0 |
+| @effected/sbom | dependency | updated | 0.8.0 | 0.8.1 |
+
+### Thanks
+
+Thanks to [@spencerbeggs](https://github.com/spencerbeggs) for their contributions!
+
+[#843]: https://github.com/spencerbeggs/effected/pull/843
+
+## 0.16.1
+
+### Dependencies
+
+| Dependency | Type | Action | From | To |
+| --- | --- | --- | --- | --- |
+| @effected/github | dependency | updated | 0.12.0 | 0.13.0 |
+
+## 0.16.0
+
+### Features
+
+- Upgrades core Effect to `rc-117` [#812][#812]
+
+### Dependencies
+
+| Dependency | Type | Action | From | To |
+| --- | --- | --- | --- | --- |
+| @effected/github | dependency | updated | 0.11.0 | 0.12.0 |
+| @effected/glob | dependency | updated | 0.7.0 | 0.8.0 |
+| @effected/markdown | dependency | updated | 0.11.0 | 0.12.0 |
+| @effected/npm | dependency | updated | 0.15.0 | 0.16.0 |
+| @effected/sbom | dependency | updated | 0.7.0 | 0.8.0 |
+| @effected/semver | dependency | updated | 0.8.0 | 0.9.0 |
+| @effected/templates | dependency | updated | 0.7.0 | 0.8.0 |
+| @effected/walker | dependency | updated | 0.11.0 | 0.12.0 |
+
+### Thanks
+
+Thanks to [@spencerbeggs](https://github.com/spencerbeggs) for their contributions!
+
+[#812]: https://github.com/spencerbeggs/effected/pull/812
+
+## 0.15.0
+
+### Features
+
+#### `ActionInput.literals` for enum-shaped inputs
+
+- A `Config<L[number]>` accessor for an input that must be one of a closed set of strings. The match is exact — no trimming, no case folding — and a present value outside the set fails with a `ConfigError` naming the input, the value and the allowed set. Composes with `Config.withDefault` like the other accessors:
+
+```ts
+import { ActionInput } from "@effected/github-actions";
+import { Config } from "effect";
+
+// Config<"commit" | "pr">
+const mode = ActionInput.literals("mode", ["commit", "pr"]).pipe(Config.withDefault("commit"));
+```
+
+- `ActionInput.schema`'s docs now point at `Config.option` for an optional JSON input.
+
+#### `ToolInstallerShape.cachePath`
+
+- `cachePath(tool, version)` answers the final tool-cache path a `cacheDir`/`cacheFile` call for `tool@version` will land at, without performing any IO. A caller that must write the final path into a staged tree before the swap — a shim naming its own cached entry — reads this instead of re-deriving the cache root and arch itself. `ToolInstaller.makeTest` provides a default implementation. `PackageManagerInstaller` now asks the installer for the shim destination instead of deriving it a second time, so the `cacheFailed` failure for a diverged cache destination can no longer occur and has been removed.
+
+#### `DetachedSpawnOptions.base`
+
+- `base` is the environment `spawn` merges `env` over, defaulting to `process.env` as before. Passing it gives a spawned child a fully controlled environment — useful for a test asserting exactly what the child sees, or a worker that must not inherit the action's secrets.
+
+### Bug Fixes
+
+#### `Artifact.download`/`unzip` no longer fails extracting into a non-empty directory on Windows
+
+- The Windows extraction path now uses the three-argument `ZipFile.ExtractToDirectory(source, destination, $true)` overload, which overwrites existing files, and captures the underlying .NET exception text to stderr on failure. Previously the two-argument overload refused to overwrite and failed with an empty error message.
+
+#### Windows `Artifact.upload` preserves subdirectory structure and honours `compressionLevel`
+
+- The Windows pack drove `Compress-Archive -Path` with individual file paths, which stores every entry under its bare file name — `dir\b.txt` landed as `b.txt`, and same-named files in different directories collided — and expands `[`/`]` as wildcards, so a literal `report[1].txt` failed the upload. It now drives .NET's `ZipFile` directly, naming each entry explicitly from its path relative to `rootDirectory`, so a Windows archive has the same structure as the POSIX `zip -qr` one. `compressionLevel`, previously ignored on Windows, now maps onto .NET's `CompressionLevel` (`0` `NoCompression`, `1..3` `Fastest`, `4..8` `Optimal`, `9` `SmallestSize`). [#805][#805]
+
+#### `CacheKey.matchingFiles` follows symlinked directories, matching the runner's `hashFiles()`
+
+- The `descend` walk now runs with `followSymlinks: true`, so a file reachable only through a symlinked directory contributes to the cache key — `@actions/glob` (the runner's `hashFiles()`) follows links by default (`followSymbolicLinks: true`), and the previously documented knowing divergence silently produced a different key than the runner for such a workspace. `descend`'s per-branch `traversalChain` cycle guard keeps link loops finite, and — as with `@actions/glob` — a link resolving outside the workspace is followed: the "never hash a file outside the workspace" property is lexical (literals climbing above it are dropped), not physical through links. [#781][#781]
+
+### Performance
+
+#### `ToolInstaller.cacheDir` renames the toolchain into the cache
+
+- `cacheDir` now moves its source directory into the tool cache with a rename instead of a recursive copy. On hosted runners `RUNNER_TEMP` and `RUNNER_TOOL_CACHE` share a filesystem, so installing an extracted toolchain is O(1) regardless of its size. A cross-filesystem source (`EXDEV`) falls back to the previous copy; any other rename failure is still reported as `cacheFailed` rather than masked by a copy.
+
+- **Behaviour change:** `cacheDir` now **consumes** `source` — after a successful call the directory no longer exists at its original path (moved, or copied and then removed). Write everything the cached entry must contain into the source before calling `cacheDir`, and read nothing from it afterwards. `PackageManagerInstaller` already followed that ordering; `cacheFile` is unchanged and still copies. [#804][#804]
+
+### Dependencies
+
+| Dependency | Type | Action | From | To |
+| --- | --- | --- | --- | --- |
+| @effected/walker | dependency | updated | 0.10.0 | 0.11.0 |
+
+### Thanks
+
+Thanks to [@fuleinist](https://github.com/fuleinist) and [@spencerbeggs](https://github.com/spencerbeggs) for their contributions!
+
+[#781]: https://github.com/spencerbeggs/effected/pull/781
+
+[#804]: https://github.com/spencerbeggs/effected/pull/804
+
+[#805]: https://github.com/spencerbeggs/effected/pull/805
+
+## 0.14.0
+
+### Breaking Changes
+
+#### The whole kit tracks Effect `4.0.0-rc.116`
+
+- Every package's `effect` peer moves from `4.0.0-rc.115` to `4.0.0-rc.116`. The kit uses exact prerelease pins rather than a caret, so a consumer must move with it. No `@effected` API changes shape on this advance; the kit itself needed one edit (`Stream.scan` now takes a lazy initial state, met once in `@effected/jsonl`'s `Journal.projection`). A consumer that upgrades meets the rc.116 renames on its own code:
+
+- `SchemaTransformation.make` is `makeTransformation`, and `Transformation#compose` is the dual standalone `SchemaTransformation.composeTransformation`.
+
+- `SchemaGetter.Getter` is a tagged union exposing only `pipe`: `new SchemaGetter.Getter`, `onSome` and `onNone` are gone in favour of `SchemaGetter.map` / `compose` / `run` and `transformEffect` / `transformOptionalEffect`.
+
+- `Stream.scan` and `Stream.scanEffect` take `() => initial`; `Stream.partition` returns `[passes, fails]`; `Stream.mapBoth` takes `onElement` / `onError`.
+
+- `Effect.orElseSucceed` passes the error to its fallback and `Effect.isEffect` narrows to `Effect<unknown, unknown, unknown>`.
+
+- `ByteSize.Input` string literals are checked at compile time; parse external strings with `ByteSize.fromString`.
+
+- Arbitrary shrinking changed, so property-test replay tokens recorded at rc.115 no longer reproduce.
+
+### Documentation
+
+#### The Claude Code and Copilot plugins teach the rc.116 surface
+
+- The `effect-v4-schema` transformation reference composes transformations with `SchemaTransformation.composeTransformation` and describes the `Getter` surface rc.116 left behind; the source-lookup and testing skills report rc.116 as the kit's pin and the two-copy lockfile shape the bridge now produces (`rc.115` for the toolchain, `rc.116` for the kit); the session-start briefing reports rc.116.
+
+### Dependencies
+
+| Dependency | Type | Action | From | To |
+| --- | --- | --- | --- | --- |
+| @effected/github | dependency | updated | 0.10.2 | 0.11.0 |
+| @effected/glob | dependency | updated | 0.6.1 | 0.7.0 |
+| @effected/markdown | dependency | updated | 0.10.1 | 0.11.0 |
+| @effected/npm | dependency | updated | 0.14.2 | 0.15.0 |
+| @effected/sbom | dependency | updated | 0.6.2 | 0.7.0 |
+| @effected/semver | dependency | updated | 0.7.1 | 0.8.0 |
+| @effected/templates | dependency | updated | 0.6.1 | 0.7.0 |
+| @effected/walker | dependency | updated | 0.9.1 | 0.10.0 |
+| @effect/platform-node | devDependency | updated | 4.0.0-rc.115 | 4.0.0-rc.116 |
+| @effect/vitest | devDependency | updated | 4.0.0-rc.115 | 4.0.0-rc.116 |
+| effect | devDependency | updated | 4.0.0-rc.115 | 4.0.0-rc.116 |
+| effect | peerDependency | updated | 4.0.0-rc.115 | 4.0.0-rc.116 |
+
+### Maintenance
+
+#### The rc.115 `packageExtensions` bridge is retired
+
+- The toolchain (`@savvy-web/tsdown-plugins`, `rolldown-pnpm-config`, `@vitest-agent/*`) has republished declaring `effect` and its `@effected/*` inputs as regular dependencies, so the workspace no longer needs the `packageExtensions` block that pinned them by hand. Its ten keys named versions no longer installed and the lockfile diff on removal was the checksum line alone. Nothing published changes; this is the workspace's own install shape. [#792][#792]
+
+### Thanks
+
+Thanks to [@spencerbeggs](https://github.com/spencerbeggs) for their contributions!
+
+[#792]: https://github.com/spencerbeggs/effected/pull/792
+
+## 0.13.4
+
+### Documentation
+
+- Verified `PackageManagerInstaller` support for npm 12 (12.0.2) and npm 11 (11.19.1) provisioning, and documented that the installer provisions exactly the pinned version without checking the artifact's `engines.node` against the runner's node — an incompatible pin still installs and runs, with npm itself warning on invocation. [#785][#785]
+
+### Dependencies
+
+| Dependency | Type | Action | From | To |
+| --- | --- | --- | --- | --- |
+| @effected/npm | dependency | updated | 0.14.1 | 0.14.2 |
+
+### Thanks
+
+Thanks to [@spencerbeggs](https://github.com/spencerbeggs) for their contributions!
+
+[#785]: https://github.com/spencerbeggs/effected/pull/785
+
+## 0.13.3
+
+### Bug Fixes
+
+- Fixes closure issues in all packages.
+
+#### Runner-file names may no longer carry the parser separators `=` and `<<` or end in `<`
+
+- `isUsableName` now refuses a name containing `=` or `<<`, or ending in `<`, so `ActionOutputs.set` / `exportVariable` / `setJson` fail typed with `InvalidOutputNameError` and `ActionState.save` fails typed with `writeFailed` instead of appending a block the runner would misparse. The runner's file-command parser reads each line up to its first `=` or `<<`, whichever comes first: a name carrying `=` parses as a `key=value` property before the block ever opens, and a name carrying `<<` splits at the wrong delimiter — either way every entry after the malformed block is corrupted. A name ending in `<` corrupts the composed header the same way (`a<` writes `a<<<DELIM`, whose first `<<` matches one character early, leaving a delimiter the terminating line can never match); an interior `<` remains accepted.
+
+### Dependencies
+
+| Dependency | Type | Action | From | To |
+| --- | --- | --- | --- | --- |
+| @effected/github | dependency | updated | 0.10.1 | 0.10.2 |
+| @effected/glob | dependency | updated | 0.6.0 | 0.6.1 |
+| @effected/markdown | dependency | updated | 0.10.0 | 0.10.1 |
+| @effected/npm | dependency | updated | 0.14.0 | 0.14.1 |
+| @effected/sbom | dependency | updated | 0.6.1 | 0.6.2 |
+| @effected/semver | dependency | updated | 0.7.0 | 0.7.1 |
+| @effected/templates | dependency | updated | 0.6.0 | 0.6.1 |
+| @effected/walker | dependency | updated | 0.9.0 | 0.9.1 |
+
+### Thanks
+
+Thanks to [@fuleinist](https://github.com/fuleinist) and [@spencerbeggs](https://github.com/spencerbeggs) for their contributions!
+
+## 0.13.2
+
+### Bug Fixes
+
+- `PackageManagerInstaller` now provisions pnpm 12 correctly. pnpm's registry package is a wrapper whose `pnpm` bin is a shebang-less placeholder, replaced at install time by a native binary shipped as an `@pnpm/exe.<os>-<arch>[-musl]` optional dependency. The installer detects that layout from the manifest (never the major version), downloads the host's `@pnpm/exe.*` tarball from the same registry, verifies it fail-closed against the packument's `dist.integrity`, and copies the executable over the placeholder in the cached entry.
+
+- Shims now follow their target: Node scripts run under `node`, executables and shell aliases are exec'd directly.
+
+- A cached entry still holding the placeholder from an earlier install is reinstalled over.
+
+- Previously, pinning pnpm >= 12 failed at first use with `SyntaxError: Invalid or unexpected token`, because Node was handed the shell placeholder instead of the native binary. The error union and `install` signature are unchanged; pnpm 11 and npm/yarn/bun provisioning are unchanged. [#774][#774]
+
+### Thanks
+
+Thanks to [@spencerbeggs](https://github.com/spencerbeggs) for their contributions!
+
+[#774]: https://github.com/spencerbeggs/effected/pull/774
+
+## 0.13.1
+
+### Bug Fixes
+
+- `ActionState.save` refuses a key that cannot open a `GITHUB_STATE` heredoc block (one containing a line break) with a typed `writeFailed` error instead of writing a value that corrupts every entry after it — the same guard `ActionOutputs` already enforced.
+- `BlobStoreError` with `reason: "refused"` from the GitHub-cache `BlobStore` backend now carries a `detail` field naming the RPC method, matching the cache and artifact errors, which already did. [#758][#758]
+
+### Performance
+
+- `CacheKey.matchingFiles` now walks the workspace with `@effected/walker` instead of enumerating every entry: each include pattern is expanded from its own literal prefix (a literal include costs one `stat`, never a walk), matching only files, with nothing pruned implicitly (parity with the runner's `hashFiles()`). An absent `workspace` still fails typed; an absent literal is a miss, while a literal that exists but cannot be read is a typed `CacheKeyReadError`, and a literal that climbs above the workspace is dropped. One knowing divergence: `descend` never enters a symlinked directory (cycle safety), where `@actions/glob` follows links, so a file reachable only through a symlinked directory no longer contributes to the key.
+- `Artifact.upload` and `Artifact.download` each spawn their archiver (`zip`/`unzip` on Linux/macOS, `Compress-Archive`/`ExtractToDirectory` on Windows) once, reading its output and exit code from that single spawn — the same pattern `ActionCache` and `ToolInstaller` already used.
+- `ManagedDocument` scans a document's text once per instance instead of re-scanning on every region accessor.
+
+### Thanks
+
+Thanks to [@spencerbeggs](https://github.com/spencerbeggs) for their contributions!
+
+[#758]: https://github.com/spencerbeggs/effected/pull/758
+
+## 0.13.0
+
+### Features
+
+- New `ActionOutputs.recording()` test double: every member journals a `RecordedOutput { member, name?, value }` in call order, with `setJson` recording the schema-encoded JSON text — what a later step's `steps.<id>.outputs.<name>` expression would actually read:
+
+```ts
+import { ActionOutputs } from "@effected/github-actions";
+
+const { layer, entries } = ActionOutputs.recording();
+// provide `layer`, run the program, then:
+entries(); // ReadonlyArray<RecordedOutput>, in call order
+```
+
+### Bug Fixes
+
+- `ActionOutputs.makeTest` and `layerTest` now always run the typed schema encode on `setJson` before calling any supplied override, so a `setJson` override that ignores `schema` can no longer let a value/schema drift pass silently — it now fails typed with `OutputEncodeError` exactly as the real layer would. A test relying on the old bypass now fails until the override (or the value) is corrected. [#708][#708]
+
+### Dependencies
+
+| Dependency | Type | Action | From | To |
+| --- | --- | --- | --- | --- |
+| @effected/sbom | dependency | updated | 0.6.0 | 0.6.1 |
+
+### Thanks
+
+Thanks to [@spencerbeggs](https://github.com/spencerbeggs) for their contributions!
+
+[#708]: https://github.com/spencerbeggs/effected/pull/708
+
+## 0.12.0
+
+### Breaking Changes
+
+#### The whole kit tracks Effect `4.0.0-rc.115`
+
+- Every package's `effect` peer moves from `4.0.0-rc.112` to `4.0.0-rc.115`. The kit uses exact prerelease pins rather than a caret, so a consumer must move with it. This advance is the first whose Effect changes are not source-compatible with the previous pin, so a consumer that upgrades meets the same renames the kit did:
+
+- `SchemaTransformation.transformOrFail` and `SchemaGetter.transformOrFail` are `transformEffect`.
+
+- The `Config` constructors are PascalCase (`Config.String`, `Config.Redacted`, `Config.Int`, `Config.Boolean`, …) and `Config.mapOrFail` is `Config.mapEffect`.
+
+- `FileSystem.Size` and `FileSystem.SizeInput` are gone in favour of the `ByteSize` module: `File.Info.size` is a `ByteSize`, `File.seek` takes a `bigint`, `read`/`write` return a `number`.
+
+- The fast-check bridge (`effect/testing/FastCheck`, `Schema.toArbitrary`, the `fastCheck` property-test option) is removed in favour of `effect/unstable/arbitrary/Arbitrary`; `it.effect.prop` takes `arbitrary: { runs, size, seed, … }`.
+
+#### `@effected/schemastore` documents are open unless told otherwise
+
+- `Schema.ToJsonSchemaOptions.additionalProperties` became `onExcessProperty: "ignore" | "error"` upstream, and its default now mirrors the decoder's: generated object schemas carry `additionalProperties: true` unless `jsonSchema: { onExcessProperty: "error" }` is passed. `StoreDocument.fromSchema` passes the option through unchanged, so a document that was closed by default at rc.112 is open by default now. Pass `onExcessProperty: "error"` to keep a closed document; a generator that silently disagreed with the decoder it is paired with would be the worse default.
+
+#### `@effected/memfs` seeks before the start of a file fail
+
+- `File.seek` gained a `PlatformError` channel upstream, and memfs now matches Node: a seek whose resulting position would be negative fails with `BadArgument` ("Cannot seek before the start of the file") and leaves the cursor unchanged, where it previously stored the negative position and failed on the next read. No memfs-declared type changes; the `File`/`File.Info` shape changes are Effect's own, reaching consumers through the peer.
+
+### Documentation
+
+#### A `Schema.Class` root is annotated on the `Struct` it wraps
+
+- [Effect-TS/effect#8084](https://github.com/Effect-TS/effect/issues/8084), which the rc.112 notes carried as an open limitation, was closed upstream as by design: annotations passed as `Schema.Class`'s second argument sit on the class node, while the `$defs` entry is generated from the encoded fields `Struct`. Annotate that `Struct` — `Schema.Class<X>("X")(Schema.Struct({ … }).annotate({ title, description, "x-taplo": … }))` — and every key reaches the document. `@effected/schemastore`'s design doc and context files now state the rule instead of the limitation.
+
+#### The Claude Code and Copilot plugins teach the rc.115 surface
+
+- The `effect-v4-schema`, `effect-v4-testing` and `effect-v4-module-index` skills describe the native `Arbitrary` module in place of the fast-check bridge, including the migration traps met on this advance: the `size` clamp (default 10) that silently shrinks a property's string and array domains, the `-0` the generator's near-zero bias emits for an unbounded `Schema.Int` or any `Schema.Number`, which JSON and YAML cannot round-trip, and the absence of `oneof`/`constantFrom`/`array` combinators. `ByteSize` has a module-index row, the `Config` and CLI constructors are shown in their PascalCase spellings, and the session-start briefing reports rc.115 as the kit's pin. [#686][#686]
+
+### Dependencies
+
+| Dependency | Type | Action | From | To |
+| --- | --- | --- | --- | --- |
+| @effected/github | dependency | updated | 0.9.0 | 0.10.0 |
+| @effected/glob | dependency | updated | 0.5.0 | 0.6.0 |
+| @effected/markdown | dependency | updated | 0.9.2 | 0.10.0 |
+| @effected/npm | dependency | updated | 0.13.0 | 0.14.0 |
+| @effected/sbom | dependency | updated | 0.5.0 | 0.6.0 |
+| @effected/templates | dependency | updated | 0.5.0 | 0.6.0 |
+| @effect/platform-node | devDependency | updated | 4.0.0-rc.112 | 4.0.0-rc.115 |
+| @effect/tsgo | devDependency | updated | 0.41.0 | 0.45.0 |
+| @effect/vitest | devDependency | updated | 4.0.0-rc.112 | 4.0.0-rc.115 |
+| effect | devDependency | updated | 4.0.0-rc.112 | 4.0.0-rc.115 |
+| effect | peerDependency | updated | 4.0.0-rc.112 | 4.0.0-rc.115 |
+
+### Thanks
+
+Thanks to [@spencerbeggs](https://github.com/spencerbeggs) for their contributions!
+
+[#686]: https://github.com/spencerbeggs/effected/pull/686
+
 ## 0.11.0
 
 ### Breaking Changes
@@ -393,7 +1102,8 @@ Thanks to [@spencerbeggs](https://github.com/spencerbeggs) for their contributio
 ### Features
 
 - ### `GitHubContext.headRef` and `branch`
-  `GitHubContext` now carries `headRef`, the pull request's source branch as an&#10;`Option<string>`. `GITHUB_HEAD_REF` is only set for `pull_request` events, and
+  `GitHubContext` now carries `headRef`, the pull request's source branch as an
+  `Option<string>`. `GITHUB_HEAD_REF` is only set for `pull_request` events, and
   on every other event the runner may write it as the **empty string** rather
   than omitting it — both spellings of absence now decode to `Option.none()`,
   so a consumer can't build a cache key segment out of an empty branch name by
@@ -408,11 +1118,13 @@ Thanks to [@spencerbeggs](https://github.com/spencerbeggs) for their contributio
   const branch = context.branch; // headRef, or refName when absent
   ```
   ### `CacheKey.digest`
-  `CacheKey.digest(input, length = 8)` is a segment-safe short digest for&#10;**non-file** key inputs — a sorted version list, a branch name — replacing
+  `CacheKey.digest(input, length = 8)` is a segment-safe short digest for
+  **non-file** key inputs — a sorted version list, a branch name — replacing
   the by-hand SHA-256-and-truncate every compound key used to repeat. The
   result is lowercase hex, guaranteed nonempty and free of the characters the
   restore-key protocol reserves, so it drops straight into `CacheKey.of` with
-  nothing to check at the call site. A `length` outside `1..64` throws a&#10;`RangeError` rather than silently answering fewer characters than asked for.
+  nothing to check at the call site. A `length` outside `1..64` throws a
+  `RangeError` rather than silently answering fewer characters than asked for.
   ```ts
   import { CacheKey } from "@effected/github-actions";
 
@@ -425,9 +1137,12 @@ Thanks to [@spencerbeggs](https://github.com/spencerbeggs) for their contributio
   ### `ChildEnv`
   A new zero-import module for building the environment additions a spawned
   child process needs to see prepended `PATH` entries, without the three traps
-  that cost a cross-OS matrix round each: `prependPath(dirs, { base, platform })`&#10;answers `{ env, extendEnv: true }` as one value (a bare `env` silently
-  replaces the child's whole environment), writes through the inherited `PATH`&#10;key's own casing (Windows spells it `Path`), and appends nothing for an
-  absent inherited value. `needsShell(platform)` reports the win32 rule for&#10;`.cmd` shims required since CVE-2024-27980.
+  that cost a cross-OS matrix round each: `prependPath(dirs, { base, platform })`
+  answers `{ env, extendEnv: true }` as one value (a bare `env` silently
+  replaces the child's whole environment), writes through the inherited `PATH`
+  key's own casing (Windows spells it `Path`), and appends nothing for an
+  absent inherited value. `needsShell(platform)` reports the win32 rule for
+  `.cmd` shims required since CVE-2024-27980.
   ````ts
   import { ChildEnv } from "@effected/github-actions";
   import { ChildProcess } from "effect/unstable/process";
@@ -510,7 +1225,8 @@ Thanks to [@spencerbeggs](https://github.com/spencerbeggs) for their contributio
 ### Features
 
 - ### Sigstore identity token adapter for Actions
-  `ActionsIdentityToken.layer` implements `@effected/sbom`'s `IdentityToken`&#10;contract over this package's `OidcTokenIssuer`, so an action can sign
+  `ActionsIdentityToken.layer` implements `@effected/sbom`'s `IdentityToken`
+  contract over this package's `OidcTokenIssuer`, so an action can sign
   attestations without either package depending on the other:
   ```ts
   import { ActionsIdentityToken, OidcTokenIssuer } from "@effected/github-actions";
@@ -523,7 +1239,8 @@ Thanks to [@spencerbeggs](https://github.com/spencerbeggs) for their contributio
   );
   ```
   ### Discardable log buffers
-  `ActionLogger.withBuffer` takes a new options argument,&#10;`{ onSuccess: "flush" | "discard" }`, defaulting to `"flush"`. A step that
+  `ActionLogger.withBuffer` takes a new options argument,
+  `{ onSuccess: "flush" | "discard" }`, defaulting to `"flush"`. A step that
   should stay quiet on a clean run passes `{ onSuccess: "discard" }`; a
   failure, defect or interruption always flushes the transcript regardless of
   the setting.
@@ -533,7 +1250,8 @@ Thanks to [@spencerbeggs](https://github.com/spencerbeggs) for their contributio
   ### GitHub-surfaces markdown suite
   A new set of services for building and maintaining GitHub-rendered
   documents — PR comments, PR descriptions, check-run summaries:
-  - **`CheckState`** — a check-lifecycle vocabulary (`running`, `pass`, `fail`,&#10;`warn`, `user_interaction_required`, `skipped`, `timeout`) wider than
+  - **`CheckState`** — a check-lifecycle vocabulary (`running`, `pass`, `fail`,
+    `warn`, `user_interaction_required`, `skipped`, `timeout`) wider than
     GitHub's own check-run conclusions, with `projectCheckState` mapping it onto
     GitHub's wire vocabulary.
   - **`ManagedDocument`** — marker-delimited named regions inside text a human
@@ -541,13 +1259,15 @@ Thanks to [@spencerbeggs](https://github.com/spencerbeggs) for their contributio
     replaced from current state, never appended, so re-rendering the same state
     is idempotent.
   - **`GitHubMarkdown`** — a fluent, escaping-safe markdown writer for GitHub
-    surfaces (tables, headings, links, code, lists, `<details>` blocks), plus&#10;`tableFor(schema, options?)`: a GFM table whose columns are defined once by
+    surfaces (tables, headings, links, code, lists, `<details>` blocks), plus
+    `tableFor(schema, options?)`: a GFM table whose columns are defined once by
     a row schema — headers from `title` annotations with field-name fallback,
     column order from field declaration order, cells encoded through each
     field's own codec, and a per-column `format` that the types require exactly
     where a field's encoded side is not a string. The only module in this
     package that imports `@effected/markdown`.
-  - **`CheckDocument`** — an in-process reconciler that turns a stream of&#10;`report` calls into a debounced (trailing, 500ms quiet / 3s max-wait),
+  - **`CheckDocument`** — an in-process reconciler that turns a stream of
+    `report` calls into a debounced (trailing, 500ms quiet / 3s max-wait),
     byte-identical-render-skips-the-write update to a managed document:
 
   ```ts
@@ -562,9 +1282,11 @@ Thanks to [@spencerbeggs](https://github.com/spencerbeggs) for their contributio
     sink: (rendered) => Effect.log(rendered),
   });
   ```
-  This package adds `@effected/templates`, `@effected/markdown` and&#10;`@effected/sbom` as workspace dependencies.
+  This package adds `@effected/templates`, `@effected/markdown` and
+  `@effected/sbom` as workspace dependencies.
   ### SLSA provenance capture from OIDC claims
-  `ActionsProvenance.capture(audience?)` reads the runner's OIDC claims and&#10;`GITHUB_SERVER_URL` and returns a `SlsaProvenance`, replacing an eleven-field
+  `ActionsProvenance.capture(audience?)` reads the runner's OIDC claims and
+  `GITHUB_SERVER_URL` and returns a `SlsaProvenance`, replacing an eleven-field
   snake-case-to-camelCase rename every attesting consumer previously wrote by
   hand — a hazardous mapping where transposing the repository and owner ids
   compiles clean and produces a validly signed wrong attestation:
@@ -574,7 +1296,8 @@ Thanks to [@spencerbeggs](https://github.com/spencerbeggs) for their contributio
   const provenance = yield* ActionsProvenance.capture();
   ```
   The typed `OidcTokenError` passes through untouched, so skip-versus-mandatory
-  attestation stays the caller's decision. A missing `GITHUB_SERVER_URL`&#10;defaults to `https://github.com` rather than failing — only GHES runners set
+  attestation stays the caller's decision. A missing `GITHUB_SERVER_URL`
+  defaults to `https://github.com` rather than failing — only GHES runners set
   it.
 
 ### Documentation
@@ -608,7 +1331,8 @@ Thanks to [@spencerbeggs](https://github.com/spencerbeggs) for their contributio
 ### Features
 
 - First release. The GitHub Actions runtime — the services an action needs to
-  talk to the runner it is executing inside. The one package in the kit with&#10;`@effect/platform-node` as a required peer, because a GitHub Action always
+  talk to the runner it is executing inside. The one package in the kit with
+  `@effect/platform-node` as a required peer, because a GitHub Action always
   runs as a Node process on a GitHub-provided runner.
   ### `Action.run` — the default runtime
   ```ts
@@ -619,20 +1343,27 @@ Thanks to [@spencerbeggs](https://github.com/spencerbeggs) for their contributio
   // Azure, so pulling one in costs exactly one line:
   Action.run(program, { layer: ActionCache.layer });
   ```
-  `ActionRuntime.layer` installs an input-aware `ConfigProvider`, so a bare&#10;`Config.string("dry-run")` resolves correctly instead of silently taking a
+  `ActionRuntime.layer` installs an input-aware `ConfigProvider`, so a bare
+  `Config.string("dry-run")` resolves correctly instead of silently taking a
   default. `ActionInput` owns the `INPUT_` name mangling and the absence
   contract: a missing input and an input set to `""` are both treated as
   missing data.
   ### Inputs, outputs, state, logging
-  `ActionInput`, `ActionOutputs`, `ActionState`, `ActionLogger` (mapping&#10;`Effect.log*` onto workflow commands and structured annotations),&#10;`ActionEnvironment` (`GitHubContext` / `RunnerContext`), and `WorkflowCommand`&#10;for the raw runner protocol.
+  `ActionInput`, `ActionOutputs`, `ActionState`, `ActionLogger` (mapping
+  `Effect.log*` onto workflow commands and structured annotations),
+  `ActionEnvironment` (`GitHubContext` / `RunnerContext`), and `WorkflowCommand`
+  for the raw runner protocol.
   ### Cache, artifacts and the blob store
-  `ActionCache`, `Artifact`, `BlobStore` / `GitHubCacheBlobStore`, and&#10;`CacheKey.hashFiles` implement the Actions cache and artifact protocols
+  `ActionCache`, `Artifact`, `BlobStore` / `GitHubCacheBlobStore`, and
+  `CacheKey.hashFiles` implement the Actions cache and artifact protocols
   directly over HTTP — no `@actions/*` dependency. `Secret` is the only place a
   secret ever becomes a plain string (declassification and masking are the same
   call).
   ### Auth, OIDC and process control
   `GitHubToken` bridges an installation token from `@effected/github` into the
-  runner; `OidcTokenIssuer` reads the runner's OIDC claims; `ToolInstaller`&#10;downloads and stages a tool atomically into the tool cache; `DetachedProcess`&#10;manages a spawned child that must outlive the current step. [#180][#180]
+  runner; `OidcTokenIssuer` reads the runner's OIDC claims; `ToolInstaller`
+  downloads and stages a tool atomically into the tool cache; `DetachedProcess`
+  manages a spawned child that must outlive the current step. [#180][#180]
 
 ### Dependencies
 

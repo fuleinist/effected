@@ -1,5 +1,5 @@
 import { assert, describe, it } from "@effect/vitest";
-import { Effect, Option, Result } from "effect";
+import { Arbitrary, Effect, Option, Result, Schema } from "effect";
 import type { SchemaVersion, WriteChange } from "../src/index.js";
 import { CanonicalJson, InvalidSchemaVersionError, SchemaVersioning } from "../src/index.js";
 
@@ -14,6 +14,31 @@ const version = (label: string): SchemaVersion => Result.getOrThrow(SchemaVersio
 const changesOf = <K extends WriteChange>(members: Record<K, null>): ReadonlyArray<K> =>
 	Object.keys(members) as Array<K>;
 
+describe("SchemaVersioning appendVersion", () => {
+	it("fileName and schemaUrl drop the suffix only under the versioned layout", () => {
+		assert.strictEqual(SchemaVersioning.fileName("cfg", version("1.2"), "versioned", false), "1.2/cfg.json");
+		assert.strictEqual(SchemaVersioning.fileName("cfg", version("1.2"), "versioned", true), "1.2/cfg-1.2.json");
+		assert.strictEqual(SchemaVersioning.fileName("cfg", undefined, "versioned", false), "cfg.json");
+		assert.strictEqual(
+			SchemaVersioning.schemaUrl("https://x/s", "cfg", version("1.2"), "versioned", false),
+			"https://x/s/1.2/cfg.json",
+		);
+		assert.throws(() => SchemaVersioning.fileName("cfg", version("1.2"), "flat", false), /appendVersion.*flat/);
+	});
+
+	it("catalogUrls forwards appendVersion to every URL", () => {
+		const urls = SchemaVersioning.catalogUrls({
+			baseUrl: "https://x/s",
+			name: "cfg",
+			versions: [version("1"), version("2")],
+			layout: "versioned",
+			appendVersion: false,
+		});
+		assert.strictEqual(urls.url, "https://x/s/2/cfg.json");
+		assert.deepStrictEqual(urls.versions, { "1": "https://x/s/1/cfg.json", "2": "https://x/s/2/cfg.json" });
+	});
+});
+
 describe("SchemaVersioning", () => {
 	describe("parse", () => {
 		it("accepts full three-component SemVer labels with optional prerelease", () => {
@@ -22,11 +47,19 @@ describe("SchemaVersioning", () => {
 			}
 		});
 
-		// The deliberate divergence from SchemaStore's own corpus, which uses
-		// labels like `agripparc-1.2`: a partial label cannot be split back
-		// out of a file name unambiguously.
-		it("rejects the partial labels SchemaStore's corpus uses", () => {
-			for (const label of ["1", "1.2", "0.4", "2-beta"]) {
+		it("accepts one-, two- and three-component labels with optional prerelease", () => {
+			for (const label of ["1", "12", "1.2", "0.4", "1.2.3", "2-beta", "1.2-rc.1", "1.2.0-rc.1"]) {
+				assert.isTrue(Result.isSuccess(SchemaVersioning.parseResult(label)), label);
+			}
+		});
+
+		it("preserves the label verbatim rather than normalizing it", () => {
+			assert.strictEqual(version("1.2"), "1.2");
+			assert.strictEqual(version("1"), "1");
+		});
+
+		it("still rejects build metadata, whitespace, leading v, and empty components", () => {
+			for (const label of ["1.2.3+build", "1.2+1", " 1.2 ", "v1.2", "1.", ".2", "1..2", "1.2.3.4", "", "abc"]) {
 				assert.isTrue(Result.isFailure(SchemaVersioning.parseResult(label)), label);
 			}
 		});
@@ -83,6 +116,15 @@ describe("SchemaVersioning", () => {
 		);
 	});
 
+	describe("components", () => {
+		it("counts the numeric components present in the label", () => {
+			assert.strictEqual(SchemaVersioning.components(version("1")), 1);
+			assert.strictEqual(SchemaVersioning.components(version("1.2")), 2);
+			assert.strictEqual(SchemaVersioning.components(version("1.2.3")), 3);
+			assert.strictEqual(SchemaVersioning.components(version("1.2-rc.1")), 2);
+		});
+	});
+
 	describe("isPinned", () => {
 		it("a stable label is pinned", () => {
 			assert.isTrue(SchemaVersioning.isPinned(version("1.2.3")));
@@ -110,15 +152,13 @@ describe("SchemaVersioning", () => {
 			}
 		});
 
-		it("bumps MAJOR on a contract change above the 0.x line", () => {
-			assert.strictEqual(SchemaVersioning.next(version("5.0.0"), "contract"), "6.0.0");
-			assert.strictEqual(SchemaVersioning.next(version("1.2.3"), "contract"), "2.0.0");
-		});
-
-		// The 0.x arm: MINOR is the breaking axis below 1.0.0.
-		it("bumps MINOR on a contract change on the 0.x line", () => {
-			assert.strictEqual(SchemaVersioning.next(version("0.4.0"), "contract"), "0.5.0");
-			assert.strictEqual(SchemaVersioning.next(version("0.0.1"), "contract"), "0.1.0");
+		it("suggests a MINOR bump on a contract change, preserving the component count", () => {
+			assert.strictEqual(SchemaVersioning.next(version("5.0.0"), "contract"), "5.1.0");
+			assert.strictEqual(SchemaVersioning.next(version("1.2.3"), "contract"), "1.3.0");
+			assert.strictEqual(SchemaVersioning.next(version("1.2"), "contract"), "1.3");
+			assert.strictEqual(SchemaVersioning.next(version("0.4"), "contract"), "0.5");
+			assert.strictEqual(SchemaVersioning.next(version("1"), "contract"), "2");
+			assert.strictEqual(SchemaVersioning.next(version("0"), "contract"), "1");
 		});
 
 		// A delegation straight to `bump.major()` would have answered "3.0.0"
@@ -173,12 +213,15 @@ describe("SchemaVersioning", () => {
 		// module's own invariant error names the cap instead of a raw schema
 		// failure escaping from SemVer.make.
 		it("dies with the named invariant when a component cannot be bumped", () => {
-			assert.throws(
-				() => SchemaVersioning.next(version(`${Number.MAX_SAFE_INTEGER}.0.0`), "contract"),
-				/Number\.MAX_SAFE_INTEGER/,
-			);
+			// Three components: `next` bumps MINOR, so only an exhausted minor
+			// overflows.
 			assert.throws(
 				() => SchemaVersioning.next(version(`0.${Number.MAX_SAFE_INTEGER}.0`), "contract"),
+				/Number\.MAX_SAFE_INTEGER/,
+			);
+			// One component: MAJOR is the only axis, so it overflows there instead.
+			assert.throws(
+				() => SchemaVersioning.next(version(`${Number.MAX_SAFE_INTEGER}`), "contract"),
 				/Number\.MAX_SAFE_INTEGER/,
 			);
 		});
@@ -192,6 +235,13 @@ describe("SchemaVersioning", () => {
 
 		it("ranks prereleases below their release", () => {
 			assert.isBelow(SchemaVersioning.Order(version("2.0.0-beta"), version("2.0.0")), 0);
+		});
+
+		it("reads a missing component as zero, so 1, 1.0 and 1.0.0 compare equal", () => {
+			assert.strictEqual(SchemaVersioning.Order(version("1"), version("1.0.0")), 0);
+			assert.strictEqual(SchemaVersioning.Order(version("1.0"), version("1.0.0")), 0);
+			assert.isBelow(SchemaVersioning.Order(version("1.9"), version("1.10")), 0);
+			assert.isBelow(SchemaVersioning.Order(version("1"), version("1.0.1")), 0);
 		});
 
 		it("every accepted label orders without throwing (the closure invariant)", () => {
@@ -265,6 +315,15 @@ describe("SchemaVersioning", () => {
 				"https://example.com/schemas/cfg.json",
 			);
 		});
+
+		it("versioned layout nests the file under its version directory", () => {
+			assert.strictEqual(SchemaVersioning.fileName("okfit", version("1.2"), "versioned"), "1.2/okfit-1.2.json");
+			assert.strictEqual(SchemaVersioning.fileName("okfit", undefined, "versioned"), "okfit.json");
+			assert.strictEqual(
+				SchemaVersioning.schemaUrl("https://x/schemas/", "okfit", version("1.2"), "versioned"),
+				"https://x/schemas/1.2/okfit-1.2.json",
+			);
+		});
 	});
 
 	describe("catalogUrls", () => {
@@ -307,6 +366,90 @@ describe("SchemaVersioning", () => {
 
 		it("throws on the versioned/empty contradiction", () => {
 			assert.throws(() => SchemaVersioning.catalogUrls({ baseUrl: "https://example.com", name: "cfg", versions: [] }));
+		});
+
+		it("versioned layout: every map value and the url carry the version directory", () => {
+			const urls = SchemaVersioning.catalogUrls({
+				baseUrl: "https://x/schemas",
+				name: "okfit",
+				versions: [version("1.0"), version("1.1")],
+				layout: "versioned",
+			});
+			assert.strictEqual(urls.url, "https://x/schemas/1.1/okfit-1.1.json");
+			assert.deepStrictEqual(urls.versions, {
+				"1.0": "https://x/schemas/1.0/okfit-1.0.json",
+				"1.1": "https://x/schemas/1.1/okfit-1.1.json",
+			});
+		});
+
+		it("current pins the url to that label instead of the newest", () => {
+			const urls = SchemaVersioning.catalogUrls({
+				baseUrl: "https://x/schemas",
+				name: "okfit",
+				versions: [version("1.0"), version("2.0.0-alpha.1")],
+				current: version("1.0"),
+			});
+			assert.strictEqual(urls.url, "https://x/schemas/okfit-1.0.json");
+			assert.deepStrictEqual(Object.keys(urls.versions ?? {}), ["1.0", "2.0.0-alpha.1"]);
+		});
+
+		it("rejects a current label that is not in versions", () => {
+			assert.throws(
+				() =>
+					SchemaVersioning.catalogUrls({
+						baseUrl: "https://x",
+						name: "okfit",
+						versions: [version("1.0")],
+						current: version("1.1"),
+					}),
+				/current "1\.1" is not one of the versions/,
+			);
+		});
+
+		it("current matched under Order builds the url from the map's own spelling", () => {
+			const urls = SchemaVersioning.catalogUrls({
+				baseUrl: "https://x/schemas",
+				name: "okfit",
+				versions: [version("1.0"), version("1.2.0")],
+				current: version("1.2"),
+			});
+			assert.strictEqual(urls.url, "https://x/schemas/okfit-1.2.0.json");
+			assert.deepStrictEqual(Object.keys(urls.versions ?? {}), ["1.0", "1.2.0"]);
+		});
+	});
+
+	describe("label grammar (property)", () => {
+		// 1..3 numeric components, optional `-prerelease` of dot-separated
+		// alphanumeric identifiers. Numeric components are bounded so padding
+		// never overflows, and leading zeros are excluded because SemVer
+		// rejects them ("01" is not a valid numeric identifier).
+		const Component = Schema.Int.check(Schema.isBetween({ minimum: 0, maximum: 999 }));
+		const Ident = Schema.String.check(Schema.isPattern(/^[1-9A-Za-z][0-9A-Za-z-]{0,5}$/));
+		const LabelParts = Schema.Struct({
+			core: Schema.Array(Component).check(Schema.isMinLength(1), Schema.isMaxLength(3)),
+			prerelease: Schema.Array(Ident).check(Schema.isMaxLength(2)),
+		});
+		const label = Arbitrary.schema(LabelParts).pipe(
+			Arbitrary.map(
+				({ core, prerelease }) => `${core.join(".")}${prerelease.length > 0 ? `-${prerelease.join(".")}` : ""}`,
+			),
+		);
+
+		it.prop("every generated label parses and round-trips verbatim", [label], ([raw]) => {
+			const parsed = SchemaVersioning.parseResult(raw);
+			return Result.isSuccess(parsed) && parsed.success === raw;
+		});
+
+		it.prop("ordering is invariant under zero-padding to three components", [label], ([raw]) => {
+			// Split on the FIRST dash only, matching the module's own `split`
+			// (`input.indexOf("-")`) — an `Ident` may itself contain a dash
+			// (`/^[1-9A-Za-z][0-9A-Za-z-]{0,5}$/`), so `String#split("-", 2)`
+			// truncates a multi-dash prerelease instead of isolating it.
+			const dash = raw.indexOf("-");
+			const core = dash === -1 ? raw : raw.slice(0, dash);
+			const prerelease = dash === -1 ? "" : raw.slice(dash);
+			const padded = `${[...core.split("."), "0", "0"].slice(0, 3).join(".")}${prerelease}`;
+			return SchemaVersioning.Order(version(raw), version(padded)) === 0;
 		});
 	});
 });
