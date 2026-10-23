@@ -4,7 +4,7 @@
 // sentinel positions, frontmatter literal mapping, and typed failure.
 
 import { assert, describe, it } from "@effect/vitest";
-import { Effect, Result } from "effect";
+import { Effect, Result, SchemaIssue } from "effect";
 import { Markdown, MarkdownParseOptions } from "../src/Markdown.js";
 import { Frontmatter, Root } from "../src/MarkdownNode.js";
 import { Mdast, MdastDecodeError } from "../src/Mdast.js";
@@ -245,5 +245,51 @@ describe("Mdast.fromMdast", () => {
 		assert.deepStrictEqual(Effect.runSync(Effect.result(Mdast.fromMdast(good))), Mdast.fromMdastResult(good) as never);
 		const effectFailure = Effect.runSync(Effect.result(Effect.flip(Mdast.fromMdast(bad))));
 		assert.isTrue(Result.isSuccess(effectFailure));
+	});
+
+	describe("nesting depth guard", () => {
+		// Depth counts from the root at 0: root(0) > paragraph(1) >
+		// emphasis(2..N+1) > text(N+2). The cap admits depth 256, so 254
+		// emphasis levels is the deepest tree that decodes.
+		const emphasisChain = (levels: number): unknown => {
+			let node: unknown = { type: "text", value: "leaf" };
+			for (let i = 0; i < levels; i++) node = { type: "emphasis", children: [node] };
+			return { type: "root", children: [{ type: "paragraph", children: [node] }] };
+		};
+
+		it("decodes a tree whose deepest node sits exactly at the cap", () => {
+			assert.isTrue(Result.isSuccess(Mdast.fromMdastResult(emphasisChain(254))));
+		});
+
+		it("fails typed one level past the cap, naming the depth", () => {
+			const result = Mdast.fromMdastResult(emphasisChain(255));
+			assert.isTrue(Result.isFailure(result));
+			if (Result.isFailure(result)) {
+				assert.instanceOf(result.failure, MdastDecodeError);
+				const issue = result.failure.issue;
+				assert.instanceOf(issue, SchemaIssue.InvalidValue);
+				assert.isTrue(SchemaIssue.isIssue(issue));
+				assert.include(String((issue as SchemaIssue.InvalidValue).annotations?.message), "limit 256, actual 257");
+			}
+		});
+
+		it("fails typed rather than throwing on input deep enough to exhaust the stack", () => {
+			// 1000 levels once threw from the schema decoder; 3000 overflowed the stack.
+			for (const levels of [1000, 3000]) {
+				const result = Mdast.fromMdastResult(emphasisChain(levels));
+				assert.isTrue(Result.isFailure(result), `${levels} levels`);
+				if (Result.isFailure(result)) assert.instanceOf(result.failure, MdastDecodeError);
+			}
+		});
+
+		it("refuses a parsed tree whose leaf sits past the cap, as stringify does", () => {
+			// The parser caps container depth, not leaf depth: 255 nested
+			// blockquotes parse, but the text leaf lands at depth 257.
+			const atCap = gfm(`${"> ".repeat(254)}x\n`);
+			assert.isTrue(Result.isSuccess(Mdast.fromMdastResult(Mdast.toMdast(atCap))));
+			const pastCap = gfm(`${"> ".repeat(255)}x\n`);
+			assert.isTrue(Result.isFailure(Mdast.fromMdastResult(Mdast.toMdast(pastCap))));
+			assert.isTrue(Result.isFailure(Markdown.stringifyResult(pastCap)));
+		});
 	});
 });

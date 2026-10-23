@@ -17,7 +17,7 @@ import { Effect, Equal, Result, Stream } from "effect";
 import { Markdown } from "../src/Markdown.js";
 import { Blockquote, Paragraph, Point, Position, Root, Text } from "../src/MarkdownNode.js";
 import { MarkdownVisitor, MarkdownVisitorEvent } from "../src/MarkdownVisitor.js";
-import { Mdast } from "../src/Mdast.js";
+import { Mdast, MdastDecodeError } from "../src/Mdast.js";
 
 const parse = (text: string, options?: Parameters<typeof Markdown.parseResult>[1]) => {
 	const result = Markdown.parseResult(text, options);
@@ -147,10 +147,31 @@ describe("MarkdownVisitor", () => {
 		assert.isFalse(events.some((event) => event._tag === "Error"));
 	});
 
-	it("surfaces a decoded foreign tree past the cap as an Error event ending the walk", () => {
+	it("fromMdastResult fails typed on a decoded foreign tree past the cap (depth guard at the boundary)", () => {
+		// root(0) + 300 blockquotes + paragraph + text exceeds MAX_NESTING_DEPTH;
+		// the depth guard at the decode boundary converts it to a typed Failure
+		// instead of throwing or surfacing it as a visitor Error event.
 		const result = Mdast.fromMdastResult(deepForeignTree(300));
-		assert.isTrue(Result.isSuccess(result));
-		const tree = Result.getOrThrow(result);
+		assert.isTrue(Result.isFailure(result));
+		if (Result.isFailure(result)) {
+			assert.instanceOf(result.failure, MdastDecodeError);
+		}
+	});
+
+	it("surfaces a decoded foreign tree past the cap as an Error event ending the walk", () => {
+		// Build a 300-deep tree directly via node constructors (bypasses the
+		// decode boundary guard) so the visitor's own depth guard is exercised.
+		// Paragraph.children is PhrasingContent, so Paragraph cannot wrap
+		// Paragraph. Use Blockquote (a Block that wraps Block content) around
+		// an innermost Paragraph(Text).
+		let node: Blockquote | Paragraph = Paragraph.make({
+			children: [Text.make({ value: "x", position: syntheticPosition })],
+			position: syntheticPosition,
+		});
+		for (let i = 0; i < 300; i++) {
+			node = Blockquote.make({ children: [node], position: syntheticPosition });
+		}
+		const tree = Root.make({ children: [node], position: syntheticPosition });
 
 		const events = collect(tree);
 		const last = events[events.length - 1];
@@ -161,9 +182,6 @@ describe("MarkdownVisitor", () => {
 		}
 		// The Error event is terminal — exactly one, nothing after it.
 		assert.strictEqual(events.filter((event) => event._tag === "Error").length, 1);
-
-		// Posture link: the same tree fails stringify typed, never a defect.
-		assert.isTrue(Result.isFailure(Markdown.stringifyResult(tree)));
 	});
 
 	it("constructs events via the taggedEnum constructors", () => {

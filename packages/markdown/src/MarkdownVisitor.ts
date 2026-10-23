@@ -11,12 +11,13 @@
 // `Markdown.parse` (or `Mdast.fromMdast`) with `MarkdownVisitor.visit`.
 //
 // Guard posture: a tree this package's own parser produced can never exceed
-// `MAX_NESTING_DEPTH` (the parse guard refuses deeper input), but a decoded
-// foreign tree (`Mdast.fromMdast`) can. Mirroring stringify — which fails
-// typed on the same tree — the walk surfaces the trip deliberately as a
-// terminal `Error` event carrying a `NestingDepthExceeded` diagnostic and
-// ends, never a defect and never a stream failure (the yaml visitor's
-// diagnostics-as-events precedent).
+// `MAX_NESTING_DEPTH` (the parse guard refuses deeper input), and neither
+// can a decoded foreign tree (`Mdast.fromMdast`) — the decode boundary
+// refuses it first. Only a hand-constructed tree can trip the guard.
+// Mirroring stringify — which fails typed on the same tree — the walk
+// surfaces the trip deliberately as a terminal `Error` event carrying a
+// `NestingDepthExceeded` diagnostic and ends, never a defect and never a
+// stream failure (the yaml visitor's diagnostics-as-events precedent).
 
 import { Data, Stream } from "effect";
 import { MAX_NESTING_DEPTH } from "./internal/limits.js";
@@ -30,7 +31,7 @@ import type { MarkdownNode, Root } from "./MarkdownNode.js";
  * leaf the two fire back to back. Every variant carries `path` (child
  * indexes from the root; the root's own path is empty) and `depth`
  * (zero-based; the root is 0). `Error` is terminal: it carries the
- * depth-guard diagnostic for a decoded foreign tree nested past
+ * depth-guard diagnostic for a hand-constructed tree nested past
  * `MAX_NESTING_DEPTH` and nothing follows it.
  *
  * @public
@@ -85,10 +86,12 @@ export class MarkdownVisitor {
 	 * @remarks
 	 * Infallible at the type level. A tree produced by `Markdown.parse` can
 	 * never trip the walk's depth guard — the parser refuses deeper input —
-	 * but a decoded foreign tree (`Mdast.fromMdast`) can; the trip surfaces
-	 * as a terminal `MarkdownVisitorEvent` `Error` event carrying a
-	 * `NestingDepthExceeded` {@link MarkdownDiagnostic}, mirroring the typed
-	 * failure `Markdown.stringify` produces for the same tree.
+	 * and neither can a decoded foreign tree (`Mdast.fromMdast`), because the
+	 * decode boundary refuses it first; only a hand-constructed tree can trip
+	 * the guard. The trip surfaces as a terminal `MarkdownVisitorEvent`
+	 * `Error` event carrying a `NestingDepthExceeded` {@link MarkdownDiagnostic},
+	 * mirroring the typed failure `Markdown.stringify` produces for the same
+	 * tree.
 	 *
 	 * @param root - The tree to walk.
 	 * @returns A lazy `Stream` of `MarkdownVisitorEvent`, infallible at the type

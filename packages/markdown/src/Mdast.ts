@@ -2,7 +2,9 @@
 // node classes and plain mdast JSON. The emission conventions are documented on
 // the exported `Mdast` class.
 
-import { Effect, Result, Schema } from "effect";
+import { Effect, Result, Schema, SchemaIssue } from "effect";
+import { GuardExceeded, isGuardExceeded } from "./internal/carriers.js";
+import { MAX_NESTING_DEPTH } from "./internal/limits.js";
 import { unescapeString } from "./internal/unescape.js";
 import type {
 	FlowContent,
@@ -343,10 +345,16 @@ const normalizePosition = (value: unknown): Record<string, unknown> => {
 // optional ones), synthesize sentinel positions, map frontmatter literal
 // types onto the Frontmatter capture shape, and recurse into children.
 // Unrecognized types pass through shallowly so schema decoding reports them
-// as typed failures rather than this walk throwing.
-const normalizeNode = (value: unknown): unknown => {
+// as typed failures rather than this walk throwing. The one throw is the
+// depth guard: it trips before the recursive schema decode can exhaust the
+// stack, and `fromMdastResult` materializes it as a typed failure. Foreign
+// input carries no trustworthy source offset, so the carrier records 0.
+const normalizeNode = (value: unknown, depth: number = 0): unknown => {
 	if (!isRecord(value) || typeof value.type !== "string") {
 		return value;
+	}
+	if (depth > MAX_NESTING_DEPTH) {
+		throw new GuardExceeded("NestingDepthExceeded", MAX_NESTING_DEPTH, depth, 0);
 	}
 	const type = value.type;
 	const format = frontmatterTypes.get(type);
@@ -373,7 +381,9 @@ const normalizeNode = (value: unknown): unknown => {
 			type,
 			name: value.name,
 			attributes: Array.isArray(value.attributes) ? value.attributes.map(normalizeMdxAttribute) : value.attributes,
-			children: Array.isArray(value.children) ? value.children.map(normalizeNode) : value.children,
+			children: Array.isArray(value.children)
+				? value.children.map((child) => normalizeNode(child, depth + 1))
+				: value.children,
 			position: normalizePosition(value.position),
 		};
 	}
@@ -395,7 +405,7 @@ const normalizeNode = (value: unknown): unknown => {
 		normalized.value = code.endsWith("\n") ? code : `${code}\n`;
 	}
 	if (Array.isArray(value.children)) {
-		normalized.children = value.children.map(normalizeNode);
+		normalized.children = value.children.map((child) => normalizeNode(child, depth + 1));
 	}
 	normalized.position = normalizePosition(value.position);
 	return normalized;
@@ -529,12 +539,27 @@ export class Mdast {
 	 * plain tree built for `Markdown.stringify` can carry it straight in. A
 	 * value outside `"canonical" | "literal"` fails the decode typed.
 	 *
+	 * **Nesting is capped at 256 levels below the root**, the same cap the
+	 * parser and `Markdown.stringify` enforce. A tree with any node deeper
+	 * than that, leaves included, fails typed with a `SchemaIssue.InvalidValue`
+	 * issue before the schema decode runs, so hostile depth is never a defect.
+	 * Because leaves count, a document the parser accepts can still be
+	 * refused here: `"> ".repeat(255) + "x"` parses, but its `text` leaf sits
+	 * at depth 257, and `Markdown.stringify` refuses that tree too.
+	 *
 	 * @param input - A plain mdast tree, typically a `root`.
 	 * @returns A `Result` succeeding with the decoded {@link Root}, or
 	 *   failing with {@link MdastDecodeError} carrying the structured issue.
 	 */
 	static fromMdastResult(input: unknown): Result.Result<Root, MdastDecodeError> {
-		return Result.mapError(decodeRoot(normalizeNode(input)), (error) => new MdastDecodeError({ issue: error.issue }));
+		let normalized: unknown;
+		try {
+			normalized = normalizeNode(input);
+		} catch (error) {
+			if (!isGuardExceeded(error)) throw error;
+			return Result.fail(new MdastDecodeError({ issue: new SchemaIssue.InvalidValue({ message: error.message }) }));
+		}
+		return Result.mapError(decodeRoot(normalized), (error) => new MdastDecodeError({ issue: error.issue }));
 	}
 
 	/**
