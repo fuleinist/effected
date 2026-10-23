@@ -15,7 +15,7 @@
 import { assert, describe, it } from "@effect/vitest";
 import { Effect, Equal, Result, Stream } from "effect";
 import { Markdown } from "../src/Markdown.js";
-import { Blockquote, MarkdownNode, Paragraph, Point, Position, Root, Text } from "../src/MarkdownNode.js";
+import { Blockquote, Paragraph, Point, Position, Root, Text } from "../src/MarkdownNode.js";
 import { MarkdownVisitor, MarkdownVisitorEvent } from "../src/MarkdownVisitor.js";
 import { Mdast, MdastDecodeError } from "../src/Mdast.js";
 
@@ -161,9 +161,15 @@ describe("MarkdownVisitor", () => {
 	it("surfaces a decoded foreign tree past the cap as an Error event ending the walk", () => {
 		// Build a 300-deep tree directly via node constructors (bypasses the
 		// decode boundary guard) so the visitor's own depth guard is exercised.
-		let node: MarkdownNode = Text.make({ value: "x", position: syntheticPosition });
+		// Paragraph.children is PhrasingContent, so Paragraph cannot wrap
+		// Paragraph. Use Blockquote (a Block that wraps Block content) around
+		// an innermost Paragraph(Text).
+		let node: Blockquote | Paragraph = Paragraph.make({
+			children: [Text.make({ value: "x", position: syntheticPosition })],
+			position: syntheticPosition,
+		});
 		for (let i = 0; i < 300; i++) {
-			node = Paragraph.make({ children: [node], position: syntheticPosition });
+			node = Blockquote.make({ children: [node], position: syntheticPosition });
 		}
 		const tree = Root.make({ children: [node], position: syntheticPosition });
 
