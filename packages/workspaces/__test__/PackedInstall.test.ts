@@ -185,6 +185,11 @@ describe("PackedInstall.run", () => {
 					assert.include(error.output ?? "", "ERR_PNPM_BOOM", "the real error on stdout survives a stderr banner");
 					assert.include(error.output ?? "", "WARN this project pins");
 					assert.notInclude(error.message, "pnpm install", "the hint is reserved for the workspace-protocol failure");
+					// The message ends with those same lines, so a bare print of it is actionable.
+					assert.strictEqual(
+						error.message,
+						"pnpm pack exited 1 for @x/carrier; output tail:\nERR_PNPM_BOOM the pack broke\nWARN this project pins pnpm@12.6.0",
+					);
 					const pack = failing.spawns[1];
 					assert.strictEqual(pack?.command, "pnpm");
 					assert.strictEqual(pack?.cwd, "/repo/packages/carrier");
@@ -499,6 +504,36 @@ describe("PackedInstall.run past the pack", () => {
 		);
 	});
 
+	// Ten non-blank lines, each followed by an empty and a whitespace-only line:
+	// the tail keeps exactly the last eight NON-BLANK lines.
+	const noisyLines = Array.from({ length: 10 }, (_, index) => `line ${index + 1}`);
+	const noisy = ScriptedSpawner.make(
+		script((command) =>
+			command === "pnpm" ? { exit: 1, stdout: noisyLines.map((line) => `${line}\n\n   \n`).join(""), stderr: "" } : {},
+		),
+	);
+	suite(noisy)((it) => {
+		it.effect("the message tail keeps exactly the last eight non-blank lines and drops blank ones", () =>
+			Effect.gen(function* () {
+				const error = yield* Effect.flip(
+					PackedInstall.run({
+						carrier: "@x/carrier",
+						closure: "auto",
+						managers: ["npm"],
+						packFrom: "source",
+						bins: [],
+						env: ENV,
+					}),
+				);
+				assert.strictEqual(error.reason, "PackFailed");
+				assert.strictEqual(
+					error.message,
+					`pnpm pack exited 1 for @x/carrier; output tail:\n${noisyLines.slice(-8).join("\n")}`,
+				);
+			}),
+		);
+	});
+
 	const LONG = "a".repeat(3000);
 	const brokenInstall = ScriptedSpawner.make((command, args) =>
 		args[0] === "install" ? { exit: 1, stdout: LONG, stderr: "ERR_INSTALL_BOOM" } : manifests()(command, args),
@@ -517,6 +552,13 @@ describe("PackedInstall.run past the pack", () => {
 				assert.isTrue(output.endsWith("ERR_INSTALL_BOOM"), "stderr comes last");
 				assert.isTrue(output.startsWith("aaa"), "stdout precedes it");
 				assert.strictEqual(output.length, 2000, "only the tail is kept");
+				// The message carries the end of that tail itself, bounded: a log that
+				// prints only the message still shows the manager's real error.
+				const prefix = "npm install exited 1; output tail:\n…";
+				assert.isTrue(error.message.startsWith(prefix), error.message);
+				assert.isTrue(error.message.endsWith("ERR_INSTALL_BOOM"), error.message);
+				// Exactly the ellipsis plus the last 600 characters: the cap is a number, not a ceiling.
+				assert.strictEqual(error.message.length, prefix.length + 600, "the message tail is capped at 600 chars");
 			}),
 		);
 	});
