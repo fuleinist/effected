@@ -35,6 +35,10 @@ export const isResponse = (message: JsonRpcMessage): message is JsonRpcMessage &
 	(typeof message.id === "string" || typeof message.id === "number") && message.method === undefined;
 
 /** @internal */
+export const isNotification = (message: JsonRpcMessage): boolean =>
+	message.method !== undefined && message.id === undefined;
+
+/** @internal */
 export const requestKey = (id: string | number): string => `${typeof id}:${id}`;
 
 /** @internal */

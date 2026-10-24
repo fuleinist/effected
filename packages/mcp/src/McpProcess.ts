@@ -9,6 +9,7 @@ import {
 	frame,
 	initializeParams,
 	isJsonRpcMessage,
+	isNotification,
 	isResponse,
 	isStateless,
 	parseFrame,
@@ -72,7 +73,8 @@ interface StderrState {
  *   exactly as given, for a malformed frame or one frame split across
  *   writes, even mid-character.
  * - `readUntilResponse` reads past interleaved notifications, such as
- *   `list_changed`, to the matching id and returns what it saw.
+ *   `list_changed`, to the matching id and returns what it saw. Notifications
+ *   are dropped from the `seen` array so callers see only responses and errors.
  * - `closeStdin` is `Queue.end`, never `Queue.shutdown`, so every frame
  *   already sent is delivered before stdin closes.
  * - A request in flight when stdin closes still answers from an Effect
@@ -267,7 +269,7 @@ export class McpProcess {
 								message: `stdout carried a line that is not JSON-RPC: ${ToolFailure.truncate(line)}`,
 							});
 						}
-						seen.push(message);
+						if (!isNotification(message)) seen.push(message);
 						if (isResponse(message) && message.id === id) return { response: message, seen };
 					}
 				});

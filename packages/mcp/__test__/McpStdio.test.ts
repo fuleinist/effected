@@ -185,6 +185,18 @@ describe("McpStdio.layer over a real process's stdio", () => {
 		}).pipe(Effect.timeout("3 seconds"), Effect.provide(NodeServices.layer)),
 	);
 
+	it.live("filters notifications from seen", () =>
+		Effect.gen(function* () {
+			const server = yield* McpProcess.spawn(STDIO_MAIN);
+			yield* server.handshake();
+			yield* server.send({ jsonrpc: "2.0", method: "notifications/initialized" });
+			yield* server.send({ jsonrpc: "2.0", id: 2, method: "tools/list" });
+			const { seen } = yield* server.readUntilResponse(2);
+			const hasNotification = seen.some((frame) => "method" in frame && frame.method !== undefined && !("id" in frame));
+			assert.isFalse(hasNotification);
+		}).pipe(Effect.timeout("3 seconds"), Effect.provide(NodeServices.layer)),
+	);
+
 	it.live("closing stdin with a request in flight still delivers its response, then exits 0", () =>
 		Effect.gen(function* () {
 			const server = yield* McpProcess.spawn(STDIO_MAIN);
