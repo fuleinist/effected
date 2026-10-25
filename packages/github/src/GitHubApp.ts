@@ -17,7 +17,7 @@ import {
 	Stream,
 } from "effect";
 import type { GitHubClientShape } from "./GitHubClient.js";
-import { GitHubClient, makeClientShape } from "./GitHubClient.js";
+import { GitHubClient, makeClientShape, resolveApiVersion } from "./GitHubClient.js";
 import { GitHubError } from "./GitHubError.js";
 import { GitHubGraphQLError } from "./GraphQL.js";
 import { InstallationTokenStore } from "./InstallationTokenStore.js";
@@ -380,6 +380,15 @@ export interface GitHubAppOptions {
 	readonly retry?: RetryPolicy | "off" | undefined;
 	/** A replacement `fetch`, for tests and proxies. */
 	readonly fetch?: typeof globalThis.fetch | undefined;
+	/**
+	 * The REST api-version the app's clients pin; defaults to `"2026-03-10"`.
+	 *
+	 * @remarks
+	 * The same option as `GitHubClientOptions.apiVersion`, applied to every
+	 * client this module builds: as the app, as an installation, and
+	 * unauthenticated.
+	 */
+	readonly apiVersion?: string | undefined;
 }
 
 /**
@@ -851,7 +860,9 @@ const appFailure = (kind: GitHubAppError["kind"]) => (error: GitHubError) =>
 	Effect.fail(GitHubAppError.of(kind, error.reason, error));
 
 function makeApp(options: GitHubAppOptions): Effect.Effect<GitHubAppShape> {
-	return Effect.sync(() => {
+	// Validated here, eagerly, so a malformed version fails at layer
+	// construction rather than on the first token mint.
+	return Effect.map(resolveApiVersion(options.apiVersion), () => {
 		const installations = Effect.fn("GitHubApp.installations")(function* (credentials: AppCredentials) {
 			const client = yield* asApp(credentials, options);
 			const raw = yield* client.paginate("GET /app/installations", {}).pipe(Effect.catch(appFailure("installation")));
@@ -1001,6 +1012,9 @@ const makeRotatingClient = (
 	operation: string,
 ): Effect.Effect<GitHubClientShape, GitHubAppError, Scope.Scope> =>
 	Effect.gen(function* () {
+		// Every client this rotates through pins the same version, so it is
+		// resolved once, before the first mint.
+		const apiVersion = yield* resolveApiVersion(options.apiVersion);
 		const held = yield* Ref.make(Option.none<{ credential: RotatingCredential; client: GitHubClientShape }>());
 
 		const revokeHeld = Effect.flatMap(Ref.get(held), (current) =>
@@ -1090,5 +1104,6 @@ const makeRotatingClient = (
 			rateLimit: Effect.flatMap(Ref.get(held), (state) =>
 				Option.isSome(state) ? state.value.client.rateLimit : Effect.succeed(Option.none()),
 			),
+			apiVersion,
 		} satisfies GitHubClientShape;
 	});

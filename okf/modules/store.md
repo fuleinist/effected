@@ -16,10 +16,10 @@ sources:
     resource: ../../packages/store/CLAUDE.md
 generated:
   by: "okfit/claude-code"
-  at: 2026-10-24T00:32:37Z
+  at: 2026-10-25T14:50:52Z
 integrity:
   generated:
-    body: 8c5ac06c53bd5ea8
+    body: 73437b65653471e0
 ---
 
 # store
@@ -65,7 +65,8 @@ living beside XDG resolution — see
 ## Module layout
 
 `src/Store.ts`, `src/Cache.ts`, `src/Bytes.ts` (the `Uint8ArrayFromUtf8`
-codec) and `src/internal/migrator.ts` (the shared ledger engine, defining
+codec), `src/AtomicDirectory.ts` (whole-directory replacement over core
+`FileSystem`) and `src/internal/migrator.ts` (the shared ledger engine, defining
 its own record types rather than importing from either facade — an
 import cycle there would trip Biome's error-level `noImportCycles`
 rule).[^store-claude-md]
@@ -278,6 +279,28 @@ opt-in service, created unbounded so a slow subscriber never
 backpressures a write, with infallible emission. Events are a consumer
 hook, not the package's own telemetry.
 
+A consumer service built on `Store` is tested over its real implementation, by convention: one implementation effect against `Store`, a `layer(filename)` and a `layerMemory()` factory over `Store.layerTest` (a fresh `:memory:` database per build), documented in the README and pinned by `__test__/layerMemory.test.ts`; `Store.layerTest` already is the in-memory factory, so no helper API exists for it.
+
+### AtomicDirectory
+
+`AtomicDirectory.write(root, files)` replaces a directory with exactly a
+file set, staging in the sibling `.<name>.staging` and swapping it into
+place with two renames (live to `.<name>.old`, staging to live, then
+removing `.<name>.old`): the on-disk counterpart to the SQLite services, for consumers that
+cache whole trees (a type registry's per-package directory). It requires
+`FileSystem` and `Path` in `R` and adds no dependency. The siblings are
+load-bearing (elsewhere, a `rename` crosses filesystems and stops being
+atomic), as are clearing both leftovers first and creating staging even
+for an empty set. `root` is normalised and a basename of `.` or `..` is
+refused; every file path is validated before any IO. The old tree is
+removed only after it has left `root`, so no reader sees a half-deleted
+tree. The window between the two renames is documented: a reader sees
+absence, never a partial tree, and a crash there leaves both trees whole
+for the next call to clear. The fixed sibling names mean one writer per
+root. Failures are `AtomicDirectoryError` with `operation` `validate`,
+`clear`, `stage`, `write`, `promote` or `cleanup` (new tree live, old
+one not yet removed).
+
 ## Relationship to core persistence
 
 Core's `effect/persistence/KeyValueStore` is the plain-KV subset
@@ -290,7 +313,7 @@ drops that value-add is a reinvention and should point the consumer at
 
 ## Errors
 
-Three `Schema.TaggedError` types — `StoreError`, `StoreMigrationError` and
+Three SQL `Schema.TaggedError` types — `StoreError`, `StoreMigrationError` and
 `CacheError` — each carrying the underlying failure structurally in a
 `cause: Schema.Defect()` field; `StoreMigrationError` additionally
 carries the migration's `direction`, `id` and `name`. `SqlError` is

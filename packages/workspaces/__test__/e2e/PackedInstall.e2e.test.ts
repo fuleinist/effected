@@ -23,7 +23,7 @@ import { existsSync, mkdirSync, mkdtempSync, readFileSync, realpathSync, rmSync,
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import { NodeServices } from "@effect/platform-node";
-import { afterAll, assert, describe, layer } from "@effect/vitest";
+import { afterAll, assert, describe, it, layer } from "@effect/vitest";
 import { Run } from "@effected/commands";
 import { Duration, Effect, Layer } from "effect";
 import { ChildProcess } from "effect/process";
@@ -166,6 +166,23 @@ const VERSIONS: Readonly<Record<PackageManagerName, string | undefined>> = {
 	pnpm: probe("pnpm"),
 	yarn: probe("yarn"),
 	bun: probe("bun"),
+};
+/**
+ * Whether a dotted version is at least `min`; a missing or non-numeric part counts as 0. Any prerelease suffix
+ * (`1.4.4-canary.N+sha`) counts as below the gate, since a canary may predate the change being gated.
+ */
+const atLeast = (version: string, min: readonly [number, number, number]): boolean => {
+	const prerelease = /^[^+]*-/.test(version);
+	const parts =
+		version
+			.split(/[-+]/)[0]
+			?.split(".")
+			.map((part) => Number.parseInt(part, 10) || 0) ?? [];
+	for (let i = 0; i < 3; i++) {
+		const have = parts[i] ?? 0;
+		if (have !== min[i]) return have > (min[i] as number);
+	}
+	return !prerelease;
 };
 const HAS_NPM = VERSIONS.npm !== undefined;
 const HAS_PNPM = VERSIONS.pnpm !== undefined;
@@ -328,6 +345,16 @@ const assertConsumer = (consumer: InstalledConsumer, tarballs: Readonly<Record<s
 			assert.isTrue(provenance?.target.startsWith(`${consumer.directory}/node_modules/`), provenance?.target);
 		}
 	});
+
+describe("atLeast", () => {
+	it("compares release versions and treats any prerelease as below the gate", () => {
+		assert.isTrue(atLeast("1.4.4", [1, 4, 4]));
+		assert.isTrue(atLeast("1.5.0", [1, 4, 4]));
+		assert.isFalse(atLeast("1.4.3", [1, 4, 4]));
+		assert.isFalse(atLeast("1.4.4-canary.7+abc123", [1, 4, 4]));
+		assert.isTrue(atLeast("1.4.5-canary.7+abc123", [1, 4, 4]));
+	});
+});
 
 describe("PackedInstall against a real fixture workspace", () => {
 	layer(Live, { excludeTestServices: true })((it) => {
@@ -596,14 +623,19 @@ describe("PackedInstall against a real fixture workspace", () => {
 							`${consumer.manager}: ${own.stderr}`,
 						);
 					}
-					// Observed with npm 11.19 and bun 1.4: the package whose name sorts first takes the slot, so
-					// shared-cli (the front end) beats shared-plugin (the carrier), as @vitest-agent/cli beats
-					// @vitest-agent/plugin; named the other way round, the carrier won both. Yarn 1.22 and 4.18
-					// (node-modules linker) gave the slot to the carrier, the consumer's direct dependency. pnpm
-					// links only the direct dependency. Every manager on PATH is asserted, yarn included.
+					// npm 11.19 links the package whose name sorts first, so shared-cli (the front end) beats
+					// shared-plugin (the carrier), as @vitest-agent/cli beats @vitest-agent/plugin; named the
+					// other way round, the carrier won. Yarn 1.22 and 4.18 (node-modules linker) gave the slot
+					// to the carrier, the consumer's direct dependency. pnpm links only the direct dependency.
+					// bun is version-dependent: it used to link the alphabetically first package like npm, and
+					// from 1.4.4 a direct dependency of the consumer wins the slot with alphabetical order only
+					// breaking ties. The consumer here depends on the carrier alone, so a bun at or past 1.4.4
+					// gives the carrier the slot (probed on 1.4.4: the carrier wins, and a direct front end
+					// would beat it alphabetically). Every manager on PATH is asserted, yarn included.
+					const bunPrefersDirect = VERSIONS.bun !== undefined && atLeast(VERSIONS.bun, [1, 4, 4]);
 					const winner: Record<PackageManagerName, string> = {
 						npm: "front",
-						bun: "front",
+						bun: bunPrefersDirect ? "carrier" : "front",
 						yarn: "carrier",
 						pnpm: "carrier",
 					};

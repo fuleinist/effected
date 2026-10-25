@@ -15,10 +15,10 @@ sources:
     resource: ../../packages/walker/CLAUDE.md
 generated:
   by: "okfit/claude-code"
-  at: 2026-09-29T06:16:45Z
+  at: 2026-10-25T14:50:52Z
 integrity:
   generated:
-    body: 1ba613bb7d2f7989
+    body: c96bcda3b1ad8c15
 ---
 
 # walker
@@ -206,6 +206,30 @@ inverts with direction.
   directory. Depth exhaustion is a typed failure, never a silent
   truncation. `NotFound` mid-walk is never recorded — it is the same
   benign vanished-directory race in every mode.
+
+## Confinement (confineRelative)
+
+`confineRelativeResult(base, candidate)` keeps an untrusted relative
+path, such as an archive entry or a manifest's asset path, under a base
+directory. It is the package's one pure surface: lexical, IO-free and
+service-free, so per the [sync-primitive
+policy](../conventions/sync-primitive-policy.md) the `Result` form is the
+primitive and `confineRelative` is its `Effect` twin, adding only the
+span. Both `/` and `\` are separators on every platform, so a backslash
+escape is caught on POSIX too. It refuses, typed as `PathEscapeError`
+with a `reason`, a NUL character, an absolute form (POSIX, UNC, win32
+drive including drive-relative `C:x`), a `..` that climbs above the base
+after normalisation, a path that normalises to the base itself, and a
+normalised segment win32 reserves (`reservedName`: any `:`, dots and
+spaces only, a device name such as `CON` or `nul.txt`). The drive test
+runs again on the normalised first segment, so `./C:/x` under an empty
+base is absolute rather than `C:/x`. Refusing the base itself is a
+ruling: a caller confining a path names an entry under the base. Nothing is percent-decoded, because the filesystem decodes
+nothing. The `..` resolution is shared with `descend`'s refusal of a
+pattern that climbs above `cwd` (`src/internal/segments.ts`), with the
+caller choosing the separator set because a glob's backslash is an
+escape. The check is lexical, not physical, and symlinks are out of
+scope: a symlink inside the base can still point out of it.
 
 ## Hardening
 

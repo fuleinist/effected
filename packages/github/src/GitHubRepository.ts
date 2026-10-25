@@ -3,6 +3,7 @@ import { GitHubClient } from "./GitHubClient.js";
 import type { GitHubError } from "./GitHubError.js";
 import type { GitHubGraphQLError } from "./GraphQL.js";
 import { GraphQLDocument } from "./GraphQL.js";
+import { REMOVED_BY_PINNED_VERSION, REPOSITORY_REST_SETTING_KEYS } from "./internal/repositoryRestSettingKeys.js";
 import { unstubbed, unstubbedRead } from "./internal/unstubbed.js";
 import { Repo } from "./Repo.js";
 import type * as Rest from "./Rest.js";
@@ -118,17 +119,21 @@ export const SECURITY_ANALYSIS_STATUS_FIELDS: ReadonlySet<string> = new Set([
 ]);
 
 /**
- * Settings reachable **only** through the GraphQL `updateRepository` mutation,
- * mapped from snake_case keys to camelCase GraphQL input fields.
+ * Settings written through the GraphQL `updateRepository` mutation, mapped
+ * from snake_case keys to camelCase GraphQL input fields.
  *
  * @remarks
- * GitHub never exposed these on the REST repository endpoint — the
- * `PATCH /repos/{owner}/{repo}` route accepts none of them, and
- * `has_discussions` is the treacherous one: the REST **read** returns it, so
- * routing its write to the PATCH looks symmetric, but the PATCH silently
- * ignores unknown body fields and answers 200, so the write would look applied
- * while the repository never changed. Setting any of these forces a second
- * round trip to learn the repository's node id.
+ * `applySettings` checks this map **first**, so a key here always goes
+ * through GraphQL, even when the REST patch also declares it.
+ * `has_sponsorships` and `has_discussions` are GraphQL-only: the
+ * `PATCH /repos/{owner}/{repo}` route accepts neither, and `has_discussions`
+ * is the treacherous one — the REST **read** returns it, so routing its write
+ * to the PATCH looks symmetric, but the PATCH silently ignores unknown body
+ * fields and answers 200, so the write would look applied while the
+ * repository never changed. `has_pull_requests` is in the REST patch's body
+ * too; GraphQL is preferred for it so the three toggles travel together.
+ * Setting any of these forces a second round trip to learn the repository's
+ * node id.
  *
  * @public
  */
@@ -268,7 +273,7 @@ const preparePatch = (patch: RepositoryPatch): RepositoryPatch => {
  * agree right up until a field is dropped, which is exactly the case anyone
  * reading a dry run is trying to check.
  *
- * Both lists use the **caller's** key names, not the wire names, because the
+ * Every list uses the **caller's** key names, not the wire names, because the
  * audience for them is a person reading a plan against the config they wrote.
  *
  * @public
@@ -278,11 +283,26 @@ export interface AppliedSettings {
 	readonly rest: ReadonlyArray<string>;
 	/** Keys sent through the GraphQL mutation, named as the caller supplied them. */
 	readonly graphql: ReadonlyArray<string>;
+	/**
+	 * Keys neither API accepts, which were **not sent**.
+	 *
+	 * @remarks
+	 * A key that is not a GraphQL-only setting and not in the REST patch's
+	 * declared body — a typo such as `has_discussion`, or a setting GitHub has
+	 * not described — lands here, as does a key the client's api-version
+	 * removed from the patch (`use_squash_pr_title_as_default` under
+	 * `2026-03-10` and later; a client pinned to an older version still sends
+	 * it). Sending it would be worse than useless: the
+	 * REST `PATCH` ignores unknown fields and answers 200, so the key would be
+	 * reported applied while the repository never changed. A caller that wants
+	 * an unknown key to fail the run checks this list.
+	 */
+	readonly ignored: ReadonlyArray<string>;
 }
 
 /**
- * Read and update a repository's settings, and look up its default branch, node
- * id and owner type.
+ * Read and update a repository's settings and topics, and look up its default
+ * branch, node id and owner type.
  *
  * @public
  */
@@ -330,32 +350,62 @@ export interface GitHubRepositoryShape {
 	 * `updateSettings` is the thin, faithfully-typed PATCH and returns what
 	 * GitHub then reports. This is the **applicator**: it takes an open map,
 	 * routes each key to whichever API can actually set it, and returns an
-	 * {@link AppliedSettings} naming the keys that were sent through each.
+	 * {@link AppliedSettings} naming the keys that were sent through each and
+	 * the keys neither accepts.
 	 *
 	 * Three settings — `has_sponsorships`, `has_pull_requests` and
-	 * `has_discussions` ({@link GRAPHQL_ONLY_SETTINGS}) — are only reachable
-	 * through GraphQL's `updateRepository`, which addresses a repository by **node
-	 * id**. So a map touching any of them costs an extra read; a map touching none
+	 * `has_discussions` ({@link GRAPHQL_ONLY_SETTINGS}) — are written through
+	 * GraphQL's `updateRepository`, which addresses a repository by **node id**;
+	 * the first and last are reachable no other way, and GraphQL is preferred
+	 * for `has_pull_requests`. So a map touching any of them costs an extra read; a map touching none
 	 * does not, which is the common case.
 	 *
 	 * The map is open by design. GitHub's settings surface is large and moving,
-	 * and a closed type here would date the package — but it also means a typo is
-	 * forwarded rather than rejected, so a caller that owns a schema should
-	 * validate before calling.
+	 * and a closed type here would date the package. A key that is neither
+	 * GraphQL-only nor in the REST patch's declared body — the key list is
+	 * generated from GitHub's OpenAPI description — is not sent and is reported
+	 * in `ignored`, rather than forwarded to a `PATCH` that would ignore it and
+	 * answer 200. It does not fail the call, so additive GitHub API growth never
+	 * breaks a run; a caller that owns a schema should still validate first.
 	 */
 	readonly applySettings: (
 		settings: Record<string, unknown>,
 	) => Effect.Effect<AppliedSettings, GitHubError | GitHubGraphQLError, Repo>;
+
+	/**
+	 * The repository's topics, as GitHub stores them.
+	 *
+	 * @remarks
+	 * Reads `GET /repos/{owner}/{repo}/topics`, which answers the whole set in
+	 * one object, so there is nothing to paginate. GitHub stores every topic
+	 * lowercased, so this is the value to compare a desired set against.
+	 */
+	readonly topics: Effect.Effect<ReadonlyArray<string>, GitHubError, Repo>;
+
+	/**
+	 * Replace the repository's whole topic set, and return the set GitHub stored.
+	 *
+	 * @remarks
+	 * `PUT /repos/{owner}/{repo}/topics` replaces rather than merges, so `names`
+	 * is the complete desired set and an empty array clears every topic.
+	 *
+	 * **The return value is not `names`.** GitHub lowercases every topic it
+	 * stores, so a caller that records what it sent — `Effect`, say — sees drift
+	 * on the next read, which answers `effect`. Record the returned array, which
+	 * is GitHub's own answer to the write, as the applied state.
+	 */
+	readonly setTopics: (names: ReadonlyArray<string>) => Effect.Effect<ReadonlyArray<string>, GitHubError, Repo>;
 }
 
 /**
  * Read and update a repository's settings, including settings only GraphQL can
- * write, and look up its default branch, node id and owner type.
+ * write, read and replace its topics, and look up its default branch, node id
+ * and owner type.
  *
  * @remarks
  * Provide it with {@link GitHubRepository.layer}, which needs a `GitHubClient`;
- * every member also needs a `Repo` in `R`. `settings`, `defaultBranch`, `nodeId`
- * and `ownerType` are `Effect` values, not functions.
+ * every member also needs a `Repo` in `R`. `settings`, `defaultBranch`, `nodeId`,
+ * `ownerType` and `topics` are `Effect` values, not functions.
  *
  * @example
  * ```ts
@@ -366,7 +416,7 @@ export interface GitHubRepositoryShape {
  *   const repository = yield* GitHubRepository;
  *   const branch = yield* repository.defaultBranch;
  *   const applied = yield* repository.applySettings({ has_wiki: false, has_discussions: true });
- *   return { branch, applied }; // applied.rest, applied.graphql
+ *   return { branch, applied }; // applied.rest, applied.graphql, applied.ignored
  * });
  * ```
  *
@@ -389,6 +439,8 @@ export class GitHubRepository extends Context.Service<GitHubRepository, GitHubRe
 		nodeId: overrides.nodeId ?? unread("nodeId"),
 		ownerType: overrides.ownerType ?? unread("ownerType"),
 		applySettings: overrides.applySettings ?? (() => dies("applySettings")),
+		topics: overrides.topics ?? unread("topics"),
+		setTopics: overrides.setTopics ?? (() => dies("setTopics")),
 	});
 
 	/** {@link GitHubRepository.makeTest} behind a `Layer`. */
@@ -413,8 +465,24 @@ const make = (client: GitHubClient["Service"]): GitHubRepositoryShape => {
 		return user.type === "Organization" ? "Organization" : "User";
 	})();
 
+	const topics = Effect.fn("GitHubRepository.topics")(function* () {
+		const { owner, repo } = yield* Repo;
+		yield* Effect.annotateCurrentSpan({ owner, repo });
+		const topic = yield* client.request("GET /repos/{owner}/{repo}/topics", { owner, repo });
+		return topic.names;
+	})();
+
 	return {
 		settings,
+		topics,
+		setTopics: Effect.fn("GitHubRepository.setTopics")(function* (names: ReadonlyArray<string>) {
+			const { owner, repo } = yield* Repo;
+			yield* Effect.annotateCurrentSpan({ owner, repo, topics: names.length });
+			// GitHub's answer, not `names`: it lowercases what it stores, and the
+			// caller's applied-state record has to match the next read.
+			const topic = yield* client.request("PUT /repos/{owner}/{repo}/topics", { owner, repo, names: [...names] });
+			return topic.names;
+		}),
 		updateSettings: Effect.fn("GitHubRepository.updateSettings")(function* (patch: RepositoryPatch) {
 			const { owner, repo } = yield* Repo;
 			yield* Effect.annotateCurrentSpan({ owner, repo, fields: Object.keys(patch).length });
@@ -432,6 +500,7 @@ const make = (client: GitHubClient["Service"]): GitHubRepositoryShape => {
 			// The caller's key for each GraphQL field, so the report speaks their
 			// vocabulary rather than the wire's.
 			const graphqlKeys: Array<string> = [];
+			const ignored: Array<string> = [];
 
 			for (const [key, value] of Object.entries(input)) {
 				// `Object.hasOwn`, not a bare index: the map is open by design, so a
@@ -442,6 +511,16 @@ const make = (client: GitHubClient["Service"]): GitHubRepositoryShape => {
 				if (graphqlField !== undefined) {
 					graphql[graphqlField] = value;
 					graphqlKeys.push(key);
+					continue;
+				}
+				// The REST PATCH ignores a field it does not declare and answers 200,
+				// so forwarding an unknown key would report it applied while nothing
+				// changed. The allowlist is generated from the OpenAPI description;
+				// a key a later api-version removed is subtracted only for a client
+				// at or past that version, which compare correctly as strings.
+				const removedIn = Object.hasOwn(REMOVED_BY_PINNED_VERSION, key) ? REMOVED_BY_PINNED_VERSION[key] : undefined;
+				if (!REPOSITORY_REST_SETTING_KEYS.has(key) || (removedIn !== undefined && client.apiVersion >= removedIn)) {
+					ignored.push(key);
 					continue;
 				}
 				rest[key] = value;
@@ -480,6 +559,7 @@ const make = (client: GitHubClient["Service"]): GitHubRepositoryShape => {
 			return {
 				rest: restKeys,
 				graphql: graphqlKeys,
+				ignored,
 			} satisfies AppliedSettings;
 		}),
 	};

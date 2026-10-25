@@ -104,15 +104,21 @@ export interface WorkflowDispatchShape {
 	 * Fire a `workflow_dispatch` event and report the run it created.
 	 *
 	 * @remarks
-	 * Sends the same request as {@link WorkflowDispatchShape.dispatch} with
-	 * `return_run_details: true`. GitHub then answers 200 with the run's id and
-	 * URLs, which arrive as `Option.some` of a {@link DispatchedRun}; a 200 body
-	 * that does not have that shape fails with a `decode` `GitHubError`.
+	 * Sends the same request as {@link WorkflowDispatchShape.dispatch}. Under
+	 * the api-version the client pins by default, GitHub answers every dispatch
+	 * with 200 and the run's id and URLs, which arrive as `Option.some` of a
+	 * {@link DispatchedRun}; a 200 body that does not have that shape fails with
+	 * a `decode` `GitHubError`.
 	 *
-	 * A 204 with no body is `Option.none()`. That is what a GitHub Enterprise
-	 * Server predating the field answers — it ignores `return_run_details` and
-	 * still dispatches — so it is **not a failure**: the workflow was dispatched,
-	 * the server just did not say which run it created.
+	 * A 204 with no body is `Option.none()`. That is what an older api-version
+	 * answers when it does not report the run — a GitHub Enterprise Server that
+	 * predates the field, say — and it is **not a failure**: the workflow was
+	 * dispatched, the server just did not say which run it created.
+	 *
+	 * Older api-versions report the run only when asked, so a client pinned
+	 * before `2026-03-10` (`GitHubClientShape.apiVersion`) sends
+	 * `return_run_details: true`; from `2026-03-10` on the flag is removed from
+	 * the request and is not sent.
 	 *
 	 * Under `GitHubClient.layerFixture`, stub the 204 the way every other
 	 * no-body route is stubbed: answer the dispatch route with `null`. `""`
@@ -166,8 +172,8 @@ export interface WorkflowDispatchShape {
 	 *
 	 * The run is identified by {@link WorkflowDispatchShape.dispatchWithRun}:
 	 * when GitHub reports the run it created, exactly that run is polled, so
-	 * concurrent dispatches cannot be confused. When it does not (a 204 from a
-	 * GitHub Enterprise Server predating `return_run_details`), the run is found
+	 * concurrent dispatches cannot be confused. When it does not (a 204 from an
+	 * older api-version), the run is found
 	 * instead by branch, creation time and workflow path — and on that fallback
 	 * alone, concurrent dispatches of the same workflow on the same ref can be
 	 * confused.
@@ -257,6 +263,9 @@ const DispatchResponse = Schema.Struct({
 const decodeDispatchResponse = Schema.decodeUnknownEffect(DispatchResponse);
 const decodeDispatchedRun = Schema.decodeUnknownEffect(DispatchedRun);
 
+/** The api-version that reports the run unasked and removed `return_run_details`. */
+const RUN_DETAILS_BY_DEFAULT = "2026-03-10";
+
 const make = (client: GitHubClient["Service"]): WorkflowDispatchShape => {
 	const dispatch = Effect.fn("WorkflowDispatch.dispatch")(function* (
 		workflow: string,
@@ -289,7 +298,8 @@ const make = (client: GitHubClient["Service"]): WorkflowDispatchShape => {
 				workflow_id: workflow,
 				ref,
 				...(inputs !== undefined ? { inputs } : {}),
-				return_run_details: true,
+				// Calendar versions compare correctly as strings.
+				...(client.apiVersion < RUN_DETAILS_BY_DEFAULT ? { return_run_details: true } : {}),
 			},
 		);
 		// The client hands back only `data`. octokit answers a 204 (or 205) by

@@ -87,6 +87,47 @@ Both services expose the same three statics, and the split is the seam:
 | `layerSqlite(options & { filename })` | The service plus the SQLite driver | none |
 | `layerTest(options)` | `layerSqlite` at `:memory:`; hermetic, what the suites use | none |
 
+### A real service over an in-memory store
+
+When your own service is built on `Store`, test the **real implementation** over `Store.layerTest`'s in-memory SQLite rather than a hand-written double. The convention: one implementation effect written against `Store`, a `layer(filename)` for production and a `layerMemory()` **factory** for tests, both built from it. Every build of `Store.layerTest` opens a fresh, empty `:memory:` database with your migrations applied, so a test never sees another's rows. `layerMemory()` is a function rather than a const so that two consumers composed into one layer graph get two databases instead of sharing one through memoization-by-reference.
+
+```ts
+import { Store, type StoreMigration } from "@effected/store";
+import { Context, Effect, Layer } from "effect";
+
+const migrations: ReadonlyArray<StoreMigration> = [
+  {
+    id: 1,
+    name: "create-snapshots",
+    up: (sql) => sql`CREATE TABLE snapshots (name TEXT PRIMARY KEY, body TEXT NOT NULL)`,
+    down: (sql) => sql`DROP TABLE snapshots`,
+  },
+];
+
+class Snapshots extends Context.Service<Snapshots, {
+  readonly save: (name: string, body: string) => Effect.Effect<void>;
+}>()("app/Snapshots") {
+  // The one implementation, blind to where the database lives.
+  static readonly make = Effect.gen(function* () {
+    const sql = (yield* Store).client;
+    return {
+      save: (name: string, body: string) =>
+        sql`INSERT OR REPLACE INTO snapshots (name, body) VALUES (${name}, ${body})`.pipe(Effect.asVoid, Effect.orDie),
+    };
+  });
+
+  static layer(filename: string) {
+    return Layer.effect(Snapshots, Snapshots.make).pipe(Layer.provide(Store.layerSqlite({ filename, migrations })));
+  }
+
+  static layerMemory() {
+    return Layer.effect(Snapshots, Snapshots.make).pipe(Layer.provide(Store.layerTest({ migrations })));
+  }
+}
+```
+
+Pair `layerMemory()` with [`@effected/memfs`](../memfs) for anything the service also reads or writes on disk, and the whole pipeline runs hermetically. There is no extra helper to learn: `Store.layerTest` already is the in-memory factory. Production code still binds `Snapshots.layer(path)` to a const once, as with every layer static.
+
 The SQL core lives in `effect` itself, under `effect/sql` — there is no `@effect/sql` package on the v4 line, so `SqlClient` is imported from `effect/sql/SqlClient`.
 
 ### Driver options
@@ -322,12 +363,30 @@ Encoding **fails** on malformed UTF-8 rather than substituting replacement chara
 
 Every operation publishes to `cache.events`, an unbounded `PubSub<CacheEvent>` — `Hit`, `Miss`, `Set`, `Expired`, `Evicted`, `Invalidated`, `InvalidatedByTag`, `InvalidatedAll` and `Pruned`. It is unbounded on purpose: a slow subscriber must never backpressure a cache write.
 
+## Replacing a directory atomically
+
+`AtomicDirectory.write(root, files)` replaces the directory at `root` with exactly `files` (any iterable of relative path and content pairs: a `Map`, tuples, `Object.entries(record)`), so a reader sees the old tree or the new one and never a partial write. It needs `FileSystem` and `Path` from your platform layer:
+
+```ts
+import { AtomicDirectory } from "@effected/store";
+
+yield* AtomicDirectory.write("/var/cache/app/left-pad", new Map([["package.json", "{}"], ["lib/index.d.ts", "export {};"]]));
+```
+
+It stages in the sibling `.<name>.staging` (same parent, so every `rename` stays on one filesystem and is atomic), clears leftover `.<name>.staging` and `.<name>.old` siblings from a crashed run first, creates staging even for an empty set, and writes every file with its parent directories. It then renames the live directory to `.<name>.old`, renames staging into place, and removes `.<name>.old`, so the old tree is only deleted once no reader can reach it. Both siblings belong to the writer and are removed with force. Two things to design around:
+
+- **A brief absence window.** Between the two renames, `root` does not exist. A reader in that window sees a missing directory, never a partial one, so treat absence as a miss. A crash inside the window leaves `root` absent with the old tree whole in `.<name>.old` and the new one whole in staging; the next call recovers.
+- **One writer per root.** The sibling names are fixed, which is what lets a later call clean up a crashed one. Serialize writes to the same `root`.
+
+`root` is normalised first, and one whose basename is `.` or `..` is refused, as is a file path that is empty, absolute or climbs out of the directory, all before anything is touched. Failures are `AtomicDirectoryError` with an `operation` of `validate`, `clear`, `stage`, `write`, `promote` or `cleanup`.
+
 ## Errors
 
 | Tag | Means | Recovery |
 | --- | --- | --- |
 | `StoreError` | Its `message` reads `Store <operation> failed: <reason>`, folding in the cause's message — for a SQL failure, the database's own text (`UNIQUE constraint failed: t.id`), never a bound value. A store operation's own SQL failed — ledger bookkeeping, or the queries around a migration — or (`operation: "adopt"`) an adopted Migrator ledger disagrees with your migration list. Carries `operation` and the structural `cause`. | Usually fatal; report the operation and the cause. An `adopt` failure's cause names the mismatched migration. |
 | `StoreMigrationError` | A user-supplied migration failed with a typed `SqlError`. Carries `direction`, `id`, `name` and the structural `cause`. | Report which migration and which direction; the ledger is left consistent. |
+| `AtomicDirectoryError` | `AtomicDirectory.write` could not lay down or promote a directory. Carries `operation`, the `path` it was working on and the structural `cause`. | A `write` failure leaves the live tree untouched; a `promote` failure can leave it absent, and the next call recovers; a `cleanup` failure means the new tree is live and only the old one is left over. |
 | `CacheError` | A cache operation's SQL failed. Carries `operation`, an optional `key` and the structural `cause`. | A cache is a cache — falling back to the origin is usually right. |
 
 Defects are not errors here. A throwing migration callback, a throwing `onRemoved`, a `maxEntries` that is not a positive integer: all of those are programmer mistakes and stay on the defect channel where they belong.
@@ -345,6 +404,7 @@ Defects are not errors here. A throwing migration callback, a throwing `onRemove
 - `Store.sqlClient` — a keyed store's client as the bare `SqlClient`.
 - `StoreError`, `StoreMigrationError`, `CacheError` — tagged errors carrying the underlying `SqlError` structurally, never a `reason` string.
 - `CacheEntry`, `CacheEntryMeta`, `CacheRemovalResult`, `StoreMigrationStatus` — the returned records; `entries` lists metadata without loading BLOBs.
+- `AtomicDirectory.write` — replace a whole directory by staging a sibling and renaming it into place.
 - Named spans on every public fallible method (`Store.migrate`, `Cache.get`, …), nesting over the driver's own statement spans.
 
 ## License

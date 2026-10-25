@@ -8,6 +8,7 @@ import { GitHubClient, GitHubFixtures } from "../src/GitHubClient.js";
 import { GitHubError } from "../src/GitHubError.js";
 import { GitHubIssue } from "../src/GitHubIssue.js";
 import { GitHubRelease, ReleaseInfo } from "../src/GitHubRelease.js";
+import type { GraphQLDocument } from "../src/GraphQL.js";
 import { PullRequest, PullRequestInfo } from "../src/PullRequest.js";
 import { CommentMarker, PullRequestComment } from "../src/PullRequestComment.js";
 import { Repo } from "../src/Repo.js";
@@ -22,9 +23,10 @@ const drive = <I, S, A, E>(
 	service: { readonly layer: Layer.Layer<I, never, GitHubClient> },
 	tag: Effect.Effect<S, never, I>,
 	use: (resource: S) => Effect.Effect<A, E, Repo>,
+	options: { readonly apiVersion?: string } = {},
 ) =>
 	Effect.gen(function* () {
-		const { script, base } = harness(replies);
+		const { script, base } = harness(replies, options);
 		const value = yield* Effect.provide(Effect.flatMap(tag, use), service.layer.pipe(Layer.provideMerge(base)));
 		return { value, script };
 	});
@@ -507,6 +509,223 @@ describe("PullRequest", () => {
 				(pulls) => pulls.get(5),
 			);
 			assert.isUndefined(value.body);
+		}),
+	);
+
+	// `nodes(ids:)` answers positionally; the ids name the request order only.
+	const nodes = (entries: ReadonlyArray<readonly [string, string | null]>) => ({
+		status: 200,
+		body: { data: { nodes: entries.map(([, oid]) => ({ mergeCommit: oid === null ? null : { oid } })) } },
+	});
+
+	it.effect("a merged pull request's mergeCommitSha comes from GraphQL mergeCommit.oid", () =>
+		Effect.gen(function* () {
+			// api-version 2026-03-10 removed merge_commit_sha from the REST object.
+			// The field is an optionalKey, so without the GraphQL read it would
+			// decode clean as always-absent (effected#364).
+			const { value, script } = yield* drive(
+				[
+					{ status: 200, body: pull(7, { state: "closed", merged: true, merged_at: "2026-01-01T00:00:00Z" }) },
+					nodes([["PR_7", "merge-sha-7"]]),
+				],
+				PullRequest,
+				PullRequest,
+				(pulls) => pulls.get(7),
+			);
+			assert.strictEqual(value.mergeCommitSha, "merge-sha-7");
+			assert.strictEqual(script.count(), 2);
+			assert.strictEqual(script.calls[1]?.path, "/graphql");
+			const sent = JSON.parse(script.calls[1]?.body ?? "{}");
+			assert.include(sent.query, "mergeCommit");
+			assert.deepStrictEqual(sent.variables, { ids: ["PR_7"] });
+		}),
+	);
+
+	it.effect("an unmerged pull request has no mergeCommitSha and costs no GraphQL read", () =>
+		Effect.gen(function* () {
+			// An older api-version reports a speculative test-merge sha on an open
+			// pull request; it is not a merge and must not be projected as one.
+			const { value, script } = yield* drive(
+				[{ status: 200, body: pull(3, { merge_commit_sha: "test-merge-sha" }) }],
+				PullRequest,
+				PullRequest,
+				(pulls) => pulls.get(3),
+			);
+			assert.isUndefined(value.mergeCommitSha);
+			assert.strictEqual(script.count(), 1);
+		}),
+	);
+
+	it.effect("a REST merge_commit_sha on a merged pull request is used without a GraphQL read", () =>
+		Effect.gen(function* () {
+			// What a client pinned to an older api-version still receives.
+			const { value, script } = yield* drive(
+				[{ status: 200, body: pull(8, { merged: true, merged_at: "2026-01-01T00:00:00Z", merge_commit_sha: "rest" }) }],
+				PullRequest,
+				PullRequest,
+				(pulls) => pulls.get(8),
+			);
+			assert.strictEqual(value.mergeCommitSha, "rest");
+			assert.strictEqual(script.count(), 1);
+		}),
+	);
+
+	it.effect("a list without mergeCommits makes no GraphQL call and leaves mergeCommitSha absent", () =>
+		Effect.gen(function* () {
+			const merged = (n: number) => {
+				const { merged: _drop, ...rest } = pull(n, { state: "closed", merged_at: "2026-01-01T00:00:00Z" });
+				return rest;
+			};
+			const { value, script } = yield* drive(
+				[{ status: 200, body: [merged(1), pull(2), merged(3)] }],
+				PullRequest,
+				PullRequest,
+				(pulls) => pulls.list({ state: "all" }),
+			);
+			assert.deepStrictEqual(
+				value.map((p) => [p.number, p.merged, p.mergeCommitSha]),
+				[
+					[1, true, undefined],
+					[2, false, undefined],
+					[3, true, undefined],
+				],
+			);
+			assert.strictEqual(script.count(), 1);
+
+			const associated = yield* drive([{ status: 200, body: [merged(4)] }], PullRequest, PullRequest, (pulls) =>
+				pulls.listAssociatedWithCommit("abc123"),
+			);
+			assert.isUndefined(associated.value[0]?.mergeCommitSha);
+			assert.strictEqual(associated.script.count(), 1);
+		}),
+	);
+
+	it.effect("listAssociatedWithCommit resolves merge commits when asked", () =>
+		Effect.gen(function* () {
+			const { value, script } = yield* drive(
+				[
+					{ status: 200, body: [pull(12, { merged: true, merged_at: "2026-01-01T00:00:00Z", state: "closed" })] },
+					nodes([["PR_12", "sha-12"]]),
+				],
+				PullRequest,
+				PullRequest,
+				(pulls) => pulls.listAssociatedWithCommit("abc123", { mergeCommits: true }),
+			);
+			assert.strictEqual(value[0]?.mergeCommitSha, "sha-12");
+			assert.strictEqual(script.count(), 2);
+		}),
+	);
+
+	it.effect("250 merged pull requests resolve in 3 GraphQL calls, every oid joined to its own pull", () =>
+		Effect.gen(function* () {
+			const raws = Array.from({ length: 250 }, (_, i) =>
+				pull(i + 1, { state: "closed", merged: true, merged_at: "2026-01-01T00:00:00Z" }),
+			);
+			const batches: Array<ReadonlyArray<string>> = [];
+			let inFlight = 0;
+			let peak = 0;
+			// The fixture client pages the 250 for real; its graphql member is
+			// replaced by one that answers each batch from its own ids, in order.
+			const client = Layer.effect(
+				GitHubClient,
+				Effect.map(GitHubClient, (fixture) => ({
+					...fixture,
+					graphql: <A, V extends Record<string, unknown>>(document: GraphQLDocument<A, V>, variables: V) => {
+						const ids: ReadonlyArray<string> = Array.isArray(variables.ids) ? variables.ids.map(String) : [];
+						batches.push(ids);
+						// Yield while "in flight" so a concurrent caller's other batches
+						// start before this one answers; a sequential one never overlaps.
+						return Effect.gen(function* () {
+							inFlight += 1;
+							peak = Math.max(peak, inFlight);
+							yield* Effect.yieldNow;
+							inFlight -= 1;
+							return yield* Effect.orDie(
+								document.decode({ nodes: ids.map((id) => ({ mergeCommit: { oid: `oid-${id}` } })) }),
+							);
+						});
+					},
+				})),
+			).pipe(Layer.provide(GitHubClient.layerFixture({ paginate: { "GET /repos/{owner}/{repo}/pulls": raws } })));
+			const value = yield* Effect.provide(
+				Effect.flatMap(PullRequest, (pulls) => pulls.list({ state: "closed", mergeCommits: true })),
+				Layer.mergeAll(PullRequest.layer.pipe(Layer.provide(client)), Repo.layer(REPO)),
+			);
+			assert.deepStrictEqual(
+				batches.map((batch) => batch.length),
+				[100, 100, 50],
+			);
+			assert.strictEqual(peak, 3, "the three batches run concurrently");
+			assert.lengthOf(value, 250);
+			for (const p of value) assert.strictEqual(p.mergeCommitSha, `oid-PR_${p.number}`);
+		}),
+	);
+
+	it.effect("an answer of the wrong length fails rather than mis-joining", () =>
+		Effect.gen(function* () {
+			const error = yield* Effect.flip(
+				drive(
+					[
+						{ status: 200, body: pull(7, { merged: true, merged_at: "2026-01-01T00:00:00Z" }) },
+						{ status: 200, body: { data: { nodes: [] } } },
+					],
+					PullRequest,
+					PullRequest,
+					(pulls) => pulls.get(7),
+				),
+			);
+			if (error._tag !== "GitHubGraphQLError") return assert.fail(`expected GitHubGraphQLError, got ${error._tag}`);
+			assert.strictEqual(error.kind, "decode");
+		}),
+	);
+
+	it.effect("a list resolves every merged pull request in one batched GraphQL read", () =>
+		Effect.gen(function* () {
+			// The list endpoints answer pull-request-simple, which carries
+			// merged_at but no `merged`, so merged_at is what decides.
+			const merged = (n: number) => {
+				const { merged: _drop, ...rest } = pull(n, { state: "closed", merged_at: "2026-01-01T00:00:00Z" });
+				return rest;
+			};
+			const { value, script } = yield* drive(
+				[
+					{ status: 200, body: [merged(1), pull(2), merged(3)] },
+					nodes([
+						["PR_1", "sha-1"],
+						["PR_3", "sha-3"],
+					]),
+				],
+				PullRequest,
+				PullRequest,
+				(pulls) => pulls.list({ state: "all", mergeCommits: true }),
+			);
+			assert.deepStrictEqual(
+				value.map((p) => [p.number, p.mergeCommitSha]),
+				[
+					[1, "sha-1"],
+					[2, undefined],
+					[3, "sha-3"],
+				],
+			);
+			assert.strictEqual(script.count(), 2);
+			assert.deepStrictEqual(JSON.parse(script.calls[1]?.body ?? "{}").variables, { ids: ["PR_1", "PR_3"] });
+		}),
+	);
+
+	it.effect("a GraphQL failure fails the read rather than dropping the field", () =>
+		Effect.gen(function* () {
+			const error = yield* Effect.flip(
+				drive(
+					[
+						{ status: 200, body: pull(7, { merged: true, merged_at: "2026-01-01T00:00:00Z" }) },
+						{ status: 200, body: { data: null, errors: [{ message: "boom", type: "INTERNAL" }] } },
+					],
+					PullRequest,
+					PullRequest,
+					(pulls) => pulls.get(7),
+				),
+			);
+			assert.strictEqual(error._tag, "GitHubGraphQLError");
 		}),
 	);
 
@@ -1574,7 +1793,7 @@ describe("WorkflowDispatch.dispatchWithRun", () => {
 		html_url: "https://github.com/acme/widget/actions/runs/9001",
 	};
 
-	it.effect("a 200 is Some run, and the request carries return_run_details with ref and inputs", () =>
+	it.effect("a 200 is Some run, and the request carries ref and inputs but no return_run_details", () =>
 		Effect.gen(function* () {
 			const { value, requested } = yield* viaFixtures(
 				{ request: { [ROUTE]: DETAILS } },
@@ -1593,11 +1812,13 @@ describe("WorkflowDispatch.dispatchWithRun", () => {
 			assert.strictEqual(requested[0]?.params.workflow_id, "release.yml");
 			assert.strictEqual(requested[0]?.params.ref, "main");
 			assert.deepStrictEqual(requested[0]?.params.inputs, { dryRun: "false" });
-			assert.strictEqual(requested[0]?.params.return_run_details, true);
+			// 2026-03-10 removed the request flag: the 200 with run details is
+			// unconditional there.
+			assert.notProperty(requested[0]?.params ?? {}, "return_run_details");
 		}),
 	);
 
-	it.effect("puts return_run_details on the wire through the real client", () =>
+	it.effect("sends the dispatch body through the real client, under the pinned api-version", () =>
 		Effect.gen(function* () {
 			const { value, script } = yield* drive(
 				[{ status: 200, body: DETAILS }],
@@ -1611,14 +1832,45 @@ describe("WorkflowDispatch.dispatchWithRun", () => {
 			assert.deepStrictEqual(JSON.parse(script.calls[0]?.body ?? "null"), {
 				ref: "main",
 				inputs: { dryRun: "false" },
-				return_run_details: true,
 			});
+			assert.strictEqual(script.calls[0]?.headers["x-github-api-version"], "2026-03-10");
+		}),
+	);
+
+	it.effect("a client pinned before 2026-03-10 sends return_run_details", () =>
+		Effect.gen(function* () {
+			const { value, script } = yield* drive(
+				[{ status: 200, body: DETAILS }],
+				WorkflowDispatch,
+				WorkflowDispatch,
+				(w) => w.dispatchWithRun("release.yml", "main"),
+				{ apiVersion: "2022-11-28" },
+			);
+			assert.isTrue(Option.isSome(value));
+			assert.deepStrictEqual(JSON.parse(script.calls[0]?.body ?? "null"), { ref: "main", return_run_details: true });
+			assert.strictEqual(script.calls[0]?.headers["x-github-api-version"], "2022-11-28");
+
+			// The boundary itself: the removing version does not send it.
+			const { requested } = yield* viaFixtures(
+				{ request: { [ROUTE]: DETAILS }, apiVersion: "2026-03-10" },
+				WorkflowDispatch,
+				WorkflowDispatch,
+				(w) => w.dispatchWithRun("release.yml", "main"),
+			);
+			assert.notProperty(requested[0]?.params ?? {}, "return_run_details");
+			const older = yield* viaFixtures(
+				{ request: { [ROUTE]: DETAILS }, apiVersion: "2026-03-09" },
+				WorkflowDispatch,
+				WorkflowDispatch,
+				(w) => w.dispatchWithRun("release.yml", "main"),
+			);
+			assert.strictEqual(older.requested[0]?.params.return_run_details, true);
 		}),
 	);
 
 	it.effect("a 204 with no body is None, not a failure", () =>
 		Effect.gen(function* () {
-			// What a GitHub Enterprise Server predating the field answers: driven
+			// What an older api-version answers: driven
 			// through the real client so octokit's own 204 handling is what is read.
 			const { value, script } = yield* drive([{ status: 204 }], WorkflowDispatch, WorkflowDispatch, (w) =>
 				w.dispatchWithRun("release.yml", "main"),

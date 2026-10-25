@@ -168,8 +168,18 @@
 		"ActionCacheError": "handle a cache save or restore failure, actions cache misconfigured or unreachable",
 		"ActionEnvironment": "read `GITHUB_*` and `RUNNER_*` variables, process.env access for an action, step debug mode",
 		"ActionEnvironmentError": "handle a missing or malformed runner environment variable",
-		"ActionInput": "read with: inputs, INPUT_ variables, config provider for action inputs, dry-run boolean input",
+		"ActionInput": "read with: inputs, INPUT_ variables, config provider for action inputs, dry-run boolean input, record which inputs a program reads",
 		"ActionLogger": "workflow-command logger, collapsible log groups, phase heading that opens no group, buffered step transcript, notice annotation",
+		"ActionManifest": "decode or read action.yml, runner-shaped INPUT_ test environment from manifest defaults, diff code reads/writes against declared inputs/outputs",
+		"ActionManifestBranding": "action.yml marketplace branding, icon and color",
+		"ActionManifestCompositeRuns": "action.yml runs block for a composite action, using composite with steps",
+		"ActionManifestDecodeError": "handle an action.yml that is not yaml or not a valid action manifest",
+		"ActionManifestDiff": "where action code and action.yml disagree, unread or undeclared inputs and outputs, inSync",
+		"ActionManifestDockerRuns": "action.yml runs block for a docker container action, image args env entrypoints",
+		"ActionManifestInput": "one declared action.yml input, default description required deprecationMessage",
+		"ActionManifestNodeRuns": "action.yml runs block for a javascript action, node24 main pre post pre-if post-if",
+		"ActionManifestOutput": "one declared action.yml output, description and composite value expression",
+		"ActionManifestReadError": "handle an action.yml that cannot be read from the filesystem",
 		"ActionOutputs": "set step output, export env var, add to PATH, mask a secret",
 		"ActionRuntime": "the composed default action runtime layer, wire ActionEnvironment/Logger/Outputs/State",
 		"ActionState": "persist and read state across pre/main/post phase boundary, GITHUB_STATE file",
@@ -520,7 +530,7 @@
 		"MarkdownParseOptions": "options controlling markdown parse, dialect and frontmatter capture toggle",
 		"MarkdownRange": "offset and length span for restricting formatting to a region",
 		"MarkdownStringifyError": "handle a refused tree during stringify, typed stringify failure with diagnostic",
-		"MarkdownTransform": "map or rewrite a markdown tree with typed node handlers, replace links with link references, shift or demote heading levels, find sections by child index after a transform",
+		"MarkdownTransform": "map or rewrite a markdown tree with typed node handlers, replace links with link references, canonicalize a tree by clearing fidelity fields, shift or demote heading levels, find sections by child index after a transform",
 		"MarkdownVisitor": "walk or traverse markdown tree synchronously or as stream, sax-style enter and exit events",
 		"MarkdownVisitorEvent": "enter exit and error visitor event union, tree-walk event shape",
 		"Mdast": "project to and from plain mdast, remark ecosystem interop, strip fidelity extras, plain text of a node like mdast-util-to-string",
@@ -566,7 +576,8 @@
 	"memfs": {
 		"MemoryFileSystem": "in-memory FileSystem test double, seed files, inject faults, inspect writes, sync and promises ports, case-insensitive volume",
 		"MemoryFileSystemErrnoError": "node-shaped thrown error, fail a port fault like node:fs",
-		"MemoryFileSystemHandle": "one volume every view, assert after the run, sync setup mutators, fault the ports",
+		"MemoryFileSystemHandle": "one volume every view, assert after the run, sync setup mutators, fault the ports, emit watch events, count watchers",
+		"MemoryFileSystemFileFaults": "fault an opened file handle, fail writes on one file, decorate the File open returns",
 		"MemoryFileSystemOptions": "seed root, case-insensitive volume, inject faults at build",
 		"MemoryFileSystemPortStats": "stat result for an injected port, file directory symlink checks",
 		"MemoryFileSystemPromisesFaults": "fault an injected fs/promises port, reject one path",
@@ -574,7 +585,8 @@
 		"MemoryFileSystemSyncFaults": "fault an injected sync filesystem port, throw errno for one path",
 		"MemoryFileSystemVolumeStat": "literal lstat of a volume entry, kind size mtime",
 		"MemoryFileSystemDirent": "readdir withFileTypes entry from the promises port",
-		"MemoryFileSystemPortOptions": "configure faults on a sync or promises port",
+		"MemoryFileSystemPortOptions": "configure faults on a sync or promises port, win32 drive-letter path spelling",
+		"MemoryFileSystemSpies": "spy on filesystem calls, count reads or writes, observe without replacing, record call arguments",
 		"NodeSyncFileSystem": "read real disk under Effect.runSync, synchronous read-only node filesystem"
 	},
 	"mcp": {
@@ -865,6 +877,8 @@
 		"isValidExpression": "check if a string is a valid spdx license expression"
 	},
 	"store": {
+		"AtomicDirectory": "replace a directory atomically, stage in a sibling then rename into place, write a file set without a half-written tree",
+		"AtomicDirectoryError": "handle an atomic directory write failure, validate clear stage write or promote step failed",
 		"Cache": "cache with ttl and tags, durable local state, tag invalidation and write-order eviction, second cache under your own key",
 		"CacheEntry": "a stored cache row, key value bytes, content type, tags and expiry",
 		"CacheError": "handle a cache sql operation failure, get set has invalidate prune failed",
@@ -963,8 +977,12 @@
 	"walker": {
 		"DescendError": "handle unreadable directory during glob descent, depth cap exceeded, typed filesystem walk failure",
 		"GlobExpansionError": "handle pattern-to-files expansion failure, compile or descend stage error, wraps GlobPatternError or DescendError",
+		"PathEscapeError": "handle untrusted path escaping a base directory, zip slip, absolute or dot-dot archive entry refused",
+		"PathEscapeReason": "why a confined path was refused, nul byte absolute traversal empty or win32 reserved name",
 		"Walker": "walk up parent directories, find nearest config file, ascend to filesystem root",
 		"compileAndExpand": "compile a glob string, expand against the filesystem, pattern to matching files",
+		"confineRelative": "confine an untrusted relative path to a base directory as an Effect, reject dot-dot escapes",
+		"confineRelativeResult": "confine an archive entry or manifest path under a base dir synchronously, zip slip guard, Result",
 		"descend": "expand a compiled glob pattern into files under a directory, prune node_modules"
 	},
 	"workspaces": {
@@ -1118,6 +1136,12 @@
 		"ConstantTime": "constant-time compare bytes or strings, timing-safe secret or mac equality",
 		"CryptoError": "handle hmac failure, missing webcrypto subtle, rejected key material",
 		"CryptoErrorReason": "why an hmac operation failed, unsupported runtime or bad key",
+		"DriftApply": "drift decision to apply desired config, no baseline or desired changed",
+		"DriftDecision": "three-way drift outcome apply unchanged or drift, reconcile declared config against a remote",
+		"DriftDetected": "drift decision, live resource changed out of band, carries applied and live fingerprints",
+		"DriftUnchanged": "drift decision to leave a resource alone, live matches applied and desired",
+		"Fingerprint": "stable sha256 fingerprint of a json value, sorted keys, three-way drift detection applied live desired",
+		"FingerprintError": "handle a value with no canonical json form, bigint cycle map or class instance refused",
 		"Hmac": "compute or verify hmac-sha256 or sha512, hex base64 base64url output, webcrypto",
 		"SigV4": "sign an aws or s3-compatible request, sigv4 authorization header, signing key",
 		"SigV4PathError": "handle an s3 key or sigv4 path with a dot segment that a url would collapse"

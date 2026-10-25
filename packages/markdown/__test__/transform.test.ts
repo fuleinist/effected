@@ -634,3 +634,75 @@ describe("MarkdownTransform.sections", () => {
 		assert.deepStrictEqual(MarkdownTransform.sections(root, { depth: 2, start: length, end: length }), []);
 	});
 });
+
+describe("canonical output", () => {
+	const source = "* a\n\nTitle\n=====\n\n_em_\n\n~~~\ncode\n~~~\n\n***\n";
+	const canonicalMarkdown = "- a\n\n# Title\n\n*em*\n\n    code\n\n***\n";
+	const parse = (text: string) => Result.getOrThrow(Markdown.parseResult(text));
+
+	it("default stringify preserves the author's spelling", () => {
+		assert.strictEqual(Result.getOrThrow(Markdown.stringifyResult(parse(source))), source);
+	});
+
+	it("canonical option re-emits canonically", () => {
+		const out = Result.getOrThrow(Markdown.stringifyResult(parse(source), { canonical: true }));
+		assert.strictEqual(out, canonicalMarkdown);
+	});
+
+	it("canonicalize clears fidelity so a plain stringify is canonical", () => {
+		const out = Result.getOrThrow(Markdown.stringifyResult(MarkdownTransform.canonicalize(parse(source))));
+		assert.strictEqual(out, canonicalMarkdown);
+	});
+
+	it("canonicalize never mutates its input", () => {
+		const tree = parse(source);
+		const before = JSON.stringify(tree);
+		const result = MarkdownTransform.canonicalize(tree);
+		assert.notStrictEqual(result, tree);
+		assert.strictEqual(JSON.stringify(tree), before);
+		assert.strictEqual(Result.getOrThrow(Markdown.stringifyResult(tree)), source);
+	});
+
+	it("canonicalize shares an already canonical tree", () => {
+		const once = MarkdownTransform.canonicalize(parse(source));
+		assert.strictEqual(MarkdownTransform.canonicalize(once), once);
+	});
+
+	it("stringify with canonical equals stringify of canonicalize", () => {
+		const tree = parse(source);
+		assert.strictEqual(
+			Result.getOrThrow(Markdown.stringifyResult(tree, { canonical: true })),
+			Result.getOrThrow(Markdown.stringifyResult(MarkdownTransform.canonicalize(tree))),
+		);
+	});
+
+	it("canonical stringify fails typed past the depth cap instead of overflowing the stack", () => {
+		const nested = (levels: number): Root => {
+			let node: FlowContent = Paragraph.make({ children: [Text.make({ value: "x" })] });
+			const ctor = Blockquote as unknown as new (
+				input: unknown,
+				options: { readonly disableChecks: true },
+			) => Blockquote;
+			for (let i = 0; i < levels; i += 1) {
+				node = new ctor({ ...Blockquote.make({ children: [] }), children: [node] }, { disableChecks: true });
+			}
+			return Root.make({ children: [node] });
+		};
+		for (const levels of [300, 5000, 30000]) {
+			const tree = nested(levels);
+			for (const options of [undefined, { canonical: true }] as const) {
+				const result = Markdown.stringifyResult(tree, options);
+				assert.isTrue(Result.isFailure(result), `${levels} levels, ${JSON.stringify(options)}`);
+				if (Result.isFailure(result)) {
+					assert.strictEqual(result.failure.diagnostic.code, "NestingDepthExceeded");
+				}
+			}
+		}
+	});
+
+	it("covers a hard break and a lone flow node", () => {
+		const tree = parse("a  \nb\n");
+		assert.strictEqual(Result.getOrThrow(Markdown.stringifyResult(tree)), "a  \nb\n");
+		assert.strictEqual(Result.getOrThrow(Markdown.stringifyResult(tree, { canonical: true })), "a\\\nb\n");
+	});
+});

@@ -149,10 +149,13 @@ export interface PackedInstallOptions extends PackedInstallClosureOptions {
 	 * A supported, permanent choice for a carrier whose front ends are also
 	 * installed and run on their own, and a stopgap for one migrating to
 	 * carrier-only bins. Its cost is provenance: under npm, bun and Yarn's
-	 * `node-modules` linker, either package can take the `.bin` slot (npm and
-	 * bun were observed to link the package whose name sorts first, which for
-	 * a `cli` front end and a `plugin` carrier is the front end; Yarn 1 and 4
-	 * were observed to keep the carrier's, the consumer's direct dependency),
+	 * `node-modules` linker, either package can take the `.bin` slot (npm was
+	 * observed to link the package whose name sorts first, which for a `cli`
+	 * front end and a `plugin` carrier is the front end; Yarn 1 and 4 were
+	 * observed to keep the carrier's, the consumer's direct dependency; recent bun
+	 * gives the slot to a direct dependency of the consumer, while older
+	 * releases took the alphabetically first package, so a carrier that is the
+	 * consumer's one direct dependency keeps it only on recent bun),
 	 * and the bin that runs then carries no distribution identity: no
 	 * `--version` suffix.
 	 * When every shared bin calls the same `main()`, nothing else changes.
