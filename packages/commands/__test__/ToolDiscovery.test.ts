@@ -1,5 +1,5 @@
 import { assert, describe, it } from "@effect/vitest";
-import { Effect, Layer, Option } from "effect";
+import { Effect, Layer, Option, Result } from "effect";
 import { ChildProcess } from "effect/process";
 import { ExecContext, LocalExec } from "../src/LocalExec.js";
 import type { ScriptResult } from "../src/ScriptedSpawner.js";
@@ -299,6 +299,200 @@ describe("ToolDiscovery.resolve — version extraction", () => {
 		Effect.gen(function* () {
 			const resolved = yield* run(resolve(Tool.named("weird")), () => ({ stderr: "usage", exit: 1 })).effect;
 			assert.instanceOf(resolved, ResolvedTool);
+		}),
+	);
+});
+
+describe("ToolDiscovery.resolve — a launcher that runs but finds no tool", () => {
+	// `pnpm exec missing --version` STARTS (pnpm exists) and exits 1 with
+	// "Command not found". A run alone proves only the launcher, so the local
+	// copy must not count as found — otherwise every tool reads as local
+	// wherever pnpm is installed, and the default local preference picks a
+	// copy that is not there.
+	const launcherMiss =
+		(global: string | undefined) =>
+		(command: string): ScriptResult =>
+			command === "pnpm"
+				? { stderr: 'Command "biome" not found', exit: 1 }
+				: global === undefined
+					? ScriptedSpawner.notFound(command)
+					: { stdout: global, exit: 0 };
+
+	it.effect("falls back to the global copy", () =>
+		Effect.gen(function* () {
+			const resolved = yield* run(resolve(Tool.named("biome")), launcherMiss("1.0.0")).effect;
+			assert.strictEqual(resolved.source, "global");
+			assert.isTrue(Option.isNone(resolved.localVersion));
+			assert.isFalse(resolved.mismatch);
+		}),
+	);
+
+	it.effect("a local requirement is not satisfied", () =>
+		Effect.gen(function* () {
+			const error = yield* Effect.flip(
+				run(resolve(Tool.named("biome", { source: "local" })), launcherMiss("1.0.0")).effect,
+			);
+			assert.instanceOf(error, ToolNotFoundError);
+		}),
+	);
+
+	it.effect("a global tool's non-zero exit still proves it exists — the rule is per location", () =>
+		Effect.gen(function* () {
+			const resolved = yield* run(resolve(Tool.named("biome")), (command) =>
+				command === "pnpm" ? { exit: 1 } : { stdout: "1.0.0", exit: 2 },
+			).effect;
+			assert.strictEqual(resolved.source, "global");
+		}),
+	);
+});
+
+describe("ToolDiscovery.resolve — a presence-only probe's flag", () => {
+	// A launcher answers a missing tool and a tool that rejects its arguments
+	// with the same exit code, so a local presence probe must use arguments the
+	// tool accepts. This world: `legacy` is installed ONLY locally, rejects
+	// `--version` (exit 1) and accepts `--help` (exit 0).
+	const legacyWorld = (command: string, args: ReadonlyArray<string>): ScriptResult =>
+		command === "pnpm"
+			? args.includes("--help")
+				? { stdout: "usage: legacy", exit: 0 }
+				: { stderr: "unknown option --version", exit: 1 }
+			: ScriptedSpawner.notFound(command);
+
+	it.effect("probes with --version by default", () =>
+		Effect.gen(function* () {
+			const harness = run(resolve(Tool.named("legacy", { version: VersionNone.make({}) })), legacyWorld);
+			yield* Effect.flip(harness.effect);
+			assert.deepStrictEqual(
+				harness.spawner.spawns.map((spawn) => [spawn.command, ...spawn.args]),
+				[
+					["legacy", "--version"],
+					["pnpm", "exec", "legacy", "--version"],
+				],
+			);
+		}),
+	);
+
+	it.effect("a local tool rejecting --version reads as absent with the default flag", () =>
+		Effect.gen(function* () {
+			const error = yield* Effect.flip(
+				run(resolve(Tool.named("legacy", { version: VersionNone.make({}), source: "local" })), legacyWorld).effect,
+			);
+			assert.instanceOf(error, ToolNotFoundError);
+		}),
+	);
+
+	it.effect("a caller-chosen flag the tool accepts finds it locally", () =>
+		Effect.gen(function* () {
+			const tool = Tool.named("legacy", { version: VersionNone.make({ flag: "--help" }), source: "local" });
+			const harness = run(resolve(tool), legacyWorld);
+			const resolved = yield* harness.effect;
+			assert.strictEqual(resolved.source, "local");
+			assert.isTrue(Option.isNone(resolved.version), "presence only: no version is read");
+			assert.deepStrictEqual(harness.spawner.spawns[1]?.args, ["exec", "legacy", "--help"]);
+		}),
+	);
+
+	it.effect("probes differing only in flag do not share evidence", () =>
+		Effect.gen(function* () {
+			const harness = run(
+				Effect.gen(function* () {
+					const discovery = yield* ToolDiscovery;
+					const byDefault = yield* Effect.result(
+						discovery.resolve(Tool.named("legacy", { version: VersionNone.make({}), source: "local" })),
+					);
+					const byHelp = yield* Effect.result(
+						discovery.resolve(Tool.named("legacy", { version: VersionNone.make({ flag: "--help" }), source: "local" })),
+					);
+					return { byDefault, byHelp };
+				}),
+				legacyWorld,
+			);
+			const { byDefault, byHelp } = yield* harness.effect;
+			assert.isTrue(Result.isFailure(byDefault));
+			assert.isTrue(Result.isSuccess(byHelp));
+		}),
+	);
+});
+
+describe("ToolDiscovery.resolve — prefer", () => {
+	it.effect("both copies agreeing: local by default", () =>
+		Effect.gen(function* () {
+			const resolved = yield* run(resolve(Tool.named("biome")), world({ global: "1.0.0", local: "1.0.0" })).effect;
+			assert.strictEqual(resolved.source, "local");
+		}),
+	);
+
+	it.effect("both copies agreeing: prefer global picks the global copy", () =>
+		Effect.gen(function* () {
+			const resolved = yield* run(
+				resolve(Tool.named("biome", { prefer: "global" })),
+				world({ global: "1.0.0", local: "1.0.0" }),
+			).effect;
+			assert.strictEqual(resolved.source, "global");
+			assert.isFalse(resolved.mismatch);
+		}),
+	);
+
+	it.effect("versions unknown: prefer still decides", () =>
+		Effect.gen(function* () {
+			const tool = Tool.named("tar", { version: VersionNone.make({}), prefer: "global" });
+			const resolved = yield* run(resolve(tool), world({ global: "", local: "" })).effect;
+			assert.strictEqual(resolved.source, "global");
+		}),
+	);
+
+	it.effect("Tool.named with prefer global keeps the global copy on a mismatch too", () =>
+		Effect.gen(function* () {
+			const tool = Tool.named("biome", { prefer: "global" });
+			assert.strictEqual(tool.onMismatch, "preferGlobal");
+			const resolved = yield* run(resolve(tool), world({ global: "1.0.0", local: "2.0.0" })).effect;
+			assert.strictEqual(resolved.source, "global");
+			assert.isTrue(resolved.mismatch);
+		}),
+	);
+
+	it.effect("an explicit onMismatch still decides a mismatch over prefer", () =>
+		Effect.gen(function* () {
+			const tool = Tool.named("biome", { prefer: "global", onMismatch: "preferLocal" });
+			const resolved = yield* run(resolve(tool), world({ global: "1.0.0", local: "2.0.0" })).effect;
+			assert.strictEqual(resolved.source, "local");
+		}),
+	);
+
+	it.effect("prefer never overrides an explicit source", () =>
+		Effect.gen(function* () {
+			const tool = Tool.named("biome", { prefer: "global", source: "local" });
+			const resolved = yield* run(resolve(tool), world({ global: "1.0.0", local: "1.0.0" })).effect;
+			assert.strictEqual(resolved.source, "local");
+		}),
+	);
+
+	it.effect("a Tool built without prefer reads as local", () =>
+		Effect.gen(function* () {
+			const tool = Tool.make({
+				name: "biome",
+				version: VersionFlag.make({ flag: "--version" }),
+				source: "any",
+				onMismatch: "preferLocal",
+			});
+			const resolved = yield* run(resolve(tool), world({ global: "1.0.0", local: "1.0.0" })).effect;
+			assert.strictEqual(resolved.source, "local");
+		}),
+	);
+});
+
+describe("ResolvedTool.argv", () => {
+	it.effect("a global tool's argv is bare", () =>
+		Effect.gen(function* () {
+			const resolved = yield* run(resolve(Tool.named("biome")), world({ global: "1.0.0" })).effect;
+			assert.deepStrictEqual(resolved.argv("check", "--write"), ["biome", "check", "--write"]);
+		}),
+	);
+
+	it.effect("a local tool's argv carries the launcher prefix", () =>
+		Effect.gen(function* () {
+			const resolved = yield* run(resolve(Tool.named("biome")), world({ local: "2.0.0" })).effect;
+			assert.deepStrictEqual(resolved.argv("check"), ["pnpm", "exec", "biome", "check"]);
 		}),
 	);
 });
