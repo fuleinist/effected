@@ -223,7 +223,7 @@ await build({
 							source: "workspace",
 						},
 						"@effected/github": {
-							range: "^0.25.0",
+							range: "^0.25.1",
 							peer: "^0.25.0",
 							strategy: "lock-minor",
 							source: "workspace",
