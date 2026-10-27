@@ -2,8 +2,9 @@
 
 Structured command running and CLI tool discovery over core's
 `ChildProcessSpawner`: **run a command and get a typed result** (`Run`), and
-**find out whether a tool is here and which copy to use** (`ToolDiscovery`).
-Boundary tier; `effect` is the only peer.
+**find out whether a tool is here and which copy to use** (`ToolDiscovery`),
+plus `RunOnce`, `PrebuiltBinary`, `LocalExec.parse` and, behind
+`./node-sync`, `ModuleResolution`. Boundary tier; `effect` is the only peer.
 
 Durable knowledge about this package lives in the OKF bundle, not here. Start
 at `okf/modules/commands.md` and load what the task needs:
@@ -41,6 +42,41 @@ at `okf/modules/commands.md` and load what the task needs:
   `internal/toolResolution.ts`, or `Tool.prefer`.
 - Requiring core services in `R` rather than owning a backend →
   `okf/conventions/require-in-r-default.md`.
+- `RunOnce` — the run-once protocol (nonce-observed trust, lock read before
+  the done marker, per-contender breaker tickets, rename-to-tomb
+  compare-and-delete and its put-back residual, the recycled-pid age rule,
+  no heartbeat, a driver removes only a file it created, the model checker)
+  → `okf/decisions/run-once-trust.md`; the surface, `ProcessLiveness` and
+  the drivers → `okf/modules/commands.md` (run once across processes) —
+  Load when: touching `src/RunOnce.ts`, `src/internal/runOnceMachine.ts`,
+  `nodeRunOnceFileSystem` / `nodeRunOnceHost`, or any `RunOnce` test.
+- `PrebuiltBinary`, `LocalExec.parse` and `ModuleResolution` →
+  `okf/modules/commands.md` (prebuilt binaries and launcher argv; anchored
+  module resolution) — Load when: touching those modules,
+  `src/internal/anchor.ts`, or the `ALIASES` table.
+- What the signal-0 liveness probe is and is not →
+  `okf/limitations/commands-no-process-supervision.md`.
+
+Rules that bite while editing:
+
+- **Never put a rule in a `RunOnce` driver.** The protocol is ONE generator,
+  `src/internal/runOnceMachine.ts`; `runSync` and `run` only answer its IO
+  requests. Never reintroduce a single shared breaker file or any put-back
+  of a breaker (that is what let a third caller in). The `Effect` driver is
+  uninterruptible while holding the lock (restore only around `Sleep` and
+  the work).
+- **The protocol is model-checked.** Any change to `runOnceMachine.ts` must
+  stay clean in `__test__/RunOnce.model.test.ts` AND at the review's full
+  bounds (scenarios a–h and g0), run offline in a subprocess under a hard
+  timeout. A rule the model cannot reach (it treats a finished process as
+  dead) gets a scripted test in `RunOnce.sync.test.ts`.
+- **Never let `LocalExec.prefixes` emit an alias**; `parse` recognises the
+  aliases, `prefixes` hands out the canonical table only.
+- **`nodeRunSync` captures to files, not pipes** (no `ENOBUFS`) — keep it
+  that way. `src/internal/anchor.ts` is the one `createRequire` call.
+- **A type re-exported from both entries must not `{@link}` a symbol only
+  `.` exports** — that is an `ae-unresolved-link` on the node-sync report;
+  spell it in backticks.
 
 ## Working here
 
@@ -48,7 +84,12 @@ Tests live in `__test__/` (unit plus `e2e/`): `@effect/vitest`, `it.effect`,
 `assert.*` — never `expect`. Unit suites stub the spawner with the public
 `src/ScriptedSpawner.ts` double and assert on its spawn log; e2e runs real
 `node` through `@effect/platform-node`, which is a **devDependency for e2e
-only** — never a dependency or peer.
+only** — never a dependency or peer. `RunOnce`'s `Effect` driver is tested
+over `@effected/memfs` (a devDependency) and `TestClock`; its sync driver over
+an in-memory host whose `sleep` is where "another process" acts.
+`__test__/e2e/RunOnce.e2e.test.ts` races four real `node` processes through
+`__test__/e2e/fixtures/run-once-child.mjs`, which imports the **dev build**
+(`dist/dev/pkg`) — rebuild before trusting it after a source edit.
 
 ```bash
 pnpm vitest run packages/commands/__test__   # from the repo root, always

@@ -1,5 +1,6 @@
+import { inspect } from "node:util";
 import { assert, describe, it } from "@effect/vitest";
-import { Effect, Stream } from "effect";
+import { Arbitrary, Effect, Schema, Stream } from "effect";
 import { ChildProcess } from "effect/process";
 
 import type { GitInvocation } from "../src/GitCommand.js";
@@ -290,6 +291,27 @@ describe("GitCommand", () => {
 
 	it("commonDir builds `git rev-parse --path-format=absolute --git-common-dir`", () => {
 		assertGitCommand(GitCommand.commonDir(), ["rev-parse", "--path-format=absolute", "--git-common-dir"]);
+	});
+
+	it("treeIdentity builds `git rev-parse --show-toplevel --path-format=absolute --git-common-dir`", () => {
+		assertGitCommand(GitCommand.treeIdentity(), [
+			"rev-parse",
+			"--show-toplevel",
+			"--path-format=absolute",
+			"--git-common-dir",
+		]);
+	});
+
+	it("headRef builds `git symbolic-ref --quiet HEAD`", () => {
+		assertGitCommand(GitCommand.headRef(), ["symbolic-ref", "--quiet", "HEAD"]);
+	});
+
+	it("upstream builds the fixed four-field for-each-ref format for one branch ref", () => {
+		assertGitCommand(GitCommand.upstream("refs/heads/main"), [
+			"for-each-ref",
+			"--format=%(refname)%00%(upstream)%00%(upstream:short)%00%(upstream:track,nobracket)",
+			"refs/heads/main",
+		]);
 	});
 
 	it("commitInfo builds a NUL-separated single-commit log format", () => {
@@ -878,8 +900,46 @@ describe("GitCommand", () => {
 			);
 		});
 
-		it("a path-embedded @ without userinfo is untouched", () => {
-			assertGitCommand(GitCommand.fetch("https://host:8080/a@b", "main"), ["fetch", "https://host:8080/a@b", "main"]);
+		// The userinfo ends at the LAST `@` (GitRemote's rule), because an
+		// unencoded password may itself hold `/`. A path-embedded `@` is
+		// indistinguishable from `user:pa/ss@host`, so it over-redacts: the
+		// safe direction, at the cost of the host in the diagnostic.
+		it("a path-embedded @ over-redacts rather than risk a password holding /", () => {
+			assertGitCommand(
+				GitCommand.fetch("https://host:8080/a@b", "main"),
+				["fetch", "https://host:8080/a@b", "main"],
+				["fetch", "https://<redacted>@b", "main"],
+			);
+		});
+
+		it("a password holding /, @, ? or : is masked whole", () => {
+			for (const password of ["pa/ss", "p@ss", "p?ss", "p:ss", "a/b@c?d#e"]) {
+				const url = `https://u:${password}@example.com/r.git`;
+				assertGitCommand(
+					GitCommand.remoteAdd("up", url),
+					["remote", "add", "up", url],
+					["remote", "add", "up", "https://<redacted>@example.com/r.git"],
+				);
+			}
+		});
+
+		it("a transport-prefixed URL is masked inside its address", () => {
+			const url = "persistent::https://u:s3cret@host/r";
+			assertGitCommand(
+				GitCommand.remoteAdd("up", url),
+				["remote", "add", "up", url],
+				["remote", "add", "up", "persistent::https://<redacted>@host/r"],
+			);
+		});
+
+		it("a query string is masked; an scp remote and a remote name are untouched", () => {
+			assertGitCommand(
+				GitCommand.fetch("https://host/r.git?token=abc", "main"),
+				["fetch", "https://host/r.git?token=abc", "main"],
+				["fetch", "https://host/r.git?<redacted>", "main"],
+			);
+			assertGitCommand(GitCommand.fetch("git@github.com:o/n.git", "main"), ["fetch", "git@github.com:o/n.git", "main"]);
+			assertGitCommand(GitCommand.fetch("origin", "main"), ["fetch", "origin", "main"]);
 		});
 
 		it("a credential-free url passes through redactedArgs untouched", () => {
@@ -891,5 +951,159 @@ describe("GitCommand", () => {
 				".repos/r",
 			]);
 		});
+	});
+});
+
+describe("GitCommand redaction — the form-independent credential backstop", () => {
+	// The reviewer's fuzz survivors were all one shape: a credential URL whose
+	// scheme separator is mistyped, so it parses as a transport, scp or path
+	// form rather than a URL — and git echoes it to stderr verbatim.
+	const PREFIXES = [
+		"https:://",
+		"https:/",
+		"//",
+		"https:",
+		"https:///",
+		"git+https:://",
+		"persistent::https:/",
+		"persistent:://",
+		"ssh:/",
+		"http:\\\\",
+		"https//",
+		":",
+		"",
+	];
+	const CREDENTIALS = ["u:S3CRET", "x-access-token:ghp_S3CRET", ":S3CRET", "u:pa/S3CRET", "u:p@S3CRET", "u:S3C?R#ET"];
+	const SUFFIXES = ["@github.com/o/r", "@h", "@h:o/r", "@h?x=1"];
+	const redacted = (value: string): string => GitCommand.fetch(value, "main").redactedArgs[1] ?? "";
+
+	for (const prefix of PREFIXES) {
+		it(`masks every credential behind ${JSON.stringify(prefix)}`, () => {
+			for (const credential of CREDENTIALS) {
+				for (const suffix of SUFFIXES) {
+					const value = `${prefix}${credential}${suffix}`;
+					const out = redacted(value);
+					assert.notInclude(out, "S3C", value);
+					assert.include(out, "<redacted>", value);
+				}
+			}
+		});
+	}
+
+	it("pins the reviewer's confirmed cases", () => {
+		assert.strictEqual(redacted("https:://u:tok3n@github.com/o/r"), "https:://<redacted>@github.com/o/r");
+		assert.strictEqual(redacted("https:/u:tok@h/r"), "https:/<redacted>@h/r");
+		assert.strictEqual(redacted("//u:tok@h/r"), "//<redacted>@h/r");
+		assert.strictEqual(redacted("u:s3cret@host:repo"), "u:<redacted>@host:repo");
+		assert.strictEqual(redacted("u:pw@h://x"), "<redacted>://x");
+	});
+
+	// Accepted over-masking, pinned so it stays deliberate: an `@` in a URL path
+	// is read as userinfo (the host is lost), and an scp path's `@` pulls the
+	// path before it into the mask.
+	it("over-masks an @ in a URL path or an scp path, by design", () => {
+		assert.strictEqual(redacted("https://h/pkg@1.0/r.git"), "https://<redacted>@1.0/r.git");
+		assert.strictEqual(redacted("git@host:o/n@v1"), "git@host:<redacted>@v1");
+	});
+
+	it("leaves a plain scp remote, a remote name and a credential-free URL untouched", () => {
+		assert.strictEqual(redacted("git@github.com:o/n.git"), "git@github.com:o/n.git");
+		assert.strictEqual(redacted("origin"), "origin");
+		assert.strictEqual(redacted("https://github.com/o/n.git"), "https://github.com/o/n.git");
+	});
+
+	const ALPHABET = ["a", "B", "1", ".", "-", "+", "_", "/", ":", "@", "[", "]", "?", "#", "\\", " ", "é"];
+	const text = Arbitrary.array(Arbitrary.schema(Schema.Literals(ALPHABET)), { maxLength: 24 }).pipe(
+		Arbitrary.map((chars) => chars.join("")),
+	);
+	const prefix = Arbitrary.all([
+		Arbitrary.schema(
+			Schema.Literals([...PREFIXES, "https::", "ext::", "git+ssh::", "a::https://", "zz::", "persistent::https:/"]),
+		),
+		text,
+	]).pipe(Arbitrary.map(([known, random]) => `${random.length % 2 === 0 ? known : random}`)); // A tail that often holds `://`, `//` or `/`: the shape that puts a free-text
+	// scheme or a URL after a transport's `::`. Pure random text almost never does.
+	const tailText = Arbitrary.all([
+		Arbitrary.schema(Schema.Literals(["://", "//", "/", ":", "://x", "", "://u", "/x"])),
+		text,
+	]).pipe(Arbitrary.map(([known, random]) => (random.length % 2 === 0 ? known : random)));
+
+	it.prop(
+		"no user:secret@ survives in redactedArgs, whatever surrounds it",
+		[prefix, text, tailText, text],
+		([head, user, tail, rest]) => {
+			if (user.includes("@") || rest.includes("@")) return true;
+			const value = `${head}${user}:S3CRET${tail}@${rest}`;
+			return !redacted(value).includes("S3CRET");
+		},
+		{ arbitrary: { runs: 5000 } },
+	);
+});
+
+describe("GitInvocation serialization", () => {
+	const urlSecret = "s3cretTokenValue";
+	const valueSecret = "cfgSecretValue42";
+	const invocations = [
+		GitCommand.configSet("remote.o.pushurl", valueSecret),
+		GitCommand.fetch(`https://user:${urlSecret}@host/o/r.git`, "main"),
+	];
+
+	it("JSON.stringify and util.inspect of an invocation show no raw secret", () => {
+		for (const invocation of invocations) {
+			for (const text of [JSON.stringify(invocation), inspect(invocation, { depth: 8 })]) {
+				assert.isFalse(text.includes(urlSecret));
+				assert.isFalse(text.includes(valueSecret));
+			}
+		}
+	});
+
+	it("scrub masks each exact secret and leaves other text alone", () => {
+		const [config, fetch] = invocations;
+		assert.strictEqual(config?.scrub(`bad ${valueSecret} here`), "bad <redacted> here");
+		assert.isFalse(fetch?.scrub(`fatal: ${urlSecret}`).includes(urlSecret));
+		assert.strictEqual(fetch?.scrub("fatal: nothing to hide"), "fatal: nothing to hide");
+	});
+
+	// Every credential position `redactedArgs` masks must be masked in git's
+	// echo of the same text too: a query token carries no `@`, a user beside a
+	// password is no userinfo segment, and an invalid or unknown scheme is
+	// neither, so none of the shape maskers downstream would reach them.
+	const COVERED = [
+		{ value: "https://h/r.git?token=abcS3CRET", secret: "token=abcS3CRET" },
+		{ value: "https://h/r.git?t=S3CRET#frag", secret: "t=S3CRET#frag" },
+		// A token carried as the user is masked wherever the URL is echoed, but
+		// not as a free word: see the ordinary-user test below.
+		{ value: "https://userS3CRET:x-oauth-basic@h/o/r", secret: "userS3CRET", bare: false },
+		{ value: "persistent::https://h/r?k=S3CRETq", secret: "k=S3CRETq" },
+		{ value: "https::S3CRETscheme://@h/r", secret: "S3CRETscheme" },
+		// The invalid scheme is masked whole, as argv masks it: echoed within
+		// the URL, not as a bare word.
+		{ value: "uS3CRET:pw@h://x", secret: "uS3CRET", bare: false },
+	];
+
+	it("scrub masks every credential position redactedArgs masks", () => {
+		for (const { value, secret, bare = true } of COVERED) {
+			const invocation = GitCommand.fetch(value, "main");
+			// Control: the argv mask hides the secret, so the scrub must too.
+			assert.notInclude(invocation.redactedArgs.join(" "), secret, value);
+			const echoed = invocation.scrub(`fatal: unable to access '${value}'${bare ? `: ${secret}` : ""}\n`);
+			assert.notInclude(echoed, secret, value);
+			assert.include(echoed, "<redacted>", value);
+		}
+	});
+
+	it("scrub does not mask an ordinary user name outside the URL", () => {
+		const invocation = GitCommand.fetch("https://alice:S3CRETTOKEN@github.com/alice/r.git", "main");
+		assert.strictEqual(
+			invocation.scrub("fatal: github.com/alice/r.git said no; see git help"),
+			"fatal: github.com/alice/r.git said no; see git help",
+		);
+		const git = GitCommand.fetch("https://git:S3CRETTOKEN@github.com/o/r.git", "main");
+		assert.strictEqual(git.scrub("github.com said no; see git help"), "github.com said no; see git help");
+	});
+
+	it("scrub leaves a query of under three characters alone", () => {
+		const invocation = GitCommand.fetch("https://h/r.git?ab", "main");
+		assert.strictEqual(invocation.scrub("fatal: ab cd"), "fatal: ab cd");
 	});
 });

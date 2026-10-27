@@ -16,5 +16,13 @@ export {
 } from "./McpToolkit.js";
 export { ToolFailure } from "./ToolFailure.js";
 export { type FormatUnknownKeysOptions, ToolInputSchema, type UnknownKeysLevel } from "./ToolInputSchema.js";
+export {
+	ToolOutcome,
+	type ToolOutcomeEnvelopeOptions,
+	type ToolOutcomeErrorInput,
+	type ToolOutcomeFailure,
+	type ToolOutcomeFailures,
+} from "./ToolOutcome.js";
 export { ToolOutputSchema } from "./ToolOutputSchema.js";
 export { ToolRefusal } from "./ToolRefusal.js";
+export { ToolReplay, type ToolReplayOptions, type ToolReplayStore } from "./ToolReplay.js";

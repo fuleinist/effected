@@ -1,4 +1,4 @@
-import { Context, Option, Schema } from "effect";
+import { Context, Effect, Option, Schema } from "effect";
 
 /**
  * The carrier package a tool's bins were installed through.
@@ -59,3 +59,50 @@ export const distributionSuffix = (distribution: Option.Option<Distribution>): s
 		onNone: () => "",
 		onSome: ({ name, version }) => ` via ${name} ${version}`,
 	});
+
+/**
+ * Decorates a `--version` line formatter so its line ends with
+ * {@link distributionSuffix}: `formatVersion(name, version)` followed by
+ * a space and `via <carrier> <version>` when installed through a carrier,
+ * unchanged for a direct install.
+ *
+ * @remarks
+ * Shaped around `effect/cli`'s `CliOutput.Formatter["formatVersion"]`: it
+ * wraps whatever formatter is in effect (a coloured default or a custom one)
+ * rather than replacing it. The suffix is computed once, when the decorator is
+ * applied, because the distribution is known at `main`. Data-last, for `pipe`.
+ *
+ * @example
+ * ```ts
+ * import { withDistributionVersion } from "@effected/engine";
+ * import { Option } from "effect";
+ *
+ * const formatVersion = withDistributionVersion(Option.some({ name: "@scope/plugin", version: "2.0.0" }))(
+ * 	(name, version) => `${name} ${version}`,
+ * );
+ * formatVersion("tool", "1.0.0"); // "tool 1.0.0 via @scope/plugin 2.0.0"
+ * ```
+ *
+ * @public
+ */
+export const withDistributionVersion = (
+	distribution: Option.Option<Distribution>,
+): ((formatVersion: (name: string, version: string) => string) => (name: string, version: string) => string) => {
+	const suffix = distributionSuffix(distribution);
+	return (formatVersion) => (name, version) => `${formatVersion(name, version)}${suffix}`;
+};
+
+/**
+ * Provides {@link CurrentDistribution} to `self`: `Option.some` of a carrier,
+ * `Option.none()` for `null` or `undefined` (a direct install).
+ *
+ * @remarks
+ * The one-line form of what a front end's `main` does once at the top of its
+ * program. Data-last, for `pipe`.
+ *
+ * @public
+ */
+export const withDistribution =
+	(distribution: Distribution | null | undefined) =>
+	<A, E, R>(self: Effect.Effect<A, E, R>): Effect.Effect<A, E, R> =>
+		Effect.provideService(self, CurrentDistribution, Option.fromNullishOr(distribution));

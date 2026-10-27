@@ -60,8 +60,22 @@ separators, sorted. The walker is **semantics-free**: dotfile behavior and
 every other matching option are carried by the compiled pattern the caller
 hands in — never re-derived here.
 
-- A literal pattern (no magic, not negated) fast-paths to one stat; missing is
-  zero matches. A magic pattern walks from `enumerationPrefix`; a **negated**
+- **A path is answered in the spelling it matched under**: `./src/*.ts`
+  answers `./src/a.ts`, as it always has. Consumers re-filter the answer with
+  a spelling-sensitive `matches` (`@effected/github-actions`' `CacheKey`
+  does), so never canonicalize output. Internally the walk IS canonical.
+  `enumerationRoots` prefixes are canonical, and each root carries its
+  alternatives' `spellings` in pattern order. The machine reads each canonical
+  directory once and answers a file ONCE, in the first spelling it matches
+  under: the earliest alternative's. `{src,./src}/*.ts` reads `src` once and
+  answers `src/index.ts` alone, and `./` never makes `cwd` look like a
+  boundary. Unreadable and depth-exceeded paths are spelled through the
+  root's own earliest spelling (`./**` reports its base as `.`).
+- A literal pattern (no magic, no braces, not negated) fast-paths to one stat; missing is
+  zero matches. Braces are magic here (glob's `hasMagic` ignores them). A magic
+  pattern walks each of `enumerationRoots` — one per brace alternative, each
+  with its own prefix and depth, so `packages/{a,b}/src/*.ts` reads only those
+  two directories; a **negated**
   pattern walks from `cwd` itself (its matches can land outside the inner
   pattern's prefix); a missing base directory is an **empty result**, not an
   error. A pattern that lexically climbs above `cwd` via `..` segments is
@@ -71,7 +85,10 @@ hands in — never re-derived here.
   descended, as `@actions/glob` follows links out of the tree).
 - Only files match. A symlink counts when it stat-resolves to a file (`stat`
   follows links, as node's does); a symlinked **directory is never descended**
-  by default (cycle safety, detected by a `readLink` success-probe), unless
+  by default (cycle safety, detected by an `lstat` kind check) — the walk
+  base and each directory on the way to it included: a base reached through a
+  link is an empty result, and so is a literal pattern reached through one —
+  unless
   `followSymlinks: true` opts in — then links are entered under
   `@actions/glob`'s per-branch `traversalChain` guard: each `DescendFrame`
   carries its branch's ancestor real paths, and a directory is a cycle only
@@ -102,6 +119,41 @@ hands in — never re-derived here.
   not negated) reads a single level and never descends.
 - `prune` suppresses **directories only** — a FILE named `.git` (a submodule
   or worktree gitlink) stays matchable.
+
+## One walk, two drivers
+
+The downward walk is ONE generator, `src/internal/descendMachine.ts`, yielding
+filesystem requests (`Stat`, `Lstat`, `RealPath`, `ReadDirectory`).
+`descend` / `descendEntries` (`Descend.ts`) answer them through core's
+`FileSystem`; `descendSync` / `descendEntriesSync` (`DescendSync.ts`) answer
+them from a caller-supplied `WalkerSyncFileSystem` (a `node:fs`-shaped port:
+`readDirectory`, `stat`, `lstat`, `realPath`; `code: "ENOENT"` is the benign
+race). Every rule lives in the machine — **never put one in a driver**; a
+driver only maps its platform's answers and failures. Path joining is a
+caller function, not a request. The sync forms are on the root entry (pure);
+`@effected/walker/node-sync` binds them to Node (`nodeWalkerSyncOps`), and
+`__test__/entrypoints.test.ts` pins that `.` never reaches it. Sync
+record-mode causes are `unknown` (`UnreadableDirectory<unknown>`): the port has no
+`PlatformError`. Otherwise the sync forms return the Effect forms' own types
+(`DescendResult`, `DescendEntry`, `DescendEntriesResult`) — never add parallel
+sync result types — and an entry's stat lives on `info`. A memfs handle
+satisfies the sync port directly (its sync interface carries `realPath`).
+
+- **`boundaries`** — marker FILE names. A directory strictly below `cwd`
+  holding one contributes nothing (no matches, no descent); `cwd` itself is
+  never a boundary and a directory merely *named* like a marker does not
+  count. The rule is positional: it also applies between `cwd` and the walk
+  base and to a literal pattern, so the answer never depends on whether the
+  pattern has magic. Not `Walker.ascend`'s `stopAt` (an inclusive upward
+  ceiling) — keep the names apart.
+- **`descendEntries`** keeps the stat the walk already read (no extra
+  syscall). The kit ships no fingerprint: which fields to hash is the
+  consumer's policy.
+- `__test__/DescendSync.test.ts` is a parity matrix — sync vs `Effect` over ONE
+  memfs volume, with faults mirrored on the sync port. It needs fixtures that
+  reach every driver mapping (a vanished directory, an unresolvable and a
+  denied link); without them a broken `ENOENT` mapping passed. The sync
+  fault handlers (`readDirectory`, `realPath`) mirror the Effect ones.
 
 ## Invariants
 

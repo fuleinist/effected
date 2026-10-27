@@ -1,5 +1,7 @@
 import { Stream } from "effect";
 import { ChildProcess } from "effect/process";
+import { REDACTED, maskSecrets } from "./internal/redact.js";
+import { redactRemoteText, remoteSecrets } from "./internal/redactRemote.js";
 
 /**
  * A pure `git` invocation: the spawnable command plus the diagnostic argv the
@@ -24,10 +26,15 @@ export interface GitInvocation {
 	readonly command: ChildProcess.StandardCommand;
 	/** The argv with sensitive positionals masked — the only argv diagnostics may persist. */
 	readonly redactedArgs: ReadonlyArray<string>;
+	/**
+	 * Masks, in any text, the exact secret strings the argv carries: each
+	 * whole-value secret, and every part of a secret URL that `redactedArgs`
+	 * masks — its credential segments, user, query and a masked scheme. The `Git`
+	 * service applies it to git's stderr. A closure, so the raw secrets are not
+	 * an enumerable field a log line or serializer could surface.
+	 */
+	readonly scrub: (text: string) => string;
 }
-
-/** The mask every whole-value sensitive positional is replaced with. */
-const REDACTED = "<redacted>";
 
 /**
  * One argv segment: a plain string, or a sensitive positional tagged with the
@@ -41,20 +48,6 @@ const secretValue = (value: string): GitArg => ({ redact: "value", value });
 
 // Tags a URL positional whose embedded userinfo (if any) must be masked.
 const secretUrl = (value: string): GitArg => ({ redact: "url", value });
-
-/**
- * Masks the userinfo component of a URL (`scheme://user:token@host/...` →
- * `scheme://<redacted>@host/...`). A value carrying no embedded userinfo — a
- * remote name, a credential-free URL, an scp-style `host:path` — passes
- * through untouched, so the common case stays fully debuggable.
- *
- * The userinfo match is greedy (`[^/]*@` — everything through the LAST `@`
- * before the first path slash): URL authorities split at the last `@`, so a
- * password containing a literal `@` (`user:p\@ss\@host/...`) must be
- * consumed whole or its tail would survive into `redactedArgs`.
- */
-const redactUrlUserinfo = (value: string): string =>
-	value.replace(/^([a-z][a-z0-9+.-]*:\/\/)[^/]*@/i, `$1${REDACTED}@`);
 
 /**
  * Builds a `git` {@link GitInvocation} with the argv this package classifies
@@ -89,7 +82,10 @@ const redactUrlUserinfo = (value: string): string =>
 const git = (args: ReadonlyArray<GitArg>, stdin?: string): GitInvocation => {
 	const raw = args.map((arg) => (typeof arg === "string" ? arg : arg.value));
 	const redactedArgs = args.map((arg) =>
-		typeof arg === "string" ? arg : arg.redact === "value" ? REDACTED : redactUrlUserinfo(arg.value),
+		typeof arg === "string" ? arg : arg.redact === "value" ? REDACTED : redactRemoteText(arg.value),
+	);
+	const secrets = args.flatMap((arg) =>
+		typeof arg === "string" ? [] : arg.redact === "value" ? [arg.value] : remoteSecrets(arg.value),
 	);
 	return {
 		command: ChildProcess.make("git", raw, {
@@ -100,6 +96,7 @@ const git = (args: ReadonlyArray<GitArg>, stdin?: string): GitInvocation => {
 			...(stdin !== undefined ? { stdin: Stream.make(new TextEncoder().encode(stdin)) } : {}),
 		}),
 		redactedArgs,
+		scrub: (text) => maskSecrets(text, secrets),
 	};
 };
 
@@ -608,6 +605,52 @@ export class GitCommand {
 	static readonly commonDir = (): GitInvocation => git(["rev-parse", "--path-format=absolute", "--git-common-dir"]);
 
 	/**
+	 * `git rev-parse --show-toplevel --path-format=absolute --git-common-dir` —
+	 * a working tree's physical toplevel and its repository's common
+	 * directory, one per line, in one spawn.
+	 *
+	 * @remarks
+	 * `--path-format` applies only to the options after it, so the toplevel
+	 * (always absolute) comes first. Both answers are symlink-resolved by git.
+	 * Outside a working tree — a bare repository, or a directory inside
+	 * `.git` — git exits 128 with `this operation must be run in a work tree`.
+	 * The flag needs git 2.31 or later; an older git echoes it as a third line.
+	 */
+	static readonly treeIdentity = (): GitInvocation =>
+		git(["rev-parse", "--show-toplevel", "--path-format=absolute", "--git-common-dir"]);
+
+	/**
+	 * `git symbolic-ref --quiet HEAD` — the full refname `HEAD` points at
+	 * (`refs/heads/<branch>`), or a silent exit 1 when `HEAD` is detached.
+	 *
+	 * @remarks
+	 * An unborn branch still answers its refname: `HEAD` names the branch
+	 * before the branch has a commit.
+	 */
+	static readonly headRef = (): GitInvocation => git(["symbolic-ref", "--quiet", "HEAD"]);
+
+	/**
+	 * `git for-each-ref --format=%(refname)%00%(upstream)%00%(upstream:short)%00%(upstream:track,nobracket) <branchRef>`
+	 * — a local branch's upstream as a NUL-separated record: the branch
+	 * refname, the upstream's full refname, its short name, and the tracking
+	 * state (`gone`, `ahead N`, `behind N`, `ahead N, behind M`, or empty).
+	 *
+	 * @remarks
+	 * Unlike `rev-parse @{upstream}`, this still reports an upstream whose
+	 * remote-tracking ref was deleted (`gone`), and its short name is the same
+	 * string `rev-parse --abbrev-ref @{upstream}` answers. `branchRef` is a full
+	 * refname (`refs/heads/main`); a pattern also matches refs below it, so the
+	 * caller keeps only the exact record. The tracking state walks history, as
+	 * `git status` does.
+	 */
+	static readonly upstream = (branchRef: string): GitInvocation =>
+		git([
+			"for-each-ref",
+			"--format=%(refname)%00%(upstream)%00%(upstream:short)%00%(upstream:track,nobracket)",
+			branchRef,
+		]);
+
+	/**
 	 * `git log -1 --format=%H%x00%G?%x00%B <ref>` — a NUL-separated triple: the
 	 * full commit hash, the GPG trust level, and the full commit body (message),
 	 * all untrimmed.
@@ -676,6 +719,10 @@ export class GitCommand {
 	 * `git remote get-url <remote>` — the fetch URL of the given remote. A
 	 * missing remote exits non-zero with a "No such remote" stderr shape, which
 	 * the `Git` service degrades to `Option.none`, never a typed error.
+	 *
+	 * @remarks
+	 * git applies `url.<base>.insteadOf` rewrites to this URL; the value as
+	 * configured is {@link GitCommand.configGet} of `remote.<remote>.url`.
 	 */
 	static readonly remoteUrl = (remote = "origin"): GitInvocation => git(["remote", "get-url", remote]);
 

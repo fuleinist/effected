@@ -4,7 +4,9 @@ import { Cancelled } from "./Cancelled.js";
 import type { Block, Document, InlineOf, TreeInput } from "./Doc.js";
 import { Doc } from "./Doc.js";
 import { Fmt } from "./Fmt.js";
+import { identity } from "./internal/displayPath.js";
 import { issueEntries, issueTreeChildren } from "./internal/format.js";
+import { failureText, readProperty, tagOf } from "./internal/inspect.js";
 import { splitFrame } from "./internal/splitFrame.js";
 import { NotInteractive } from "./NotInteractive.js";
 import { Status } from "./Status.js";
@@ -87,26 +89,7 @@ const MAX_SPANS = 32;
 const hasCliDoc = (value: unknown): value is CliDocSource =>
 	typeof value === "object" && value !== null && typeof (value as Partial<CliDocSource>)[CliDoc] === "function";
 
-// String(value) can throw for an object with no prototype or a hostile toString, and says only "[object Object]" for
-// a plain failure value: such a value with a string message is that message.
-const describe = (value: unknown): string => {
-	try {
-		const text = String(value);
-		if (text !== "[object Object]") return text;
-		const message = (value as { readonly message?: unknown } | null)?.message;
-		return typeof message === "string" ? message : text;
-	} catch {
-		return "[unprintable value]";
-	}
-};
-
 const firstLine = (text: string): string => text.split(/\r\n|\r|\n/, 1)[0] ?? "";
-
-const tagOf = (value: unknown): string | undefined => {
-	if (typeof value !== "object" || value === null) return undefined;
-	const tag = (value as { readonly _tag?: unknown })._tag;
-	return typeof tag === "string" ? tag : undefined;
-};
 
 /** The failure status and the text of a message: one block per line, the status on the first. */
 const failureBlocks = (message: string): ReadonlyArray<Block> => {
@@ -117,11 +100,8 @@ const failureBlocks = (message: string): ReadonlyArray<Block> => {
 /** The issue of a schema failure: the value itself, or the `issue` an error carries. */
 const issueOf = (error: unknown): unknown => {
 	if (SchemaIssue.isIssue(error)) return error;
-	if (typeof error === "object" && error !== null) {
-		const issue = (error as { readonly issue?: unknown }).issue;
-		if (SchemaIssue.isIssue(issue)) return issue;
-	}
-	return undefined;
+	const issue = readProperty(error, "issue");
+	return SchemaIssue.isIssue(issue) ? issue : undefined;
 };
 
 const schemaBlocks = (error: unknown): ReadonlyArray<Block> | undefined => {
@@ -129,7 +109,7 @@ const schemaBlocks = (error: unknown): ReadonlyArray<Block> | undefined => {
 	if (entries.length === 0) return undefined;
 	const header =
 		typeof error === "object" && error !== null && !SchemaIssue.isIssue(error)
-			? firstLine(describe((error as { readonly message?: unknown }).message ?? ""))
+			? firstLine(failureText(readProperty(error, "message") ?? ""))
 			: "";
 	const label: Array<InlineOf<"Text"> | InlineOf<"StatusMark"> | string> = [
 		Doc.status(Status.core, "failure"),
@@ -231,7 +211,7 @@ const frameBlock = (frame: Frame, displayPath: (absolute: string) => string): Bl
 };
 
 const stackBlock = (defect: Error, displayPath: (absolute: string) => string, mode: "app" | "all"): Block => {
-	const { frames, hidden } = cleanStack(defect.stack, mode);
+	const { frames, hidden } = cleanStack(readProperty(defect, "stack"), mode);
 	if (frames.length > 0) {
 		const shown = frames.map((frame) => frameBlock(frame, displayPath));
 		const note = hidden === 0 ? [] : [Doc.paragraph(Doc.text(`(+${hidden} internal frames hidden)`, "muted"))];
@@ -245,18 +225,18 @@ const stackBlock = (defect: Error, displayPath: (absolute: string) => string, mo
 const causeTree = (defect: Error): Block | undefined => {
 	const chain: Array<string> = [];
 	const seen = new Set<unknown>([defect]);
-	for (let current: unknown = defect.cause; current !== undefined && chain.length < MAX_DEPTH; ) {
+	for (let current: unknown = readProperty(defect, "cause"); current !== undefined && chain.length < MAX_DEPTH; ) {
 		if (seen.has(current)) break;
 		seen.add(current);
-		chain.push(firstLine(describe(current)));
-		current = current instanceof Error ? current.cause : undefined;
+		chain.push(firstLine(failureText(current)));
+		current = current instanceof Error ? readProperty(current, "cause") : undefined;
 	}
 	if (chain.length === 0) return undefined;
 	const nest = (index: number): TreeInput =>
 		index === chain.length - 1
 			? { label: chain[index] as string }
 			: { label: chain[index] as string, children: [nest(index + 1)] };
-	return Doc.tree({ label: firstLine(describe(defect)), children: [nest(0)] });
+	return Doc.tree({ label: firstLine(failureText(defect)), children: [nest(0)] });
 };
 
 const dieBlocks = (
@@ -267,7 +247,7 @@ const dieBlocks = (
 ): ReadonlyArray<Block> => {
 	// A prompt that was cancelled, or refused for want of a terminal, is a defect to the runtime and a fixed line to a person.
 	if (defect instanceof Cancelled || defect instanceof NotInteractive) return [Doc.paragraph(defect.message)];
-	const header = failureBlocks(describe(defect));
+	const header = failureBlocks(failureText(defect));
 	if (!(defect instanceof Error)) return [...header, ...spans];
 	const chain = causeTree(defect);
 	return [...header, ...spans, stackBlock(defect, displayPath, mode), ...(chain === undefined ? [] : [chain])];
@@ -300,7 +280,7 @@ const failBlocks = (
 	if (error instanceof Cancelled || error instanceof NotInteractive) return [Doc.paragraph(error.message)];
 	const schema = schemaBlocks(error);
 	if (schema !== undefined) return [...schema, ...spans];
-	return [...failureBlocks(describe(error)), ...spans];
+	return [...failureBlocks(failureText(error)), ...spans];
 };
 
 /** A file of the kit's own packages or of Effect, as installed: a span defined there is not the program's. */
@@ -395,7 +375,8 @@ const spanBlocks = (
  * one line `interrupted`.
  *
  * All text goes through the document, so a control character in a message or a stack frame never reaches the terminal.
- * Render it with `Render.context` and `Render.plain`, `ansi`, `markdown` or `githubLog`, or `Doc.print` it.
+ * Building it never throws: an error whose `_tag`, `message`, `stack`, `cause` or `issue` getter throws is drawn without
+ * that part (an unreadable `stack` as `no stack`, an unreadable `cause` ending the chain there). Render it with `Render.context` and `Render.plain`, `ansi`, `markdown` or `githubLog`, or `Doc.print` it.
  *
  * @public
  */
@@ -411,7 +392,7 @@ export class CliFailure {
 	static readonly toDoc = (cause: CauseType.Cause<unknown>, options?: CliFailureOptions): Document => {
 		const reasons = cause.reasons;
 		if (reasons.length > 0 && reasons.every(Cause.isInterruptReason)) return [Doc.paragraph("interrupted")];
-		const displayPath = options?.displayPath ?? ((absolute: string) => absolute);
+		const displayPath = options?.displayPath ?? identity;
 		return reasons.flatMap((reason): ReadonlyArray<Block> => {
 			const spans = options?.spans ?? "app";
 			const appDir = packageDirOf(options?.appModule);
