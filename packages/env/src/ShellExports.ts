@@ -63,7 +63,9 @@ const NAME = /^[A-Za-z_][A-Za-z0-9_]*$/;
 // BASHOPTS, BASH_VERSINFO), dynamic (RANDOM, SRANDOM, LINENO, SECONDS, EPOCHSECONDS, EPOCHREALTIME, BASHPID, HISTCMD,
 // OPTIND, `_`), arrays that never reach the environment (GROUPS, FUNCNAME, DIRSTACK), set by bash itself in every
 // shell it starts (BASH, IFS, SHLVL, PWD, OLDPWD, COMP_WORDBREAKS), written by bash builtins (OPTARG, REPLY, MAPFILE, COPROC), or
-// changing how bash reads what follows (POSIXLY_CORRECT turns on POSIX mode). Each is pinned against bash in the tests.
+// changing how bash reads what follows (POSIXLY_CORRECT turns on POSIX mode). PIPESTATUS is rewritten after every
+// pipeline, and bash drops its export unless that export is the first command of a fresh shell, so position decides
+// whether a sourced file exports it. Each is pinned against bash in the tests.
 const SPECIAL = new Set([
 	"UID",
 	"EUID",
@@ -85,6 +87,7 @@ const SPECIAL = new Set([
 	"_",
 	"BASH",
 	"DIRSTACK",
+	"PIPESTATUS",
 	"IFS",
 	"POSIXLY_CORRECT",
 	"SHLVL",

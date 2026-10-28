@@ -454,9 +454,8 @@ const sourceFile = (text: string | Uint8Array): string => {
 const UNREADABLE = 97;
 /**
  * Sources `path` as the script's first command, leaving its status in `$status`, and exits with UNREADABLE when it
- * failed because `path` could not be read. The check runs only after a failed source: a pipeline run before the source
- * makes PIPESTATUS an array that the next pipeline overwrites, where sourced first an exported PIPESTATUS stays plain
- * (bash 3.2 through 5.3 alike).
+ * failed because `path` could not be read. The check runs only after a failed source, so no command precedes the
+ * source and the shell sees it in a fresh shell's state (bash 3.2 through 5.3 alike).
  */
 const source = (path: string, redirect = "") =>
 	`. ${path}${redirect}; status=$?; [ $status -eq 0 ] || [ -r ${path} ] || exit ${UNREADABLE}`;
@@ -818,10 +817,31 @@ const bashTreatsSpecially = (name: string): boolean => {
 const SPECIAL_SINCE: Readonly<Record<string, number>> = { SRANDOM: 1, BASH_MONOSECONDS: 3, BASH_TRAPSIG: 3 };
 
 describe.skipIf(!hasBash5)("the special-variable denylist, against bash 5", () => {
-	it("control: ordinary names are not shown special by the same tests (PIPESTATUS included: bash 5 leaves an exported one plain)", () => {
+	it("control: ordinary names are not shown special by the same tests", () => {
 		assert.isFalse(bashTreatsSpecially("PLAIN_CONTROL"));
 		assert.isFalse(bashTreatsSpecially("HOSTTYPE"));
-		assert.isFalse(bashTreatsSpecially("PIPESTATUS"));
+	});
+
+	it("PIPESTATUS: bash keeps the export only as a fresh shell's first command, so the dialect rejects it", () => {
+		// The same two exports in two orders. Bash keeps the name only when the export is a fresh shell's first
+		// command; once any command has run, the next pipeline rewrites it and the export never reaches the child
+		// environment. The dialect promises what bash exports, so it cannot accept the name at all.
+		const readBack = (text: string): string => {
+			const path = sourceFile(text);
+			const script = [
+				source(path),
+				"[ $status -eq 0 ] || exit $status",
+				`printf '%s|%s' "$(printenv A || echo '<absent>')" "$(printenv PIPESTATUS || echo '<absent>')"`,
+			].join("; ");
+			const result = runBash(script, "");
+			assertRead(result);
+			assert.strictEqual(result.status, 0, result.stderr);
+			return result.stdout;
+		};
+		assert.strictEqual(readBack("export PIPESTATUS=sentinel\nexport A=1\n"), "1|sentinel");
+		assert.strictEqual(readBack("export A=1\nexport PIPESTATUS=sentinel\n"), "1|<absent>");
+		assert.strictEqual(rejection("export PIPESTATUS=x\n").reason, "special-variable");
+		assert.throws(() => ShellExports.format({ PIPESTATUS: "x" }), RangeError);
 	});
 
 	for (const name of [...SPECIAL_NAMES, ...BASH_PREFIXED]) {
@@ -840,7 +860,6 @@ describe.skipIf(!hasBash5)("the special-variable denylist, against bash 5", () =
 	}
 
 	it("names near the denylist stay ordinary: PATH, HOME, LANG, LC_ALL, HOSTTYPE, BASHX, XBASH_Y", () => {
-		for (const name of ["HOSTTYPE", "PIPESTATUS", "PATH", "HOME", "LANG", "LC_ALL", "BASHX", "XBASH_Y"])
-			ok(`export ${name}=x\n`);
+		for (const name of ["PATH", "HOME", "LANG", "LC_ALL", "HOSTTYPE", "BASHX", "XBASH_Y"]) ok(`export ${name}=x\n`);
 	});
 });
