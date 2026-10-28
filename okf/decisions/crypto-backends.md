@@ -14,17 +14,17 @@ sources:
     last_modified: 2026-10-22T00:00:00Z
   - id: core-crypto
     resource: ../../.repos/effect/packages/effect/src/Crypto.ts
-    title: "Core Crypto at 4.0.6: a one-shot digest and random primitives, no HMAC"
+    title: "Core Crypto: a one-shot digest and random primitives, no HMAC"
 generated:
   by: "claude-code/opus-5.5"
-  at: 2026-10-23T20:34:34Z
+  at: 2026-10-28T14:02:58Z
 integrity:
   generated:
-    body: ad6a1fe13a64908a
+    body: ea667f699fdbbc5e
   verified:
     by: human:spencer
-    at: 2026-10-25T20:04:29Z
-    content: 312032d656cd03f8
+    at: 2026-10-28T14:29:17Z
+    content: 9dd3867c3b740669
 verified:
   - by: human:spencer
     at: 2026-10-23T01:00:25Z
@@ -32,13 +32,15 @@ verified:
     at: 2026-10-23T04:05:21Z
   - by: human:spencer
     at: 2026-10-25T20:04:29Z
+  - by: human:spencer
+    at: 2026-10-28T14:29:17Z
 ---
 
 # Keyed operations come from WebCrypto, payload digests from core Crypto required in R
 
 ## Context
 
-[`@effected/crypto`](../modules/crypto.md) needs two kinds of primitive: keyed (HMAC, for SigV4, every webhook scheme, and blinding a shared secret before comparison) and unkeyed (SHA-256, for the SigV4 payload and canonical-request hashes). Core `Crypto` at 4.0.6 declares a one-shot `digest` and nothing keyed.[^core-crypto] Before this package, both SigV4 implementations reached for `node:crypto` for both kinds, which pinned them to Node.
+[`@effected/crypto`](../modules/crypto.md) needs two kinds of primitive: keyed (HMAC, for SigV4, every webhook scheme, and blinding a shared secret before comparison) and unkeyed (SHA-256, for the SigV4 payload and canonical-request hashes). Core `Crypto` declares a one-shot `digest` and nothing keyed.[^core-crypto] Before this package, both SigV4 implementations reached for `node:crypto` for both kinds, which pinned them to Node.
 
 ## Decision
 
